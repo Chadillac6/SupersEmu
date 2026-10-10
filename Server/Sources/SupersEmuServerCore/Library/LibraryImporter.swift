@@ -196,12 +196,13 @@ public final class LibraryImporter: @unchecked Sendable {
 
     // MARK: Processing
 
-    /// `Game.bin`, `Game (Track 1).bin`, `Game - Track 01.bin` belong to `Game.cue`; `Gameplay.bin` doesn't.
+    /// `Game.bin`, `Game01.bin`, `Game (Track 1).bin` belong to `Game.cue`; `Gameplay.bin` doesn't.
+    /// A digit suffix is kept with the cue; the file stays in Incoming instead of being split from its disc.
     static func isTrackName(_ filename: String, of stem: String) -> Bool {
         let name = (filename as NSString).deletingPathExtension.lowercased()
         guard name.hasPrefix(stem) else { return false }
         guard let next = name.dropFirst(stem.count).first else { return true }
-        return !next.isLetter && !next.isNumber
+        return !next.isLetter
     }
 
     func process(_ batch: Batch) throws {

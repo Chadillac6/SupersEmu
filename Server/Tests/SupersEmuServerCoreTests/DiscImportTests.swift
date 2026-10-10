@@ -254,13 +254,16 @@ extension LibraryTests {
         try write(ROMFixtures.genesis(seed: 77), "Game/Game (Track 1).bin", in: incoming)
         try write(ROMFixtures.genesis(seed: 78), "Game/Other Cart.bin", in: incoming)
         try write(ROMFixtures.genesis(seed: 79), "Game/Gameplay.bin", in: incoming)
+        try write(ROMFixtures.genesis(seed: 80), "Game/Game02.bin", in: incoming)
         XCTAssertTrue(LibraryImporter.isTrackName("Game - Track 01.bin", of: "game"))
         XCTAssertTrue(LibraryImporter.isTrackName("GAME.bin", of: "game"))
+        XCTAssertTrue(LibraryImporter.isTrackName("Game01.bin", of: "game"))
         XCTAssertFalse(LibraryImporter.isTrackName("Gameplay.bin", of: "game"))
         let report = try await importer.scanIncoming(auth: nil)
         XCTAssertEqual(Set(report.imported.map(\.title)), ["Other Cart", "Gameplay"])
-        XCTAssertEqual(report.unsupported.count, 2, "\(report.unsupported)")
+        XCTAssertEqual(report.unsupported.count, 3, "\(report.unsupported)")
         XCTAssertTrue(FileManager.default.fileExists(atPath: incoming.appendingPathComponent("Game/Game (Track 1).bin").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: incoming.appendingPathComponent("Game/Game02.bin").path))
     }
 
     func testUserM3UOverridesInferredGrouping() async throws {
