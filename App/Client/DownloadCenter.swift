@@ -42,6 +42,8 @@ final class DownloadCenter {
             guard let self, token == self.reloadToken else { return }
             var fresh = Dictionary(games.map { ($0.detail.game.id, $0) }, uniquingKeysWith: { first, _ in first })
             for (id, edit) in self.editsDuringReload { fresh[id] = edit }
+            // An active download owns its game until finish publishes (or re-verifies) it.
+            for id in self.tasks.keys { fresh[id] = nil }
             self.downloaded = fresh
         }
     }
@@ -153,12 +155,23 @@ final class DownloadCenter {
         setDownloaded(gameID, cached)
     }
 
+    /// A canceled or failed replacement may have left the previous copy untouched; show it again if it still verifies.
+    private func restoreIfIntact(_ gameID: String, generation: Int) {
+        let cache = cache
+        Task { [weak self] in
+            let game = await Task.detached(priority: .userInitiated) { cache.cachedGame(gameID) }.value
+            guard let self, let game, self.generations[gameID] == generation, self.tasks[gameID] == nil else { return }
+            self.setDownloaded(gameID, game)
+        }
+    }
+
     private func finish(_ gameID: String, error: Error?, generation: Int) {
         guard generations[gameID] == generation else {
             if tasks[gameID] == nil { try? cache.remove(gameID) }
             return
         }
         tasks[gameID] = nil
+        restoreIfIntact(gameID, generation: generation)
         if let error {
             states[gameID] = .failed((error as? DownloadError)?.description ?? error.localizedDescription)
         } else {
