@@ -54,8 +54,12 @@ struct LibraryView: View {
                 }
                 .overlay(alignment: .trailing) {
                     if query.isEmpty, !home.letters.isEmpty {
-                        JumpRail(available: Set(home.letters.map(\.id))) { letter in
-                            withAnimation(.snappy) { proxy.scrollTo("letter-\(letter)", anchor: .top) }
+                        JumpRail(available: Set(home.letters.map(\.id))) { letter, animated in
+                            if animated {
+                                withAnimation(.snappy) { proxy.scrollTo("letter-\(letter)", anchor: .top) }
+                            } else {
+                                proxy.scrollTo("letter-\(letter)", anchor: .top)
+                            }
                         }
                     }
                 }
@@ -74,7 +78,10 @@ struct LibraryView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .searchable(text: $query, prompt: "Search games")
-            .refreshable { await server.refresh() }
+            .refreshable {
+                ArtworkCache.revalidateAll()
+                await server.refresh()
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Import Games", systemImage: "plus") { isImporting = true }
@@ -259,16 +266,14 @@ struct GameCard: View {
     @ViewBuilder private var badge: some View {
         let symbol: String = {
             if case .downloading = state { return "arrow.down.circle.fill" }
-            switch item.source {
-            case .local: return "internaldrive.fill"
-            case .server: return item.isDownloaded ? "checkmark.circle.fill" : "icloud.fill"
-            }
+            if item.isLocalCopy { return "internaldrive.fill" }
+            return item.isDownloaded ? "checkmark.circle.fill" : "icloud.fill"
         }()
         Image(systemName: symbol)
             .font(.caption.bold())
             .padding(6)
             .background(.ultraThinMaterial, in: Circle())
-            .accessibilityLabel(item.isCloudOnly ? "In the cloud" : item.source == .local ? "On this device" : "Downloaded")
+            .accessibilityLabel(item.isCloudOnly ? "In the cloud" : item.isLocalCopy ? "On this device" : "Downloaded")
             .accessibilityIdentifier(item.isCloudOnly ? "badge-cloud" : "badge-downloaded")
     }
 }

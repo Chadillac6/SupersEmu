@@ -10,9 +10,9 @@ import XCTest
 final class RequestStub: MetadataFetching, @unchecked Sendable {
     private let lock = NSLock()
     private var log: [URLRequest] = []
-    private let handler: @Sendable (URLRequest) -> Data?
+    private let handler: @Sendable (URLRequest) throws -> Data?
 
-    init(_ handler: @escaping @Sendable (URLRequest) -> Data?) { self.handler = handler }
+    init(_ handler: @escaping @Sendable (URLRequest) throws -> Data?) { self.handler = handler }
 
     var requests: [URLRequest] { lock.withLock { log } }
 
@@ -20,8 +20,12 @@ final class RequestStub: MetadataFetching, @unchecked Sendable {
 
     func send(_ request: URLRequest) async throws -> Data? {
         lock.withLock { log.append(request) }
-        return handler(request)
+        return try handler(request)
     }
+}
+
+final class FailureSwitch: @unchecked Sendable {
+    var failing = true
 }
 
 final class MetadataProviderTests: XCTestCase {
@@ -161,6 +165,36 @@ final class MetadataProviderTests: XCTestCase {
         XCTAssertTrue(fetcher.requests[1].url!.absoluteString.contains("Super%20Metroid"))
         _ = await metadata.enrichPending()
         XCTAssertEqual(fetcher.requests.count, 3)
+    }
+
+    func testWikipediaReceptionFailureKeepsIntroAndRetries() async throws {
+        _ = try await importROM("Super Metroid (Japan, USA).sfc")
+        let extract = WikipediaMetadataProvider.extractURL("Super Metroid")
+        let failure = FailureSwitch()
+        let fetcher = RequestStub { request in
+            let url = request.url!
+            if url == extract {
+                if failure.failing { throw URLError(.timedOut) }
+                return self.json(["query": ["pages": [["extract": Self.receptionExtract]]]])
+            }
+            if url.absoluteString.contains("list=search") { return self.json(["query": ["search": [["title": "Super Metroid"]]]]) }
+            return self.json(["type": "standard", "title": "Super Metroid", "description": "1994 video game", "extract": "Super Metroid is a 1994 game."])
+        }
+        let metadata = service(fetcher) { [WikipediaMetadataProvider(http: $0)] }
+        let sql = "SELECT m.description, m.reception, j.match_status FROM game_metadata m JOIN metadata_jobs j "
+            + "ON j.game_id = m.game_id AND j.provider = m.provider WHERE m.provider = 'wikipedia'"
+
+        _ = await metadata.enrichPending()
+        var saved = try await store.db.read { try Row.fetchOne($0, sql: sql) }
+        XCTAssertEqual(saved?["description"], "Super Metroid is a 1994 game.")
+        XCTAssertNil(saved?["reception"] as String?)
+        XCTAssertEqual(saved?["match_status"], "partial")
+
+        failure.failing = false
+        _ = await metadata.enrichPending()
+        saved = try await store.db.read { try Row.fetchOne($0, sql: sql) }
+        XCTAssertNotNil(saved?["reception"] as String?)
+        XCTAssertEqual(saved?["match_status"], "matched")
     }
 
     func testIGDBDisabledWithoutCredentials() async throws {

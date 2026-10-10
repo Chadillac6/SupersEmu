@@ -24,8 +24,11 @@ struct LibraryItem: Identifiable, Hashable {
     var genres: [String]?
     var players: Int?
     var criticScore: Int?
+    var hasLocalCopy = false
 
-    var isCloudOnly: Bool { source == .server && !isDownloaded }
+    var isCloudOnly: Bool { source == .server && !isDownloaded && !hasLocalCopy }
+    /// A server game the user also imported locally (and hasn't downloaded from the server).
+    var isLocalCopy: Bool { source == .local || (hasLocalCopy && !isDownloaded) }
 }
 
 /// One letter of "All Games A-Z".
@@ -57,9 +60,10 @@ enum LibraryShelves {
                 id: summary.id, title: summary.title, console: summary.system.displayName, system: summary.system,
                 year: summary.year, genre: summary.genre, coverPath: summary.coverPath, size: summary.totalSize,
                 addedAt: summary.addedAt ?? firstSeen[summary.id], source: .server,
-                isDownloaded: downloads.isDownloaded(summary.id) || localByID[summary.id] != nil,
+                isDownloaded: downloads.isDownloaded(summary.id),
                 playable: playable, lastPlayed: lastPlayed(summary.id), heroPath: summary.heroPath ?? summary.backdropPath,
-                logoPath: summary.logoPath, genres: summary.genres, players: summary.players, criticScore: summary.criticScore?.score)
+                logoPath: summary.logoPath, genres: summary.genres, players: summary.players, criticScore: summary.criticScore?.score,
+                hasLocalCopy: localByID[summary.id] != nil)
         }
         let localItems = local.filter { !serverIDs.contains($0.id) }.map { game in
             LibraryItem(

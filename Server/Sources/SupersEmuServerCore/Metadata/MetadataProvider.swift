@@ -83,6 +83,8 @@ public struct ArtworkCandidate: Sendable, Equatable {
 
 public enum MetadataLookupResult: Sendable {
     case matched(MetadataRecord)
+    /// Matched, but an optional extra (e.g. Wikipedia reception) failed: saved now and looked up again next pass.
+    case partial(MetadataRecord)
     case unmatched
     /// The provider couldn't answer right now (dataset download failed, offline); retried on the next pass.
     case unavailable

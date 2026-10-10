@@ -104,6 +104,9 @@ enum ArtworkCache {
 
     @MainActor private static var revalidated = Set<String>()
 
+    /// Pull to refresh: art is fetched again as views next load it.
+    @MainActor static func revalidateAll() { revalidated.removeAll() }
+
     /// The disk copy straight away (works offline), then once per launch the server's, as replaced art keeps its path.
     @MainActor static func load(_ path: String?, key: String, server: ServerSession, show: (Image?) -> Void) async {
         guard let path else { return show(nil) }
@@ -111,6 +114,7 @@ enum ArtworkCache {
         let cached = try? Data(contentsOf: file)
         let cachedImage = cached.flatMap(image(from:))
         show(cachedImage)
+        if !server.isOnline { revalidated.removeAll() }
         guard server.isOnline, cachedImage == nil || !revalidated.contains(key) else { return }
         guard let data = try? await server.data(atPath: path), let image = image(from: data) else { return }
         revalidated.insert(key)

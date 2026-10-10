@@ -197,7 +197,8 @@ struct JumpRail: View {
     /// Trailing space Home sections leave for the rail.
     static let inset: CGFloat = 40
     let available: Set<String>
-    let jump: (String) -> Void
+    /// Scrubbing jumps without animation: queued animated scrolls can stop short of the final letter.
+    let jump: (_ letter: String, _ animated: Bool) -> Void
     @State private var scrubbing: String?
 
     var body: some View {
@@ -218,9 +219,12 @@ struct JumpRail: View {
                     let letter = LibraryShelves.alphabet[min(max(index, 0), LibraryShelves.alphabet.count - 1)]
                     guard letter != scrubbing else { return }
                     scrubbing = letter
-                    if let target = target(for: letter) { jump(target) }
+                    if let target = target(for: letter) { jump(target, false) }
                 }
-                .onEnded { _ in scrubbing = nil })
+                .onEnded { _ in
+                    if let scrubbing, let target = target(for: scrubbing) { jump(target, false) }
+                    scrubbing = nil
+                })
             .overlay(alignment: .topLeading) {
                 if let scrubbing, let index = LibraryShelves.alphabet.firstIndex(of: scrubbing) {
                     Text(scrubbing).font(.title.bold()).frame(width: 56, height: 56)
@@ -245,7 +249,7 @@ struct JumpRail: View {
             .foregroundStyle(available.contains(letter) ? Color.primary : Color.secondary.opacity(0.35))
             .frame(width: 22, height: row)
         #if os(macOS)
-        Button { if let target = target(for: letter) { jump(target) } } label: { label.contentShape(Rectangle()) }
+        Button { if let target = target(for: letter) { jump(target, true) } } label: { label.contentShape(Rectangle()) }
             .buttonStyle(.plain)
             .disabled(target(for: letter) == nil)
             .accessibilityIdentifier("jump-\(letter)")

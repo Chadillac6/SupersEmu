@@ -25,14 +25,20 @@ public actor WikipediaMetadataProvider: MetadataProvider {
             guard summary.type == "standard", summary.description?.lowercased().contains("game") == true else { continue }
             let pageURL = summary.content_urls?.desktop?.page ?? "https://en.wikipedia.org/wiki/" + Self.encodedTitle(page)
             var reception: ReceptionSummary?
-            if let data = try await http.get(Self.extractURL(page)),
-               let extract = try? JSONDecoder().decode(ExtractResponse.self, from: data).query?.pages.first?.extract,
-               let text = Self.reception(in: extract) {
-                reception = ReceptionSummary(text: text, source: "Wikipedia", url: pageURL + "#Reception")
+            var complete = true
+            do {
+                if let data = try await http.get(Self.extractURL(page)),
+                   let extract = try? JSONDecoder().decode(ExtractResponse.self, from: data).query?.pages.first?.extract,
+                   let text = Self.reception(in: extract) {
+                    reception = ReceptionSummary(text: text, source: "Wikipedia", url: pageURL + "#Reception")
+                }
+            } catch {
+                complete = false
             }
-            return .matched(MetadataRecord(
+            let record = MetadataRecord(
                 provider: id, providerRef: summary.title, year: Self.year(summary.description), description: summary.extract.flatMap { Self.sentences($0, limit: 4) },
-                source: MetadataSource(provider: id, name: "Wikipedia", url: pageURL), reception: reception))
+                source: MetadataSource(provider: id, name: "Wikipedia", url: pageURL), reception: reception)
+            return complete ? .matched(record) : .partial(record)
         }
         return .unmatched
     }

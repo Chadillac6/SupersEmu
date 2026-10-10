@@ -91,7 +91,7 @@ public actor MetadataService {
                 LEFT JOIN metadata_jobs j ON j.game_id = g.id AND j.provider = ?
                 LEFT JOIN game_metadata m ON m.game_id = g.id AND m.provider = j.provider
                 WHERE g.needs_review = 0 AND (j.game_id IS NULL OR j.match_status IS NULL OR j.dataset_version IS NOT ?
-                    OR j.match_status IN ('matched', 'unmatched'))
+                    OR j.match_status IN ('matched', 'unmatched', 'partial'))
                 ORDER BY g.created_at DESC
                 """, arguments: [provider.id, provider.version])
         }
@@ -104,7 +104,7 @@ public actor MetadataService {
             let previousRef: String? = row["provider_ref"]
             let title = try await knownTitle(gameID: id, excluding: provider.id) ?? row["title"]
             let betterTitle = status == "unmatched" && (row["search_title"] as String?) != title
-            if status == nil || (row["dataset_version"] as String?) != provider.version || betterTitle {
+            if status == nil || status == "partial" || (row["dataset_version"] as String?) != provider.version || betterTitle {
                 let game = MetadataLookup(gameID: id, system: system, title: title, files: try candidateFiles(gameID: id))
                 let result = (try? await provider.lookup(game)) ?? .unavailable
                 switch result {
@@ -116,12 +116,14 @@ public actor MetadataService {
                     try await recordJob(id, provider, match: "unmatched", searchTitle: title, clearingRecord: true)
                     changed += 1
                     continue
-                case .matched(let record):
+                case .matched(let record), .partial(let record):
+                    var complete = false
+                    if case .matched = result { complete = true }
                     if previousRef != nil, previousRef != record.providerRef {
                         try artwork.removeProviderArtwork(provider: provider.id, gameID: id)
                     }
                     try await store.db.write { db in try record.save(gameID: id, db: db) }
-                    try await recordJob(id, provider, match: "matched", searchTitle: title, clearingRecord: false)
+                    try await recordJob(id, provider, match: complete ? "matched" : "partial", searchTitle: title, clearingRecord: false)
                     logger.info("\(provider.id) matched \(id.prefix(12)) to \"\(record.providerRef ?? record.title ?? "?")\"")
                     changed += 1
                 }

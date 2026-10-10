@@ -292,18 +292,14 @@ struct AvailabilityBadge: View {
     private var text: String {
         if case .downloading(let progress) = state { return "\(Int(progress.fraction * 100))%" }
         if case .failed = state { return "Download failed" }
-        switch item.source {
-        case .local: return "On this device"
-        case .server: return item.isDownloaded ? "Downloaded" : "Cloud"
-        }
+        if item.isLocalCopy { return "On this device" }
+        return item.isDownloaded ? "Downloaded" : "Cloud"
     }
 
     private var symbol: String {
         if case .downloading = state { return "arrow.down.circle" }
         if case .failed = state { return "exclamationmark.triangle" }
-        switch item.source {
-        case .local: return "internaldrive"
-        case .server: return item.isDownloaded ? "checkmark.circle.fill" : "icloud"
-        }
+        if item.isLocalCopy { return "internaldrive" }
+        return item.isDownloaded ? "checkmark.circle.fill" : "icloud"
     }
 }
