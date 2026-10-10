@@ -72,7 +72,7 @@ docs, then shown in the app as a one-screen "Connect your controller" guide.
    `Application Support/SupersEmu/Controls.json` as `controllerOverrides[type][system][control]` and
    `gameOverrides[gameID][control]`, where a type is `keyboard`, `gc:<category>:<vendor name>` or
    `hid:vvvv:pppp`. Touch controls always use the console defaults.
-6. Disconnect mid-game pauses and shows a "Reconnect controller" prompt; Continue (or A/Start on any pad)
+6. Disconnect mid-game pauses and shows a "Reconnect controller" prompt; Continue (or the bottom face button or Start on any pad)
    resumes with what's left: another pad, touch or the keyboard.
 
 ## Console layouts
