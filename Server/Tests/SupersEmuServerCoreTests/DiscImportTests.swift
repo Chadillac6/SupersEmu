@@ -439,6 +439,18 @@ extension LibraryTests {
             try await client.execute(uri: "/v1/bios/\(String(repeating: "0", count: 64))", method: .get, headers: self.auth(self.adminToken)) {
                 XCTAssertEqual($0.status, .notFound)
             }
+            // A forged row pointing outside bios/ must not serve that file.
+            let forged = String(repeating: "f", count: 64)
+            try Data("not a bios".utf8).write(to: self.store.paths.root.appendingPathComponent("outside.bin"))
+            try await self.store.db.write { db in
+                try db.execute(sql: """
+                    INSERT INTO bios_files (id, filename, original_filename, system, region, required, verified, size, stored_path, created_at)
+                    VALUES (?, 'scph5501.bin', 'outside.bin', 'psx', 'US', 1, 1, 10, 'outside.bin', ?)
+                    """, arguments: [forged, Date()])
+            }
+            try await client.execute(uri: "/v1/bios/\(forged)", method: .get, headers: self.auth(self.adminToken)) {
+                XCTAssertEqual($0.status, .notFound)
+            }
             for path in ["/v1/bios", uri, "/v1/bios/status"] {
                 try await client.execute(uri: path, method: .get, headers: self.auth(noRead)) { XCTAssertEqual($0.status, .forbidden) }
                 try await client.execute(uri: path, method: .get) { XCTAssertEqual($0.status, .unauthorized) }

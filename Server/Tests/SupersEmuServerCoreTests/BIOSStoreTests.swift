@@ -142,6 +142,39 @@ final class BIOSStoreTests: XCTestCase {
         let unnumbered = GameDetail(game: summary, summary: nil, files: files.map { var f = $0; f.discNumber = nil; return f })
         XCTAssertEqual(unnumbered.discCount, 3, "falls back to one disc per cue sheet")
     }
+
+    static func known(_ bytes: Data, _ filename: String, _ system: SystemID) -> KnownBIOS {
+        KnownBIOS(filename: filename, system: system, region: "US", required: true,
+                  md5: Insecure.MD5.hash(data: bytes).map { String(format: "%02x", $0) }.joined(), size: Int64(bytes.count))
+    }
+
+    func testUserPlacedKnownDumpCountsOfflineWithoutSync() throws {
+        let dump = Data("user sega cd dump".utf8)
+        let store = BIOSStore(directory: directory, known: [Self.known(dump, "bios_CD_U.bin", .segacd)])
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        XCTAssertFalse(BIOSStore.isSatisfied(.segacd, by: store.installed()))
+        try dump.write(to: directory.appendingPathComponent("bios_CD_U.bin"))
+        XCTAssertTrue(BIOSStore.isSatisfied(.segacd, by: store.installed()))
+        try Data("user sega cd dumP".utf8).write(to: directory.appendingPathComponent("bios_CD_U.bin"))
+        XCTAssertFalse(BIOSStore.isSatisfied(.segacd, by: store.installed()), "a wrong dump never counts")
+    }
+
+    func testSyncedFileReplacedByUserIsKeptAndNeverDeleted() async throws {
+        let synced = Data("synthetic psx bios".utf8), dump = Data("user psx dump".utf8)
+        let store = BIOSStore(directory: directory, known: [Self.known(dump, "scph5501.bin", .psx)])
+        let url = directory.appendingPathComponent("scph5501.bin")
+        let info = Self.bios(synced, "scph5501.bin", .psx)
+        _ = try await store.sync([info]) { _ in synced }
+        try dump.write(to: url)
+        let newer = Self.bios(Data("server v2".utf8), "scph5501.bin", .psx)
+        let replaced = try await store.sync([newer]) { _ in Data("server v2".utf8) }
+        XCTAssertEqual(try Data(contentsOf: url), dump, "a listed replacement must not overwrite the user's dump")
+        XCTAssertEqual(replaced.failed, [newer])
+        XCTAssertTrue(BIOSStore.isSatisfied(.psx, by: replaced.installed))
+        _ = try await store.sync([]) { _ in synced }
+        XCTAssertEqual(try Data(contentsOf: url), dump, "dropping it from the server must not delete the user's dump")
+        XCTAssertTrue(BIOSStore.isSatisfied(.psx, by: store.installed()))
+    }
 }
 
 private final class Counter: @unchecked Sendable {
@@ -149,4 +182,5 @@ private final class Counter: @unchecked Sendable {
     private var count = 0
     var value: Int { lock.withLock { count } }
     func increment() { lock.withLock { count += 1 } }
+
 }

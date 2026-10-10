@@ -16,7 +16,7 @@ enum CoreRegistry {
         Core(id: SECoreIDMGBA, systems: ["gba"], extensions: ["gba"]),
         Core(id: SECoreIDGenesisPlusGX, systems: ["genesis"], extensions: ["md", "gen", "smd", "bin", "mdx"]),
         // Disc games: the host passes the path (need_fullpath); a .cue's tracks sit beside it.
-        Core(id: SECoreIDBeetlePSX, systems: ["psx"], extensions: ["cue", "chd", "m3u", "pbp"]),
+        Core(id: SECoreIDBeetlePSX, systems: ["psx"], extensions: ["cue", "chd", "m3u"]),
         // Sega CD discs: `.cue`/`.chd`/`.iso` aren't claimed by extension (PS1 uses them too), so the
         // console decides. Needs bios_CD_U/E/J.bin in the system directory.
         Core(id: SECoreIDGenesisPlusGX, systems: ["segacd"], extensions: []),

@@ -25,7 +25,7 @@ Each core is a git submodule under `Vendor/cores/`, pinned by `scripts/pin-cores
 | mGBA | [libretro/mgba](https://github.com/libretro/mgba) | `7a12d6d4b9acb14c0ae62c9166b6a2f3d08007f6` | `LICENSE` (MPL 2.0) | gba |
 | Genesis Plus GX | [libretro/Genesis-Plus-GX](https://github.com/libretro/Genesis-Plus-GX) | `393f70cd64c7334564c19a424c383f53986c13f4` | `LICENSE.txt` (non-commercial) | md, gen, smd, bin, mdx; Sega CD discs by console `segacd` |
 | PicoDrive | [libretro/picodrive](https://github.com/libretro/picodrive) | `1890c2932234c9d30f4cd3851d02228baae8f09e` | `COPYING` (MAME licence, non-commercial) | 32x |
-| Beetle PSX | [libretro/beetle-psx-libretro](https://github.com/libretro/beetle-psx-libretro) | `10e4b0c6ceae20daa65ddf436a4445dddd0982d2` | `COPYING` (GPLv2) | cue, chd, m3u, pbp |
+| Beetle PSX | [libretro/beetle-psx-libretro](https://github.com/libretro/beetle-psx-libretro) | `10e4b0c6ceae20daa65ddf436a4445dddd0982d2` | `COPYING` (GPLv2) | cue, chd, m3u (pbp not yet) |
 
 **Licensing.** Snes9x, Genesis Plus GX and PicoDrive (MAME licence: redistribution only
 non-commercially, with source) forbid commercial use, so SupersEmu must stay free:
@@ -141,5 +141,5 @@ Not yet verified: running on a real iPhone/iPad, controller input, and full-spee
 device for any core. Sega CD: booting a real disc with a real BIOS, CHD images (libchdr is compiled
 but no CHD was loaded: no `chdman` here), OGG/WAV audio tracks and multi-disc `.m3u`. 32X: audio
 output and commercial-game compatibility. PS1: any commercial disc, a real Sony
-BIOS, `.chd`/`.pbp` loading (`.m3u` is verified only with two synthetic cues, including a disc swap), audio output, memory cards and swapping real discs. On macOS (arm64,
+BIOS, `.chd` loading (`.m3u` is verified only with two synthetic cues, including a disc swap), audio output, memory cards and swapping real discs. On macOS (arm64,
 software renderer) Beetle PSX ran 1800 OpenBIOS frames in about 2.5 s, roughly 12x real time.

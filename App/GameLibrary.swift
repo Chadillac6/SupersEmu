@@ -65,7 +65,18 @@ final class GameLibrary {
         let ext = fileURL.pathExtension.lowercased()
         guard let core = CoreRegistry.core(forExtension: ext) else { return nil }
         if let system = SystemID(rawValue: ext), core.systems.contains(system.rawValue) { return system }
-        return core.systems.first.flatMap(SystemID.init(rawValue:))
+        let system = core.systems.first.flatMap(SystemID.init(rawValue:))
+        return system == .genesis && is32X(fileURL) ? .sega32x : system
+    }
+
+    /// Same check as the server's `SystemDetector`: "SEGA ... 32X" system name at 0x100, or "MARS" at 0x3C0.
+    static func is32X(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let bytes = try? handle.read(upToCount: 0x3C4), bytes.count >= 0x110 else { return false }
+        let header = String(decoding: bytes[0x100..<0x110], as: UTF8.self)
+        guard header.contains("SEGA") else { return false }
+        return header.contains("32X") || (bytes.count >= 0x3C4 && bytes[0x3C0..<0x3C4].elementsEqual("MARS".utf8))
     }
 
     private(set) var games: [Game] = []

@@ -30,7 +30,7 @@ This spec is the Wave 0 contract every Milestone 2 track builds on.
   If a required BIOS is missing, the detail view shows "Needs <system> BIOS" and the Play button is disabled.
 - Client (multi-disc track, built): `BIOSStore` (`SupersEmuKit/BIOSSync.swift`) and `BIOSCenter` (`App/Client/BIOSCenter.swift`).
   Sync runs after every library refresh, when a PS1/Sega CD detail opens, and before a disc game launches. Each file's SHA-256 is checked before it is written (atomically) under its exact canonical name; names that need sanitizing are rejected.
-  Synced files are tracked in `System/.supersemu-bios.json`, so only files the app wrote are replaced or removed; user-placed files are left alone. Offline, files already on disk that still match their hash count as installed.
+  Synced files are tracked in `System/.supersemu-bios.json`, so only files the app wrote are replaced or removed; user-placed files are left alone. Offline, files already on disk that still match their hash count as installed. A known dump (size + MD5 in `KnownBIOS`) the user puts under its canonical name also counts as installed, online or offline, and a synced file the user replaced with one is treated as theirs. Sync only deletes files whose bytes still match what it wrote.
   A system counts as satisfied when any verified BIOS for it is installed. Matching a BIOS region to a game's region is **not implemented**.
   Verified by `BIOSStoreTests` with synthetic bytes. `BIOSCenter` fetches through the import track's `APIClient.bios()` and `biosData(sha256:)`. **Unverified:** an end-to-end client sync against a running server; the routes and the store are each tested separately.
 - BIOS checker: `supersemu bios status` and the Server mode UI list each system's BIOS as present, missing or wrong-hash.
@@ -77,7 +77,7 @@ Not verified: real PS1/Sega CD dumps and real BIOS files (only synthetic headers
   `SUPERSEMU_DEBUG_DISC_COUNT=N` (Debug builds only) fakes an N-disc game so the UI can be captured without a disc core.
 - Library: a multi-disc game is one tile (one `GameSummary`). Its detail view shows "N discs · total size". The file-list downloader fetches and verifies every file; `ClientCacheTests.testDownloadsEveryFileOfSyntheticMultiDiscGame` (m3u + 2 discs) launches from the `.m3u`.
 - Save states and SRAM stay per game ID, shared across discs (for PS1, memory card 1 is per game).
-- PS1 (Beetle PSX, built): `need_fullpath` is true, so the host passes the `.cue`/`.chd`/`.m3u`/`.pbp` path and the core opens the tracks beside it.
+- PS1 (Beetle PSX, built): `need_fullpath` is true, so the host passes the `.cue`/`.chd`/`.m3u` path (`.pbp` isn't supported yet: the server files it as unsupported and asks for `.chd` or `.cue`/`.bin`) and the core opens the tracks beside it.
   The core looks for `scph5500.bin`/`scph5501.bin`/`scph5502.bin` (by disc region) in `AppPaths.system`; with none present it boots its bundled OpenBIOS instead of failing.
   So "Needs PlayStation BIOS" is a frontend policy, not something the core enforces. Commercial-game compatibility on OpenBIOS is unverified.
 

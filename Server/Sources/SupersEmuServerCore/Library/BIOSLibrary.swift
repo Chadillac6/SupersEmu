@@ -105,8 +105,10 @@ func registerBIOSRoutes(_ group: RouterGroup<SERequestContext>, store: ServerSto
         let row = try await store.db.read { db in
             try Row.fetchOne(db, sql: "SELECT filename, stored_path FROM bios_files WHERE id = ? AND verified = 1", arguments: [sha])
         }
+        let biosRoot = store.paths.bios.resolvingSymlinksInPath().standardizedFileURL.path + "/"
         guard let row, let stored: String = row["stored_path"], !stored.split(separator: "/").contains(".."),
-              case let path = store.paths.root.appendingPathComponent(stored).path,
+              case let path = store.paths.root.appendingPathComponent(stored).resolvingSymlinksInPath().standardizedFileURL.path,
+              path.hasPrefix(biosRoot),
               let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue else {
             throw HTTPError(.notFound, message: "BIOS not found")
         }

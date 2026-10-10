@@ -82,6 +82,8 @@ public enum SystemDetector {
         case "32x":
             if let header = segaHeader(bytes, at: 0x100), is32X(header: header, bytes: bytes) { return .system(.sega32x) }
             return .needsReview("No Sega 32X header (\"32X\" at 0x100 or \"MARS\" at 0x3C0 missing)")
+        case "pbp":
+            return .unsupported("PBP (EBOOT) discs aren't supported yet; convert to .chd or .cue/.bin")
         case "zip":
             return .unsupported("Archive inside an archive")
         case _ where archiveExtensions.contains(ext):

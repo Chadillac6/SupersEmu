@@ -30,7 +30,12 @@ public struct BIOSSyncResult: Sendable, Equatable {
 /// canonical name. Only files it wrote itself (tracked in a manifest) are ever replaced or removed.
 public struct BIOSStore: Sendable {
     public let directory: URL
-    public init(directory: URL) { self.directory = directory }
+    /// Dumps recognised by MD5 when the user puts them in the directory themselves.
+    public let known: [KnownBIOS]
+    public init(directory: URL, known: [KnownBIOS] = KnownBIOS.all) {
+        self.directory = directory
+        self.known = known
+    }
 
     var manifestURL: URL { directory.appendingPathComponent(".supersemu-bios.json") }
 
@@ -41,8 +46,28 @@ public struct BIOSStore: Sendable {
         return directory.appendingPathComponent(name)
     }
 
-    /// BIOS files known from the last sync whose bytes still match their hash.
-    public func installed() -> [BIOSFileInfo] { manifest().filter { isIntact($0.bios) }.map(\.bios) }
+    /// BIOS files from the last sync whose bytes still match their hash, plus known dumps the user put under
+    /// their canonical names (so those count offline, before any sync).
+    public func installed() -> [BIOSFileInfo] { withUserPlaced(manifest().filter { isIntact($0.bios) }.map(\.bios)) }
+
+    func withUserPlaced(_ synced: [BIOSFileInfo]) -> [BIOSFileInfo] {
+        let names = Set(synced.map(\.filename))
+        return synced + known.filter { !names.contains($0.filename) }.compactMap(userPlaced)
+    }
+
+    /// The file under `known`'s canonical name, if it is that dump (size + MD5).
+    func userPlaced(_ known: KnownBIOS) -> BIOSFileInfo? {
+        let url = directory.appendingPathComponent(known.filename)
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value,
+              size == known.size, let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+              Insecure.MD5.hash(data: data).map({ String(format: "%02x", $0) }).joined() == known.md5 else { return nil }
+        return BIOSFileInfo(id: Self.sha256(data), filename: known.filename, system: known.system, region: known.region, required: known.required)
+    }
+
+    /// A synced file the user has since replaced with a known dump of their own.
+    func isUserReplaced(_ entry: ManifestEntry) -> Bool {
+        !isIntact(entry.bios) && known.contains { $0.filename == entry.bios.filename && userPlaced($0) != nil }
+    }
 
     /// True when `system` needs no BIOS or a verified one is installed.
     public static func isSatisfied(_ system: SystemID, by installed: [BIOSFileInfo]) -> Bool {
@@ -51,12 +76,12 @@ public struct BIOSStore: Sendable {
 
     /// Downloads anything missing or changed, verifies each file's SHA-256 before it becomes visible
     /// to the core, and removes app-written files whose names the server no longer lists.
-    /// Files the app didn't write are never replaced or removed; a matching one counts as installed.
+    /// Files the app didn't write are never replaced or removed; a matching one (or a known dump) counts as installed.
     /// A failed replacement keeps the previous app-written copy.
     public func sync(_ list: [BIOSFileInfo], fetch: @Sendable (BIOSFileInfo) async throws -> Data) async throws -> BIOSSyncResult {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let previous = manifest()
-        let ownedNames = Set(previous.filter(\.owned).compactMap { fileURL(for: $0.bios)?.lastPathComponent })
+        let ownedNames = Set(previous.filter { $0.owned && !isUserReplaced($0) }.compactMap { fileURL(for: $0.bios)?.lastPathComponent })
         let listedNames = Set(list.compactMap { fileURL(for: $0)?.lastPathComponent })
         var entries: [ManifestEntry] = []
         var failed: [BIOSFileInfo] = []
@@ -91,12 +116,13 @@ public struct BIOSStore: Sendable {
                 entries += previous.filter { $0.owned && fileURL(for: $0.bios)?.lastPathComponent == name && isIntact($0.bios) }
             }
         }
-        for stale in previous where stale.owned {
+        // Only delete bytes that are still exactly what sync wrote.
+        for stale in previous where stale.owned && isIntact(stale.bios) {
             guard let url = fileURL(for: stale.bios), !listedNames.contains(url.lastPathComponent) else { continue }
             try? FileManager.default.removeItem(at: url)
         }
         try SupersEmuJSON.encoder().encode(entries).write(to: manifestURL, options: .atomic)
-        return BIOSSyncResult(installed: entries.map(\.bios), failed: failed)
+        return BIOSSyncResult(installed: withUserPlaced(entries.map(\.bios)), failed: failed)
     }
 
     struct ManifestEntry: Codable, Equatable {

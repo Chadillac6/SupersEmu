@@ -43,7 +43,7 @@ enum LibraryShelves {
         }
         let localItems = local.map { game in
             LibraryItem(
-                id: game.id, title: game.title, console: game.console, system: GameLibrary.system(for: game.fileURL), year: nil, genre: nil, coverPath: nil,
+                id: game.id, title: game.title, console: game.console, system: CoreRegistry.systemID(forConsole: game.console).flatMap(SystemID.init(rawValue:)), year: nil, genre: nil, coverPath: nil,
                 size: (try? FileManager.default.attributesOfItem(atPath: game.fileURL.path)[.size] as? NSNumber)?.int64Value ?? 0,
                 addedAt: nil, source: .local, isDownloaded: true, playable: game, lastPlayed: lastPlayed(game.id))
         }
