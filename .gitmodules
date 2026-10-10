@@ -1,3 +1,12 @@
 [submodule "Vendor/cores/snes9x"]
 	path = Vendor/cores/snes9x
 	url = https://github.com/libretro/snes9x.git
+[submodule "Vendor/cores/gambatte"]
+	path = Vendor/cores/gambatte
+	url = https://github.com/libretro/gambatte-libretro.git
+[submodule "Vendor/cores/mgba"]
+	path = Vendor/cores/mgba
+	url = https://github.com/libretro/mgba.git
+[submodule "Vendor/cores/genesis_plus_gx"]
+	path = Vendor/cores/genesis_plus_gx
+	url = https://github.com/libretro/Genesis-Plus-GX.git
