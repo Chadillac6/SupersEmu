@@ -14,6 +14,7 @@ struct SupersEmuCLI: AsyncParsableCommand {
             Users.self,
             Devices.self,
             Tokens.self,
+            Library.self,
         ])
 }
 
