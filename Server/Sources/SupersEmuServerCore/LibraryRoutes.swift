@@ -1,9 +1,7 @@
-import CryptoKit
 import Foundation
 import GRDB
 import HTTPTypes
 import Hummingbird
-import NIOCore
 import SupersEmuKit
 
 // Track: server library. GET /v1/games/{id}, /v1/games/{id}/files/{file} (Range), artwork.
@@ -37,8 +35,7 @@ func registerLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: Server
             .contentDisposition: "attachment; filename=\"\(file.filename.replacingOccurrences(of: "\"", with: "'"))\"",
             .cacheControl: "private, max-age=31536000, immutable",
         ]
-        let ifNoneMatch = request.headers[values: .ifNoneMatch].flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
-        if ifNoneMatch.contains(eTag) || ifNoneMatch.contains("*") {
+        if LibraryHTTP.ifNoneMatch(request, matches: eTag) {
             return Response(status: .notModified, headers: headers)
         }
 
@@ -70,14 +67,11 @@ func registerLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: Server
         }
         guard let url = artwork.coverFile(cover: cover) else { throw HTTPError(.notFound, message: "No cover artwork") }
         // Covers can be replaced in place (M2 scraping), so clients revalidate with the content-hash ETag.
-        let data = try Data(contentsOf: url)
-        let eTag = "\"" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() + "\""
+        let eTag = "\"\(try LibraryHTTP.sha256Hex(of: url))\""
         var headers: HTTPFields = [.eTag: eTag, .cacheControl: "private, no-cache"]
-        let ifNoneMatch = request.headers[values: .ifNoneMatch].flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
-        if ifNoneMatch.contains(eTag) || ifNoneMatch.contains("*") { return Response(status: .notModified, headers: headers) }
+        if LibraryHTTP.ifNoneMatch(request, matches: eTag) { return Response(status: .notModified, headers: headers) }
         headers[.contentType] = ArtworkStore.contentType(for: url)
-        headers[.contentLength] = String(data.count)
-        return Response(status: .ok, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: data)))
+        return Response(status: .ok, headers: headers, body: try await fileIO.loadFile(path: url.path, context: context))
     }
 }
 

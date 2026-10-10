@@ -14,6 +14,7 @@ public struct ArtworkStore: Sendable {
     public func setCover(gameID: String, data: Data, fileExtension: String) throws -> URL {
         let ext = fileExtension.lowercased()
         guard Self.contentTypes[ext] != nil else { throw ArtworkError.unsupportedType(ext) }
+        guard data.count <= Self.maxCoverSize else { throw ArtworkError.tooLarge }
         guard Self.isSafeComponent(gameID) else { throw ArtworkError.invalidGameID }
         guard try store.db.read({ try Bool.fetchOne($0, sql: "SELECT EXISTS(SELECT 1 FROM games WHERE id = ?)", arguments: [gameID]) }) == true else {
             throw ArtworkError.unknownGame
@@ -39,8 +40,10 @@ public struct ArtworkStore: Sendable {
     }
 
     public enum ArtworkError: Error, Equatable {
-        case unsupportedType(String), invalidGameID, unknownGame
+        case unsupportedType(String), invalidGameID, unknownGame, tooLarge
     }
+
+    public static let maxCoverSize = 32 * 1024 * 1024
 
     static func isSafeComponent(_ id: String) -> Bool {
         !id.isEmpty && id.count <= 128 && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }

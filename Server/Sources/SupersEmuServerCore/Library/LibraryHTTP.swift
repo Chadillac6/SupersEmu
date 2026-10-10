@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import HTTPTypes
 import Hummingbird
@@ -9,6 +10,22 @@ enum LibraryHTTP {
     static func json(_ value: some Encodable, status: HTTPResponse.Status = .ok) throws -> Response {
         let data = try SupersEmuJSON.encoder().encode(value)
         return Response(status: status, headers: [.contentType: "application/json; charset=utf-8"], body: .init(byteBuffer: ByteBuffer(bytes: data)))
+    }
+
+    /// `If-None-Match` uses weak comparison (RFC 9110 13.1.2): `W/"x"` matches `"x"`.
+    static func ifNoneMatch(_ request: Request, matches eTag: String) -> Bool {
+        let opaque = { (tag: String) in tag.hasPrefix("W/") ? String(tag.dropFirst(2)) : tag }
+        let tags = request.headers[values: .ifNoneMatch].flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
+        return tags.contains("*") || tags.contains { opaque($0) == opaque(eTag) }
+    }
+
+    /// Streams the file through SHA-256 in 1 MiB chunks; never holds the whole file.
+    static func sha256Hex(of url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }
 

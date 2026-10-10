@@ -530,11 +530,32 @@ extension LibraryTests {
             try await client.execute(uri: "/v1/games/\(id)/artwork/cover", method: .get, headers: conditional) {
                 XCTAssertEqual($0.status, .notModified)
             }
+            var weak = self.auth(self.adminToken)
+            weak[.ifNoneMatch] = "W/" + first
+            try await client.execute(uri: "/v1/games/\(id)/artwork/cover", method: .get, headers: weak) {
+                XCTAssertEqual($0.status, .notModified)
+            }
             try artwork.setCover(gameID: id, data: Data([4, 5, 6, 7]), fileExtension: "png")
             try await client.execute(uri: "/v1/games/\(id)/artwork/cover", method: .get, headers: conditional) {
                 XCTAssertEqual($0.status, .ok)
                 XCTAssertNotEqual($0.headers[.eTag], first)
                 XCTAssertEqual(Data(buffer: $0.body), Data([4, 5, 6, 7]))
+            }
+        }
+    }
+}
+
+extension LibraryTests {
+    func testWeakValidatorAndOversizedCover() async throws {
+        let id = try await importer.importPaths([try write(ROMFixtures.snes(seed: 24), "Weak.sfc").path], auth: nil).imported[0].id
+        XCTAssertThrowsError(try ArtworkStore(store: store).setCover(gameID: id, data: Data(count: ArtworkStore.maxCoverSize + 1), fileExtension: "png")) {
+            XCTAssertEqual($0 as? ArtworkStore.ArtworkError, .tooLarge)
+        }
+        var headers = auth(adminToken)
+        headers[.ifNoneMatch] = "W/\"\(id)\""
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/games/\(id)/files/\(id)", method: .get, headers: headers) {
+                XCTAssertEqual($0.status, .notModified)
             }
         }
     }
