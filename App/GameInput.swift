@@ -9,7 +9,7 @@ final class GameInput {
     var touchButtons: SEJoypadButtons = []
 
     #if os(macOS)
-    /// AppKit fallback for keyboards GameController doesn't report (e.g. remote/virtual keyboards).
+    /// Keyboard input on macOS, scoped to the owning player window.
     private static let keyCodeMap: [UInt16: SEJoypadButtons] = [
         126: .up, 125: .down, 123: .left, 124: .right,
         6: .b, 7: .a, 0: .y, 1: .x, 12: .l, 13: .r,
@@ -86,6 +86,8 @@ final class GameInput {
             if pad.buttonMenu.isPressed { buttons.insert(.start) }
             if pad.buttonOptions?.isPressed == true { buttons.insert(.select) }
         }
+        #if !os(macOS)
+        // On macOS the AppKit monitor handles keyboards; GCKeyboard keeps keys stuck when they're released in another app.
         if let keyboard = GCKeyboard.coalesced?.keyboardInput {
             let mapping: [(GCKeyCode, SEJoypadButtons)] = [
                 (.upArrow, .up), (.downArrow, .down), (.leftArrow, .left), (.rightArrow, .right),
@@ -96,6 +98,7 @@ final class GameInput {
                 buttons.insert(button)
             }
         }
+        #endif
         return buttons
     }
 }
