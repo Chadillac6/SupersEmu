@@ -223,6 +223,8 @@ final class AdminUserRoutesTests: XCTestCase {
         XCTAssertEqual(try store.listAPITokens(), [])
         XCTAssertEqual(try store.listUsers().map(\.displayName), ["Chad"])
         XCTAssertNil(try store.device(id: ipad.deviceID)?.revokedAt)
+        let userDirs = try FileManager.default.contentsOfDirectory(atPath: store.paths.userDirectory(admin.id).deletingLastPathComponent().path)
+        XCTAssertFalse(userDirs.contains { $0 != admin.id }, "failed player creation left \(userDirs)")
     }
 
     func testCreatePlayerUser() async throws {

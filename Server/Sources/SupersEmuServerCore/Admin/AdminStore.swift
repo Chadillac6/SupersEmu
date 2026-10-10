@@ -70,11 +70,17 @@ extension ServerStore {
 
     public func createPlayer(displayName: String, by auth: AuthContext) throws -> UserInfo {
         let user = UserInfo(id: UUID().uuidString.lowercased(), displayName: displayName, role: .player)
-        try FileManager.default.createDirectory(at: paths.userDirectory(user.id), withIntermediateDirectories: true)
-        try db.write { db in
-            try db.execute(sql: "INSERT INTO users (id, display_name, role, created_at) VALUES (?, ?, ?, ?)",
-                           arguments: [user.id, user.displayName, user.role.rawValue, Date()])
-            try Self.insertAudit(db, auth, action: "user.create", detail: "\(user.id) \(user.displayName)")
+        let directory = paths.userDirectory(user.id)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try db.write { db in
+                try db.execute(sql: "INSERT INTO users (id, display_name, role, created_at) VALUES (?, ?, ?, ?)",
+                               arguments: [user.id, user.displayName, user.role.rawValue, Date()])
+                try Self.insertAudit(db, auth, action: "user.create", detail: "\(user.id) \(user.displayName)")
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
         }
         return user
     }
