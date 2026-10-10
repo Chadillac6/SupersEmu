@@ -38,6 +38,7 @@ const SECoreAPI *se_core_mgba(void);
 const SECoreAPI *se_core_genesis_plus_gx(void);
 const SECoreAPI *se_core_beetle_psx(void);
 const SECoreAPI *se_core_picodrive(void);
+const SECoreAPI *se_core_mupen64plus_next(void);
 
 #ifdef __cplusplus
 }

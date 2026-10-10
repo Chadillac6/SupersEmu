@@ -20,6 +20,12 @@ struct PlayerView: View {
             if session.isChoosingDisc {
                 DiscPicker(session: session)
             }
+            if session.isMenuOpen {
+                InGameMenu(session: session)
+            }
+            if let name = session.disconnectedController, !session.isMenuOpen {
+                DisconnectPrompt(session: session, name: name)
+            }
             if let conflict = session.pendingConflict {
                 SaveConflictPrompt(conflict: conflict) { session.resolveConflict($0) }
             } else if session.isSyncing {
@@ -39,6 +45,18 @@ struct PlayerView: View {
             }
         }
         .foregroundStyle(.white)
+        .sheet(isPresented: $session.isShowingControls) {
+            NavigationStack {
+                ControlsView(fixedSystem: session.input.layout.system, gameID: session.game.id, gameTitle: session.game.title)
+            }
+            .preferredColorScheme(.dark)
+        }
+        .onChange(of: session.wantsExit) { _, exit in
+            if exit {
+                session.stop()
+                onExit()
+            }
+        }
         .onAppear { session.start() }
         .onDisappear { session.stop() }
         .onChange(of: scenePhase) { _, phase in
@@ -74,6 +92,13 @@ struct PlayerView: View {
                 .foregroundStyle(.white.opacity(0.7))
                 .accessibilityIdentifier("session-status")
             Spacer()
+            Button { session.openMenu() } label: {
+                Label("Menu", systemImage: "line.3.horizontal")
+            }
+            .fixedSize()
+            .disabled(session.isSyncing || session.pendingConflict != nil)
+            .help("In-game menu (hold Select + Start for 1 second, or hold Home on a controller)")
+            .accessibilityIdentifier("open-menu")
             Button { session.saveManualState() } label: {
                 Label("Save", systemImage: "square.and.arrow.down")
             }
@@ -164,62 +189,76 @@ struct DiscPicker: View {
     }
 }
 
-#if os(iOS)
-struct TouchControls: View {
-    let input: GameInput
-    @State private var pressed: SEJoypadButtons = []
+/// Pause menu over the game. D-pad/stick moves, bottom face button or Start chooses, right face button,
+/// Select or Home closes.
+struct InGameMenu: View {
+    @Bindable var session: GameSession
 
     var body: some View {
-        // Fits a 375-pt-wide portrait iPhone: 2 x 118 (pads) + 106 (pills) + 20 (padding).
-        HStack(alignment: .center, spacing: 0) {
-            VStack(spacing: 2) {
-                pad("▲", .up)
-                HStack(spacing: 30) { pad("◀", .left); pad("▶", .right) }
-                pad("▼", .down)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(session.game.title).font(.title3.bold()).lineLimit(1)
+            VStack(spacing: 6) {
+                ForEach(Array(session.menuItems.enumerated()), id: \.element) { index, item in
+                    Button { session.choose(item) } label: {
+                        Text(item.rawValue)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(index == session.menuSelection ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.06),
+                                        in: RoundedRectangle(cornerRadius: 10))
+                            .contentShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(index == session.menuSelection ? .isSelected : [])
+                    .accessibilityIdentifier("menu-\(item.rawValue)")
+                }
             }
-            Spacer(minLength: 0)
-            VStack(spacing: 10) {
-                HStack(spacing: 6) { pill("L", .l); pill("R", .r) }
-                HStack(spacing: 6) { pill("Select", .select); pill("Start", .start) }
-            }
-            Spacer(minLength: 0)
-            VStack(spacing: 2) {
-                pad("X", .x)
-                HStack(spacing: 30) { pad("Y", .y); pad("A", .a) }
-                pad("B", .b)
+            HStack {
+                Text("↑↓ choose · A/Start select · B/Select close")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Close") { session.closeMenu() }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("menu-close")
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 12)
-    }
-
-    private func pad(_ label: String, _ button: SEJoypadButtons) -> some View {
-        Circle()
-            .fill(.white.opacity(pressed.contains(button) ? 0.45 : 0.18))
-            .frame(width: 44, height: 44)
-            .overlay(Text(label).font(.headline))
-            .gesture(press(button))
-            .accessibilityIdentifier("pad-\(label)")
-    }
-
-    private func pill(_ label: String, _ button: SEJoypadButtons) -> some View {
-        Capsule()
-            .fill(.white.opacity(pressed.contains(button) ? 0.45 : 0.18))
-            .frame(width: 50, height: 28)
-            .overlay(Text(label).font(.caption.bold()))
-            .gesture(press(button))
-            .accessibilityIdentifier("pad-\(label)")
-    }
-
-    private func press(_ button: SEJoypadButtons) -> some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { _ in set(button, pressed: true) }
-            .onEnded { _ in set(button, pressed: false) }
-    }
-
-    private func set(_ button: SEJoypadButtons, pressed isPressed: Bool) {
-        if isPressed { pressed.insert(button) } else { pressed.remove(button) }
-        input.touchButtons = pressed
+        .padding(22)
+        .frame(width: 320)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("in-game-menu")
     }
 }
-#endif
+
+/// Shown when a player's controller disconnects mid-game; the game stays paused until they continue.
+struct DisconnectPrompt: View {
+    let session: GameSession
+    let name: String
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "gamecontroller").font(.largeTitle)
+            Text(session.controllerReconnected ? "Controller reconnected" : "Reconnect controller").font(.title3.bold())
+            Text(session.controllerReconnected
+                 ? "Press A or Start to keep playing."
+                 : "\(name) disconnected. Reconnect it, or continue with \(Self.fallback).")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            Button("Continue") { session.dismissDisconnect() }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("disconnect-continue")
+        }
+        .padding(24)
+        .frame(width: 320)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("disconnect-prompt")
+    }
+
+    #if os(iOS)
+    private static let fallback = "the touch controls"
+    #else
+    private static let fallback = "the keyboard"
+    #endif
+}

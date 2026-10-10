@@ -71,9 +71,18 @@ public struct GameSummary: Codable, Sendable, Equatable, Identifiable {
     public var totalSize: Int64
     /// When the game was added to the server (drives "Recently Added"). Optional so older servers still decode.
     public var addedAt: Date?
+    /// Merged from every metadata provider (docs/specs/metadata-and-artwork.md); each is nil when unknown.
+    public var publisher: String?
+    public var region: String?
+    public var genres: [String]?
+    public var players: Int?
+    public var criticScore: CriticScore?
+    /// Wide hero art. Same form as `coverPath`.
+    public var backdropPath: String?
 
     public init(id: String, title: String, system: SystemID, year: Int?, genre: String?, coverPath: String?, totalSize: Int64,
-                addedAt: Date? = nil) {
+                addedAt: Date? = nil, publisher: String? = nil, region: String? = nil, genres: [String]? = nil, players: Int? = nil,
+                criticScore: CriticScore? = nil, backdropPath: String? = nil) {
         self.id = id
         self.title = title
         self.system = system
@@ -82,6 +91,12 @@ public struct GameSummary: Codable, Sendable, Equatable, Identifiable {
         self.coverPath = coverPath
         self.totalSize = totalSize
         self.addedAt = addedAt
+        self.publisher = publisher
+        self.region = region
+        self.genres = genres
+        self.players = players
+        self.criticScore = criticScore
+        self.backdropPath = backdropPath
     }
 }
 
@@ -116,13 +131,53 @@ public struct GameFileInfo: Codable, Sendable, Equatable, Identifiable {
 
 public struct GameDetail: Codable, Sendable, Equatable {
     public var game: GameSummary
+    /// The game's description ("intro").
     public var summary: String?
     public var files: [GameFileInfo]
+    public var developer: String?
+    public var logoPath: String?
+    public var titleScreenPath: String?
+    /// In-game screenshots, in display order.
+    public var screenshotPaths: [String]?
+    /// Where the metadata came from, for attribution.
+    public var sources: [MetadataSource]?
 
-    public init(game: GameSummary, summary: String?, files: [GameFileInfo]) {
+    public init(game: GameSummary, summary: String?, files: [GameFileInfo], developer: String? = nil, logoPath: String? = nil,
+                titleScreenPath: String? = nil, screenshotPaths: [String]? = nil, sources: [MetadataSource]? = nil) {
         self.game = game
         self.summary = summary
         self.files = files
+        self.developer = developer
+        self.logoPath = logoPath
+        self.titleScreenPath = titleScreenPath
+        self.screenshotPaths = screenshotPaths
+        self.sources = sources
+    }
+}
+
+/// A critic/aggregate review score normalised to 0-100, with where it came from.
+public struct CriticScore: Codable, Sendable, Equatable {
+    public var score: Int
+    public var source: String
+    public var url: String?
+
+    public init(score: Int, source: String, url: String? = nil) {
+        self.score = score
+        self.source = source
+        self.url = url
+    }
+}
+
+/// One metadata provider that contributed to a game, e.g. `libretro` / "No-Intro via libretro-database".
+public struct MetadataSource: Codable, Sendable, Equatable {
+    public var provider: String
+    public var name: String
+    public var url: String?
+
+    public init(provider: String, name: String, url: String? = nil) {
+        self.provider = provider
+        self.name = name
+        self.url = url
     }
 }
 

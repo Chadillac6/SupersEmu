@@ -28,6 +28,7 @@ swift run supersemu server status --token "$(cat /tmp/se/admin.token)"
 | Track | Owns |
 |---|---|
 | Server library | `LibraryRoutes.swift`, `AdminLibraryRoutes.swift`, `SupersEmuServerCore/Library/*` |
+| Metadata + artwork | `SupersEmuServerCore/Metadata/*` (see docs/specs/metadata-and-artwork.md) |
 | CLI + admin | `AdminUserRoutes.swift`, `Sources/supersemu/*` |
 | Pairing + network + daemon | `PairingRoutes.swift`, `SupersEmuServerCore/Network/*`, `Resources/*.plist`, Server mode in app |
 | Save sync | `SaveRoutes.swift`, `SupersEmuServerCore/Saves/*`, `SupersEmuKit/Saves*.swift`, app save sync |

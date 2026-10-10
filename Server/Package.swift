@@ -15,6 +15,7 @@ let package = Package(
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.8.0"),
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.21.0"),
+        .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.6.0"),
     ],
     targets: [
         // Shared API models + HTTP client. Used by the apps, the CLI and the server. No dependencies.
@@ -27,6 +28,7 @@ let package = Package(
                 .product(name: "HummingbirdTLS", package: "hummingbird"),
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "X509", package: "swift-certificates"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
             ]),
         .executableTarget(
             name: "supersemu-server",

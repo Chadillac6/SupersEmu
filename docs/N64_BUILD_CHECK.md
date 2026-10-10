@@ -21,7 +21,9 @@
   devices can answer it. The simulator runs on the Mac's CPU and proves nothing about phone speed.
 - Whether OpenGL ES (deprecated by Apple but still shipping) or MoltenVK is the better long-term video path.
 
-## Next steps
-1. Add hardware-render support (GLES3 first) to `SELibretroHost`.
-2. Build an iOS simulator/macOS variant and confirm a homebrew N64 ROM draws frames.
-3. Measure FPS on Chad's iPhone and iPad once signing is set up.
+## Status (Milestone 3)
+1. Done: GL/GLES3 hardware rendering in `SELibretroHost`, and Mupen64Plus-Next as a static core
+   (`Mupen64PlusNextCore`, GLideN64 + HLE RSP, cached interpreter, no ParaLLEl) for macOS, iOS and the Simulator.
+2. Done: the PeterLemon/N64 cube demo boots and draws on macOS (host tests + app) and in the iOS Simulator app.
+   In the Simulator its colours are wrong; see `docs/specs/core-matrix.md`.
+3. Open: measure FPS on Chad's iPhone and iPad once signing is set up, and check the Simulator colour issue there.

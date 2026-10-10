@@ -65,6 +65,7 @@ Player devices (Mac, iPhone, iPad)
  ├─ library.sqlite          games, files, hashes, metadata, artwork refs, disc groups, permissions
  ├─ games/<sha256>/…        imported game files (content-addressed, originals never modified)
  ├─ artwork/…
+ ├─ metadata/               pinned libretro-database DATs (docs/specs/metadata-and-artwork.md)
  └─ users/<user-id>/
      ├─ saves/<game>/…      native saves, auto states, manual states (immutable, content-hashed)
      └─ profile.json        favourites, history, per-user settings
@@ -118,6 +119,9 @@ PUT  /v1/saves/{game}/{kind}?slot&parent&core&coreVersion  upload immutable revi
 GET  /v1/saves/{game}/revisions/{rev}  download one revision
 GET  /v1/events                     server-sent events: library.updated, save.synced, …
 admin: /v1/admin/users, /invites, /permissions, /library/import, /library/publish, /tokens
+       /v1/admin/library/upload?batch=&path= (stream one file), /library/upload/{batch}/finish (move batch into Incoming, scan)
+       /v1/admin/library/issues (Review Needed), /issues/{id}/system (pick console), DELETE /issues/{id}
+       /v1/admin/storage, /storage/move (Move Library)
 ```
 - Saves: same model as `save-and-resume.md`. The server stores immutable revisions per user. An upload
   whose parent isn't the current head becomes a branch, never an overwrite. "Synced" shows only
@@ -125,13 +129,50 @@ admin: /v1/admin/users, /invites, /permissions, /library/import, /library/publis
 - Downloads: whole files to the device cache with resumable Range requests. PS1 discs are large, so
   the cache UI shows sizes and lets users remove downloaded games.
 
+## Backups (`SupersEmuServerCore/Backups`)
+- `BackupManager` writes `SupersEmu-<yyyyMMdd-HHmmss>/` into the destination (default
+  `<data dir>/Backups`, typically an external drive): `library.sqlite` via SQLite's online backup API
+  (consistent while serving, switched to a single-file journal), `users/` (save revisions), `artwork/`,
+  `tls/` + `admin.token` (paired devices keep their pin after a restore), other top-level settings
+  `*.json`, and `manifest.json` with size + SHA-256 for every file. `games/` and `bios/` only with
+  `includeROMs`; the BIOS index is always in the database. Written to a `.partial` folder and renamed
+  only after verification.
+- Verification (after every backup, before every restore, `POST …/:id/verify`): every file matches the
+  manifest (none missing, extra or changed) and `PRAGMA integrity_check` is `ok`.
+- Config and the last result live in `<data dir>/backups.json` (not backed up): destination, keep N
+  (default 7), includeROMs, daily hour (default 03:00). The daemon runs today's slot if it hasn't
+  been attempted (catch-up after sleep/power-off), then daily. A destination under `/Volumes/<name>`
+  needs that volume mounted; an unplugged drive is a failed backup, never a write to the boot disk.
+  After a successful backup older ones beyond N are deleted.
+- Restore: the route verifies, answers 202, then `ServerLauncher.run` stops serving, closes the
+  database, moves what it replaces to `<data dir>/.pre-restore/`, copies the backup in (ROMs/BIOS
+  files only when the backup has them), reopens (running migrations) and serves again. Any failure
+  puts the previous data back.
+- Admin API (admin + `users:admin`, audited): `GET /v1/admin/backups` (config, last result, next run,
+  backups), `POST /v1/admin/backups` (`{includeROMs?}`), `GET|PUT /v1/admin/backups/config`,
+  `POST /v1/admin/backups/:id/verify`, `POST /v1/admin/backups/:id/restore`.
+
+## Offline and unreachable (`ServerSession`, `ConnectionBanner`)
+- `ServerSession.connection` is `connected(.home | .tailscale)` (Tailscale = `*.ts.net`,
+  100.64.0.0/10 or `fd7a:115c:a1e0::/48`), `connecting`, `unreachable`, `certificateMismatch` (the
+  pinning delegate refused the certificate) or `signedOut(.notPaired | .revoked)` (401). The state
+  machine is `SupersEmuKit.ConnectionMonitor`.
+- Unreachable and certificate mismatch retry with backoff (2, 4, 8 … 60 s; 300 s cap for a
+  mismatch). A network change (`NWPathMonitor`: Wi-Fi, leaving home, Tailscale on/off) resets the
+  backoff and retries at once, as do foregrounding and the banner's Retry.
+- `ConnectionBanner` above the library: "Can't reach <server>. Check that it's on, or turn on
+  Tailscale when you're away.", a certificate or signed-out message, a "via Tailscale" pill and a
+  short "Back online" after recovering. Offline, downloaded games play; games that aren't downloaded
+  are unavailable (counted in the banner, "Unavailable offline" on the game page, no download
+  attempt).
+
 ## CLI and bots (OpenClaw)
 ```
 supersemu server status
 supersemu library scan | import <path> | publish <game> --to <user|group>
 supersemu users list | invite <name> | revoke <user>
 supersemu tokens create --scope library:read,library:write --name openclaw
-supersemu backups run
+supersemu backup create | list [--verify] | restore <id> --yes | config [--destination …] [--keep N]
 ```
 - OpenClaw [Verified: openclaw.ai, github.com/openclaw/openclaw] is a self-hosted agent gateway with
   a CLI and a skills/plugin system. We ship a SupersEmu skill that calls the `supersemu` CLI, so a
@@ -162,3 +203,20 @@ responsibility. SupersEmu ships no games or BIOS files.
 - Daemon starts at boot with no user logged in. API reachable on LAN and over Tailscale from an iPhone on cellular.
 - Pair an iPhone from a pairing QR. Revoke it and confirm the next request fails.
 - Download a 700 MB file over Tailscale with a resume after interruption.
+
+## Library management (M3, Server Mode)
+- **Uploads** (`admin` + `library:write`): each file streams to `Incoming/.uploads/<batch>/<path>` through a hidden
+  partial file; `finish` moves the batch to `Incoming/Uploads/<batch>` and scans Incoming. Paths must be relative and
+  made of visible names (no `..`, hidden components, `:` or `\`, at most 16 levels); batch ids are 1-64 letters, digits
+  or dashes. Limits: 4 GB per file and 512 MB free space left on the library volume (413 / 507). Settled uploads are
+  deleted (they're copies) instead of being kept in `Imported/`. Unfinished batches are dropped after a day.
+- **Review Needed**: each scan records what it left in Incoming (`import_issues`) with the reason. `issues` merges
+  those with the review queue. Picking a console is offered only for a single cartridge ROM that's unknown or
+  ambiguous; discs and unsupported formats never get one. Delete removes the queued copy and the Incoming file.
+- **Storage**: games, BIOS, artwork, Incoming and Imported live in the library root, which defaults to the data
+  folder; `storage.json` in the data folder points it elsewhere. The database, TLS identity, tokens and saves always
+  stay in the data folder. Move Library copies, verifies size and SHA-256 of every file, rewrites `storage.json`,
+  then removes the old copy; on any failure the partial copy is removed and nothing switches. If the library's drive
+  is missing at boot the server still starts, creates nothing in its place, reports `available: false`, and refuses
+  imports/uploads with 503 until the drive is back.
+

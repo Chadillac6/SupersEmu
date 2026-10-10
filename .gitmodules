@@ -16,3 +16,6 @@
 [submodule "Vendor/cores/picodrive"]
 	path = Vendor/cores/picodrive
 	url = https://github.com/libretro/picodrive.git
+[submodule "Vendor/cores/mupen64plus_next"]
+	path = Vendor/cores/mupen64plus_next
+	url = https://github.com/libretro/mupen64plus-libretro-nx.git

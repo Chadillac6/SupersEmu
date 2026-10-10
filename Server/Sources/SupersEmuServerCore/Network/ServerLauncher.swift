@@ -4,6 +4,7 @@ import HummingbirdCore
 import HummingbirdTLS
 import Logging
 import NIOCore
+import ServiceLifecycle
 import SupersEmuKit
 
 /// Options for `supersemu-server run`.
@@ -17,6 +18,8 @@ public struct ServerRunOptions: Sendable {
     /// Tailscale MagicDNS name, e.g. `mac-mini.tail1234.ts.net`, added after the LAN URLs.
     public var tailscaleHost: String?
     public var bonjour = true
+    /// Background libretro-database matching and thumbnail downloads after imports.
+    public var metadata = true
 
     public init() {}
 }
@@ -38,36 +41,96 @@ public enum ServerLauncher {
             ? LocalNetwork.advertisedURLs(scheme: scheme, port: options.port, tailscaleHost: options.tailscaleHost)
             : options.advertiseURLs
         let environment = PairingEnvironment(urls: urls, certificateSHA256: pin)
+        let metadata = options.metadata ? MetadataService(store: store) : nil
+        metadata?.startPeriodicRetry()
         let application = Application(
-            router: buildRouter(store: store), server: server,
+            router: buildRouter(store: store, metadata: metadata), server: server,
             configuration: .init(address: .hostname(options.hostname, port: options.port), serverName: "SupersEmu"),
             onServerRunning: onServerRunning)
         return (application, environment)
     }
 
-    /// Runs until SIGTERM/SIGINT. The launch daemon calls this.
-    public static func run(store: ServerStore, options: ServerRunOptions) async throws {
-        let (application, environment) = try makeApplication(store: store, options: options)
-        PairingEnvironment.current = environment
+    /// Runs until SIGTERM/SIGINT. The launch daemon calls this. Also runs the daily backup, and for a restore stops
+    /// serving, closes the database, restores and starts serving again from the restored data.
+    public static func run(store initial: ServerStore, options: ServerRunOptions) async throws {
+        var store = initial
         var logger = Logger(label: "supersemu-server")
         logger.logLevel = .info
-        logger.info("Serving \(options.insecureHTTP ? "HTTP (insecure)" : "HTTPS") on \(options.hostname):\(options.port)")
-        logger.info("Pairing URLs: \(environment.urls.map(\.absoluteString).joined(separator: ", "))")
-        if let pin = environment.certificateSHA256 { logger.info("Certificate SHA-256: \(pin)") }
-        var advertiser: BonjourAdvertiser?
-        if options.bonjour {
+        while true {
+            let (application, environment) = try makeApplication(store: store, options: options)
+            PairingEnvironment.current = environment
+            logger.info("Serving \(options.insecureHTTP ? "HTTP (insecure)" : "HTTPS") on \(options.hostname):\(options.port)")
+            logger.info("Pairing URLs: \(environment.urls.map(\.absoluteString).joined(separator: ", "))")
+            if let pin = environment.certificateSHA256 { logger.info("Certificate SHA-256: \(pin)") }
+            var advertiser: BonjourAdvertiser?
+            if options.bonjour {
+                do {
+                    advertiser = try BonjourAdvertiser(
+                        name: store.serverName, port: options.port,
+                        txt: SupersEmuBonjour.txtRecord(scheme: options.insecureHTTP ? "http" : "https",
+                                                        certificateSHA256: environment.certificateSHA256, serverName: store.serverName))
+                } catch {
+                    logger.warning("\(error)")
+                }
+            }
+            let group = ServiceGroup(configuration: .init(
+                services: [.init(service: application)], gracefulShutdownSignals: [.sigterm, .sigint], logger: logger))
+            let pending = PendingRestore()
+            await store.backups.setRestoreHandler { info in
+                pending.set(info)
+                // Lets the 202 for the restore request reach the client before connections close.
+                try? await Task.sleep(for: .milliseconds(500))
+                await group.triggerGracefulShutdown()
+            }
+            let scheduler = Task { [backups = store.backups] in await BackupScheduler.run(backups, logger: logger) }
+            defer { scheduler.cancel() }
             do {
-                advertiser = try BonjourAdvertiser(
-                    name: store.serverName, port: options.port,
-                    txt: SupersEmuBonjour.txtRecord(scheme: options.insecureHTTP ? "http" : "https",
-                                                    certificateSHA256: environment.certificateSHA256, serverName: store.serverName))
+                try await group.run()
             } catch {
-                logger.warning("\(error)")
+                advertiser?.stop()
+                throw error
+            }
+            scheduler.cancel()
+            await scheduler.value
+            advertiser?.stop()
+            await store.backups.setRestoreHandler(nil)
+
+            guard let info = pending.value else { return }
+            let paths = store.paths
+            logger.notice("Stopped serving to restore backup \(info.id) from \(info.path)")
+            do {
+                try store.close()
+            } catch {
+                logger.error("Couldn't close the database for the restore, kept the current data: \(error)")
+                await store.backups.finishRestore()
+                continue
+            }
+            var record: BackupManager.RestoreRecord?
+            do {
+                let restored = try BackupManager.applyRestore(folder: URL(fileURLWithPath: info.path, isDirectory: true), to: paths)
+                record = restored
+                logger.notice("Restored backup \(info.id); the replaced data is in \(restored.safety.path)")
+            } catch {
+                logger.error("Restore failed, kept the current data: \(error)")
+            }
+            do {
+                store = try ServerStore.open(paths: paths)
+            } catch {
+                // Never serve a closed store: put the previous data back, or exit so launchd restarts the daemon.
+                guard let record else { throw error }
+                logger.error("The restored data didn't open (\(error)); putting the previous data back")
+                record.revert(paths)
+                store = try ServerStore.open(paths: paths)
             }
         }
-        defer { advertiser?.stop() }
-        try await application.runService()
     }
+}
+
+private final class PendingRestore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var info: BackupInfo?
+    func set(_ info: BackupInfo) { lock.withLock { self.info = info } }
+    var value: BackupInfo? { lock.withLock { info } }
 }
 
 /// First-run setup shared by `bootstrap` and `run --bootstrap`.

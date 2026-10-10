@@ -1,0 +1,12 @@
+// Signing for every project target. With no team the app is ad-hoc signed ("-"), which keeps
+// scripts/build.sh and CI working without an Apple account. Set SUPERSEMU_TEAM_ID (environment,
+// xcodebuild argument, or Config/Signing.local.xcconfig, which is gitignored) to switch to
+// automatic signing with that team. See docs/specs/distribution.md.
+_SE_UNSIGNED_STYLE_ = Manual
+_SE_UNSIGNED_IDENTITY_ = -
+
+DEVELOPMENT_TEAM = $(SUPERSEMU_TEAM_ID)
+CODE_SIGN_STYLE = $(_SE_UNSIGNED_STYLE_$(SUPERSEMU_TEAM_ID):default=Automatic)
+CODE_SIGN_IDENTITY = $(_SE_UNSIGNED_IDENTITY_$(SUPERSEMU_TEAM_ID):default=Apple Development)
+
+#include? "Signing.local.xcconfig"

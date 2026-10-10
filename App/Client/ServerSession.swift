@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 import SupersEmuKit
 #if os(iOS)
@@ -17,12 +18,15 @@ final class ServerSession {
     }
 
     private(set) var credential: ServerCredential?
-    private(set) var status: Status
+    /// Home network / Tailscale / unreachable / signed out / certificate mismatch. Retries with backoff on its own.
+    private(set) var connection: ConnectionState
     /// Last library the server returned; kept on disk so downloaded games stay browsable offline.
     private(set) var games: [GameSummary] = []
     private(set) var firstSeen: [String: Date] = [:]
     private(set) var activeURL: URL?
     private(set) var lastRefreshed: Date?
+    /// When the server came back after being unreachable (or presenting the wrong certificate).
+    private(set) var recoveredAt: Date?
 
     @ObservationIgnored private let store: CredentialStore
     @ObservationIgnored private let snapshotURL: URL
@@ -30,14 +34,22 @@ final class ServerSession {
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     /// Bumped on pair/sign-out so responses for a previous connection are dropped.
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var monitor: ConnectionMonitor
+    @ObservationIgnored private var retryTask: Task<Void, Never>?
+    @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
+    @ObservationIgnored private var trust: PinnedCertificateDelegate?
+    @ObservationIgnored private var pathMonitor: NWPathMonitor?
+    @ObservationIgnored private var lastPath: String?
 
     init(store: CredentialStore = ServerSession.defaultStore(), snapshotURL: URL = AppPaths.serverLibrarySnapshot) {
         self.store = store
         self.snapshotURL = snapshotURL
         let saved = store.load()
         credential = saved
-        status = saved == nil ? .notPaired : .connecting
+        monitor = ConnectionMonitor(paired: saved != nil)
+        connection = monitor.state
         if saved != nil { loadSnapshot() }
+        startPathMonitor()
     }
 
     nonisolated static func defaultStore() -> CredentialStore {
@@ -48,7 +60,18 @@ final class ServerSession {
     }
 
     var isPaired: Bool { credential != nil }
-    var isOnline: Bool { status == .online }
+    var isOnline: Bool { connection.isConnected }
+    /// False once a refresh has found the server unreachable; save sync then queues without waiting on timeouts.
+    var isReachable: Bool { connection.mayReachServer }
+
+    var status: Status {
+        switch connection {
+        case .signedOut(.notPaired): return .notPaired
+        case .connecting: return .connecting
+        case .connected: return .online
+        default: return .offline(connection.message(serverName: serverName)?.title ?? "Can't reach \(serverName)")
+        }
+    }
     var serverName: String { credential?.serverName ?? "SupersEmu Server" }
 
     /// Client for the server URL that answered last (LAN first, then Tailscale).
@@ -81,7 +104,9 @@ final class ServerSession {
                 urlSession = nil
                 self.credential = credential
                 activeURL = url
-                status = .connecting
+                self.trust = nil
+                monitor.paired()
+                publish()
                 await refresh()
                 return
             } catch let error as APIClientError {
@@ -93,7 +118,14 @@ final class ServerSession {
         throw lastError
     }
 
-    /// Re-fetches the library. Called on launch, when the app returns to the foreground, and from Retry.
+    /// Retry button: skips the remaining backoff.
+    func retryNow() async {
+        monitor.networkChanged()
+        await refresh()
+    }
+
+    /// Re-fetches the library. Called on launch, when the app returns to the foreground, on network changes,
+    /// from Retry and by the backoff timer.
     func refresh() async {
         if let refreshTask { return await refreshTask.value }
         let task = Task { await performRefresh() }
@@ -103,32 +135,109 @@ final class ServerSession {
     }
 
     private func performRefresh() async {
-        guard let credential else { status = .notPaired; return }
+        guard let credential else {
+            monitor.signedOut()
+            publish()
+            return
+        }
         let generation = self.generation
-        if status != .online { status = .connecting }
         let candidates = [activeURL].compactMap { $0 } + credential.urls.filter { $0 != activeURL }
-        var failure = "Can't reach \(credential.serverName)"
+        var failure = ConnectionFailure.unreachable
         for url in candidates {
             let client = APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
+            let rejections = trust?.rejectionCount ?? 0
             do {
                 let library = try await client.library()
                 guard generation == self.generation else { return }
                 activeURL = url
                 apply(library.games)
                 lastRefreshed = Date()
-                status = .online
-                return
-            } catch APIClientError.http(let code, _) where code == 401 {
-                guard generation == self.generation else { return }
-                failure = "This device was signed out by \(credential.serverName). Pair it again."
-                status = .offline(failure)
+                if connection == .unreachable || connection == .certificateMismatch { recoveredAt = Date() }
+                monitor.succeeded(via: url)
+                publish()
+                startHeartbeat()
+                retryTask?.cancel()
+                retryTask = nil
                 return
             } catch {
-                continue
+                guard generation == self.generation else { return }
+                switch ConnectionFailure.classify(error, certificateRejected: (trust?.rejectionCount ?? 0) != rejections) {
+                case .signedOut:
+                    monitor.failed(.signedOut)
+                    publish()
+                    return
+                case .certificateMismatch:
+                    failure = .certificateMismatch
+                case .unreachable:
+                    continue
+                }
             }
         }
         guard generation == self.generation else { return }
-        status = .offline(failure)
+        monitor.failed(failure)
+        publish()
+        scheduleRetry()
+    }
+
+    /// Notices the server going away while connected (e.g. the Mac mini shut down) without waiting for a refresh.
+    private func startHeartbeat() {
+        guard heartbeatTask == nil else { return }
+        heartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                await self.heartbeat()
+            }
+        }
+    }
+
+    private func heartbeat() async {
+        guard connection.isConnected, refreshTask == nil, let credential, let url = activeURL else { return }
+        let client = APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
+        if (try? await client.health()) == nil { await refresh() }
+    }
+
+    private func publish() {
+        if connection != monitor.state { connection = monitor.state }
+    }
+
+    private func scheduleRetry() {
+        retryTask?.cancel()
+        guard let delay = monitor.retryDelay else { return }
+        let generation = self.generation
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self, generation == self.generation else { return }
+            await self.refresh()
+        }
+    }
+
+    /// Joining Wi-Fi, leaving home or toggling Tailscale (a new utun interface) retries right away.
+    private func startPathMonitor() {
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let signature = "\(path.status)|" + path.availableInterfaces.map(\.name).joined(separator: ",")
+            Task { @MainActor [weak self] in self?.networkChanged(signature: signature) }
+        }
+        monitor.start(queue: DispatchQueue(label: "SupersEmu.ServerSession.path"))
+        pathMonitor = monitor
+    }
+
+    private func networkChanged(signature: String) {
+        defer { lastPath = signature }
+        guard let lastPath, lastPath != signature, credential != nil else { return }
+        monitor.networkChanged()
+        retryTask?.cancel()
+        retryTask = nil
+        // The old connection may be gone (or a better route available); drop pooled connections.
+        urlSession?.finishTasksAndInvalidate()
+        urlSession = nil
+        trust = nil
+        // Always try again, even with no network (a loopback server still works): a failure schedules the backoff.
+        Task {
+            await refreshTask?.value
+            await refresh()
+        }
     }
 
     static func isLoopback(_ url: URL) -> Bool {
@@ -141,14 +250,20 @@ final class ServerSession {
         generation += 1
         refreshTask?.cancel()
         refreshTask = nil
+        retryTask?.cancel()
+        retryTask = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
         store.delete()
         urlSession = nil
+        trust = nil
         credential = nil
         activeURL = nil
         games = []
         firstSeen = [:]
         try? FileManager.default.removeItem(at: snapshotURL)
-        status = .notPaired
+        monitor.signedOut()
+        publish()
     }
 
     func detail(for gameID: String) async throws -> GameDetail {
@@ -184,8 +299,12 @@ final class ServerSession {
 
     private func session(pin: String?) -> URLSession {
         if let urlSession { return urlSession }
-        let session = URLSession(configuration: Self.configuration, delegate: PinnedCertificateDelegate(certificateSHA256: pin), delegateQueue: nil)
-        if credential != nil { urlSession = session }
+        let delegate = PinnedCertificateDelegate(certificateSHA256: pin)
+        let session = URLSession(configuration: Self.configuration, delegate: delegate, delegateQueue: nil)
+        if credential != nil {
+            urlSession = session
+            trust = delegate
+        }
         return session
     }
 

@@ -9,6 +9,7 @@
 #   GBA       jsmolka/gba-tests ppu/hello.gba                (MIT)
 #   Genesis   rhargreaves/mega-drive-midi-interface v1.34    (GPLv3)
 #   32X       haroldo-ok/noudar-32x v0.0.2                   (BSD 2-Clause)
+#   N64       PeterLemon/N64 RDP cube demo                   (Unlicense; boots with Nintendo's IPL3 bootcode)
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dest="$root/Tests/Fixtures/local"
@@ -44,6 +45,8 @@ fetch gba-tests-hello.gba https://raw.githubusercontent.com/jsmolka/gba-tests/a7
   38aed48b67bc0f701e8aa222b0c3334bd306bd29888707bb7224d81f5576c264
 fetch mega-drive-midi-interface.md https://github.com/rhargreaves/mega-drive-midi-interface/releases/download/v1.34/mega-drive-midi-interface-generic-v1.34.bin \
   7fc340e1f0ecd210c91a3a70956248dda57c5b2067a6eba592aeb2b1a5e27f68
+fetch cube-fill-triangle.z64 https://raw.githubusercontent.com/PeterLemon/N64/7085543e4a19d8c539fc9e0a4d2869e788b4ed4b/RDP/32BPP/Triangle/Cube/FillTriangle320x240/CubeFillTriangle32BPP320X240.N64 \
+  d66c08615ccdb93d03fece84f8f5f7e08a615985fb11ec6f6c00d0f183c3b9f9
 
 noudar_sha=e162e5b9fc80b1671eaf8c68d886b8fc51601141ed2373b678f9465981875c0d
 if [ ! -f "$dest/noudar.32x" ] || [ "$(shasum -a 256 "$dest/noudar.32x" | cut -d' ' -f1)" != "$noudar_sha" ]; then

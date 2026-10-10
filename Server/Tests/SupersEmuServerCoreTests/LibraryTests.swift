@@ -35,6 +35,19 @@ enum ROMFixtures {
         return Data(bytes)
     }
 
+    /// N64 header in big-endian (.z64) order, then re-ordered: "v64" swaps 16-bit pairs, "n64" reverses 32-bit words.
+    static func n64(order: String = "z64", seed: UInt8 = 1) -> Data {
+        var bytes = [UInt8](repeating: 0, count: 0x1000)
+        bytes.replaceSubrange(0..<4, with: [0x80, 0x37, 0x12, 0x40])
+        bytes[0x200] = seed
+        switch order {
+        case "v64": for i in stride(from: 0, to: bytes.count, by: 2) { bytes.swapAt(i, i + 1) }
+        case "n64": for i in stride(from: 0, to: bytes.count, by: 4) { bytes[i..<i + 4].reverse() }
+        default: break
+        }
+        return Data(bytes)
+    }
+
     /// Interleaves a plain Genesis ROM into Super Magic Drive (.smd) layout.
     static func smd(from rom: Data) -> Data {
         var out = [UInt8](repeating: 0, count: 512)
@@ -68,6 +81,16 @@ final class SystemDetectorTests: XCTestCase {
         XCTAssertEqual(detect("Sonic.gen", ROMFixtures.genesis(name: " SEGA MEGA DRIVE")), .system(.genesis))
         XCTAssertEqual(detect("Sonic.bin", ROMFixtures.genesis()), .system(.genesis))
         XCTAssertEqual(detect("Sonic.smd", ROMFixtures.smd(from: ROMFixtures.genesis())), .system(.genesis))
+    }
+
+    func testDetectsN64InEveryByteOrder() {
+        XCTAssertEqual(detect("Mario.z64", ROMFixtures.n64(order: "z64")), .system(.n64))
+        XCTAssertEqual(detect("Mario.v64", ROMFixtures.n64(order: "v64")), .system(.n64))
+        XCTAssertEqual(detect("Mario.n64", ROMFixtures.n64(order: "n64")), .system(.n64))
+        XCTAssertEqual(detect("Misnamed.n64", ROMFixtures.n64(order: "v64")), .system(.n64))
+        XCTAssertEqual(detect("MARIO.Z64", ROMFixtures.n64(order: "z64")), .system(.n64))
+        guard case .needsReview = detect("Junk.z64", Data(count: 0x1000)) else { return XCTFail("headerless .z64 accepted") }
+        guard case .needsReview = detect("Tiny.n64", Data([0x40, 0x12, 0x37, 0x80])) else { return XCTFail("truncated .n64 accepted") }
     }
 
     func testAmbiguousFilesNeedReview() {

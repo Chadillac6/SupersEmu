@@ -31,21 +31,33 @@ func registerLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: Server
                                                         size: size, filename: file.filename, eTag: "\"\(fileID)\"")
     }
 
-    group.get("games/:id/artwork/cover") { request, context -> Response in
+    @Sendable func serveArtwork(_ request: Request, _ context: SERequestContext, position: Int) async throws -> Response {
         let auth = try context.caller()
         try auth.require(.libraryRead)
         let id = try context.parameters.require("id")
-        let cover: String? = try await store.db.read { db in
-            guard try Permissions.canSee(gameID: id, auth: auth, db: db) else { return nil }
-            return try String.fetchOne(db, sql: "SELECT cover_artwork FROM games WHERE id = ? AND needs_review = 0", arguments: [id])
+        guard let kind = ArtworkKind(rawValue: try context.parameters.require("kind")) else {
+            throw HTTPError(.notFound, message: "Unknown artwork kind")
         }
-        guard let url = artwork.coverFile(cover: cover) else { throw HTTPError(.notFound, message: "No cover artwork") }
-        // Covers can be replaced (M2 scraping), so clients revalidate with the content-hash ETag.
+        let path: String? = try await store.db.read { db in
+            guard try Permissions.canSee(gameID: id, auth: auth, db: db),
+                  try Bool.fetchOne(db, sql: "SELECT needs_review = 0 FROM games WHERE id = ?", arguments: [id]) == true else { return nil }
+            return try ArtworkStore.recordedPath(gameID: id, kind: kind, position: position, db: db)
+        }
+        guard let url = artwork.coverFile(cover: path) else { throw HTTPError(.notFound, message: "No \(kind.rawValue) artwork") }
+        // Artwork can be replaced (metadata service, overrides), so clients revalidate with the content-hash ETag.
         let eTag = "\"\(try ArtworkStore.contentHash(of: url) ?? LibraryHTTP.sha256Hex(of: url))\""
         var headers: HTTPFields = [.eTag: eTag, .cacheControl: "private, no-cache"]
         if LibraryHTTP.ifNoneMatch(request, matches: eTag) { return Response(status: .notModified, headers: headers) }
         headers[.contentType] = ArtworkStore.contentType(for: url)
         return Response(status: .ok, headers: headers, body: try await fileIO.loadFile(path: url.path, context: context))
+    }
+
+    group.get("games/:id/artwork/:kind") { request, context in try await serveArtwork(request, context, position: 0) }
+    group.get("games/:id/artwork/:kind/:position") { request, context in
+        guard let position = Int(try context.parameters.require("position")), position >= 0 else {
+            throw HTTPError(.notFound, message: "No artwork")
+        }
+        return try await serveArtwork(request, context, position: position)
     }
 }
 
@@ -69,7 +81,11 @@ enum LibraryAccess {
                 GameFileInfo(id: row["id"], filename: row["filename"], role: GameFileRole(rawValue: row["role"]) ?? .rom,
                              size: row["size"], discNumber: row["disc_number"])
             }
-            return GameDetail(game: LibraryQueries.summary(from: row), summary: row["summary"], files: files)
+            let merged = try MetadataMerge.load(gameIDsSQL: "SELECT ?", arguments: [gameID], db: db)[gameID] ?? MetadataMerge.Merged()
+            return GameDetail(game: LibraryQueries.summary(from: row, merged: merged), summary: merged.description ?? row["summary"],
+                              files: files, developer: merged.developer, logoPath: merged.artworkPath(gameID, .logo),
+                              titleScreenPath: merged.artworkPath(gameID, .title),
+                              screenshotPaths: merged.screenshotPaths(gameID), sources: merged.sources.isEmpty ? nil : merged.sources)
         }
     }
 
@@ -82,7 +98,7 @@ enum LibraryAccess {
                     """, arguments: [gameID, fileID]) else { return nil }
             let storedPath: String = row["stored_path"]
             guard !storedPath.contains("..") else { return nil }
-            return StoredFile(filename: row["filename"], url: store.paths.root.appendingPathComponent(storedPath))
+            return StoredFile(filename: row["filename"], url: store.paths.libraryFile(storedPath))
         }
     }
 }
