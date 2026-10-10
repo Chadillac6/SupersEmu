@@ -50,8 +50,9 @@ Drive. Revisions, branches and statuses above are unchanged.
 
 ### Client (`SupersEmuKit/SavesSync.swift` `SaveSyncEngine`, `App/Sync`)
 - Local-only when no server is signed in: `SaveSync.shared.provider` returns no client, nothing is
-  queued and launches behave exactly like M0. The sign-in track sets the provider; for development,
-  `SUPERSEMU_SERVER_URL` + `SUPERSEMU_SERVER_TOKEN` (a device token) turn sync on.
+  queued and launches behave exactly like M0. The provider asks the paired `ServerSession` for its client
+  (active LAN/Tailscale URL, pinned TLS) at each sync, and the queue flushes when it comes online. For
+  development, `SUPERSEMU_SERVER_URL` + `SUPERSEMU_SERVER_TOKEN` (a device token) override it.
 - After SRAM, the auto state or slot 1 is written locally, a copy is queued on disk
   (`Application Support/SupersEmu/Sync/pending`) and uploaded. Offline uploads stay queued across
   relaunches and retry on the next save, launch or app start. Newer copies of a line supersede queued

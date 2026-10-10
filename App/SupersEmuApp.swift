@@ -45,9 +45,15 @@ struct RootView: View {
                 LibraryView { playing = $0 }
             }
         }
-        .task { await server.refresh() }
+        .task {
+            SaveSync.shared.provider.use { [server] in server.client() }
+            await server.refresh()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await server.refresh() } }
+        }
+        .onChange(of: server.isOnline) { _, online in
+            if online { Task { await SaveSync.shared.engine.flush() } }
         }
     }
 }
