@@ -27,6 +27,7 @@ final class GameSession {
         guard host == nil else { return }
         do {
             let host = try SELibretroHost(
+                coreID: CoreRegistry.coreID(for: game.fileURL, console: game.console),
                 romURL: game.fileURL,
                 saveRAMURL: AppPaths.saveRAM(for: game.id),
                 systemDirectory: AppPaths.system)
