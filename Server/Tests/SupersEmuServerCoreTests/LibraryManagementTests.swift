@@ -142,6 +142,7 @@ final class LibraryManagementTests: XCTestCase {
             XCTAssertEqual(byFile["Disc Game.cue"]?.kind, .missingFiles)
             XCTAssertTrue(byFile["Disc Game.cue"]?.reason.contains("Disc Game (Track 2).bin") == true)
             XCTAssertEqual(byFile["Disc Game.cue"]?.candidateSystems, [])
+            XCTAssertNil(byFile["Disc Game (Track 1).bin"], "a disc's tracks are part of its sheet's item")
             XCTAssertEqual(byFile["Mystery.gb"]?.kind, .ambiguous)
             XCTAssertEqual(byFile["Mystery.gb"]?.incomingPath, "Mystery.gb")
             XCTAssertTrue(byFile["Mystery.gb"]?.candidateSystems.contains(.gb) == true)
@@ -191,6 +192,38 @@ final class LibraryManagementTests: XCTestCase {
             issues = try await self.issues(client)
             XCTAssertEqual(issues.map(\.filename), ["Thing.rom"])
         }
+    }
+
+    func testDeletingDiscIssueRemovesSheetAndTracks() async throws {
+        let incoming = store.paths.incoming
+        try write(DiscFixtures.cue(["Disc Game (Track 1).bin", "Disc Game (Track 2).bin"]), "Disc Game/Disc Game.cue", in: incoming)
+        try write(Data(count: 2352 * 16), "Disc Game/Disc Game (Track 1).bin", in: incoming)
+        _ = try await importer.scanIncoming(auth: nil)
+
+        try await app().test(.router) { client in
+            let issues = try await self.issues(client)
+            XCTAssertEqual(issues.map(\.filename), ["Disc Game.cue"])
+            try await client.execute(uri: "/v1/admin/library/issues/\(issues[0].id)", method: .delete, headers: self.auth(self.adminToken)) {
+                XCTAssertEqual($0.status, .noContent)
+            }
+            let remaining = try await self.issues(client)
+            XCTAssertEqual(remaining.map(\.filename), [])
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: incoming.appendingPathComponent("Disc Game/Disc Game (Track 1).bin").path))
+    }
+
+    func testRetryReportsTheDiscsNewProblem() async throws {
+        let incoming = store.paths.incoming
+        try write(DiscFixtures.cue(["Disc Game (Track 1).bin", "Disc Game (Track 2).bin"]), "Disc Game/Disc Game.cue", in: incoming)
+        try write(Data(count: 2352 * 16), "Disc Game/Disc Game (Track 1).bin", in: incoming)
+        _ = try await importer.scanIncoming(auth: nil)
+        try write(Data(repeating: 1, count: 2352 * 8), "Disc Game/Disc Game (Track 2).bin", in: incoming)
+        let report = try await importer.scanIncoming(auth: nil)
+
+        XCTAssertEqual(report.needsReview.map(\.reason), ["Unrecognised disc (no PS1 or Sega CD header)"])
+        let issues = try importer.issues()
+        XCTAssertEqual(issues.map(\.filename), ["Disc Game.cue"])
+        XCTAssertEqual(issues.first?.reason, "Unrecognised disc (no PS1 or Sega CD header)")
     }
 
     func testDeletingQueuedImportRemovesStoredCopy() async throws {

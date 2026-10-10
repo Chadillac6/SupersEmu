@@ -96,15 +96,14 @@ extension LibraryImporter {
         let incoming = store.paths.incoming
         return try store.db.read { db in
             var result: [LibraryIssue] = [], linked = Set<String>()
-            for row in try Row.fetchAll(db, sql: "SELECT id, path, reason, review_id FROM import_issues ORDER BY path") {
-                let path: String = row["path"], reason: String = row["reason"]
-                guard FileManager.default.fileExists(atPath: incoming.appendingPathComponent(path).path) else { continue }
-                let reviewID: String? = row["review_id"]
+            for group in Self.groupRows(try Self.issueRows(db, incoming: incoming)) {
+                let lead = group[0]
+                let reviewID = group.lazy.compactMap(\.reviewID).first
                 let queued = try reviewID.flatMap { try Self.queuedGame($0, db: db) }
                 if queued != nil, let reviewID { linked.insert(reviewID) }
-                let kind = Self.issueKind(reason)
-                result.append(LibraryIssue(id: row["id"], kind: kind, filename: (path as NSString).lastPathComponent, reason: reason,
-                                           incomingPath: path, reviewID: queued == nil ? nil : reviewID,
+                let kind = Self.issueKind(lead.reason)
+                result.append(LibraryIssue(id: lead.id, kind: kind, filename: (lead.path as NSString).lastPathComponent, reason: lead.reason,
+                                           incomingPath: lead.path, reviewID: queued == nil ? nil : reviewID,
                                            candidateSystems: Self.candidates(kind, queued)))
             }
             for row in try Row.fetchAll(db, sql: "SELECT id, review_reason FROM games WHERE needs_review = 1 ORDER BY created_at") {
@@ -152,19 +151,61 @@ extension LibraryImporter {
         try store.audit(auth, action: "library.review.delete", detail: issue.incomingPath ?? issue.filename)
     }
 
+    typealias IssueRow = (id: String, path: String, reason: String, reviewID: String?)
+
+    static func issueRows(_ db: Database, incoming: URL) throws -> [IssueRow] {
+        try Row.fetchAll(db, sql: "SELECT id, path, reason, review_id FROM import_issues ORDER BY path").compactMap { row in
+            let path: String = row["path"]
+            guard FileManager.default.fileExists(atPath: incoming.appendingPathComponent(path).path) else { return nil }
+            return (row["id"], path, row["reason"], row["review_id"])
+        }
+    }
+
+    /// A disc's sheet and its tracks fail together (same queued review, or the same missing file): one item, led by the sheet.
+    static func groupRows(_ rows: [IssueRow]) -> [[IssueRow]] {
+        var groups: [[IssueRow]] = [], index: [String: Int] = [:]
+        for row in rows {
+            let key: String
+            if let reviewID = row.reviewID {
+                key = "review\n" + reviewID
+            } else if issueKind(row.reason) == .missingFiles {
+                key = (row.path as NSString).deletingLastPathComponent + "\n" + row.reason
+            } else {
+                groups.append([row]); continue
+            }
+            if let i = index[key] { groups[i].append(row) } else { index[key] = groups.count; groups.append([row]) }
+        }
+        let sheets: Set = ["cue", "m3u", "gdi", "ccd"]
+        return groups.map { group in
+            group.enumerated().sorted { a, b in
+                let (sa, sb) = (sheets.contains((a.element.path as NSString).pathExtension.lowercased()),
+                                sheets.contains((b.element.path as NSString).pathExtension.lowercased()))
+                return sa != sb ? sa : a.offset < b.offset
+            }.map(\.element)
+        }
+    }
+
     func removeSource(of issue: LibraryIssue, settled: Bool) throws {
         let incoming = store.paths.incoming
-        if let path = issue.incomingPath, !path.split(separator: "/").contains(".."),
-           case let url = incoming.appendingPathComponent(path), Self.relativePath(url, in: incoming) != nil {
+        let group = try store.db.read { db in
+            Self.groupRows(try Self.issueRows(db, incoming: incoming)).first { $0.first?.id == issue.id } ?? []
+        }
+        let paths = group.isEmpty ? [issue.incomingPath].compactMap { $0 } : group.map(\.path)
+        for path in paths where !path.split(separator: "/").contains("..") {
+            let url = incoming.appendingPathComponent(path)
+            guard Self.relativePath(url, in: incoming) != nil, FileManager.default.fileExists(atPath: url.path) else { continue }
             if settled {
                 try settle(url, incoming: incoming, day: Self.dayFormatter.string(from: Date()))
             } else {
                 try FileManager.default.removeItem(at: url)
             }
-            pruneEmptyUploads(incoming)
         }
+        if !paths.isEmpty { pruneEmptyUploads(incoming) }
         if issue.id.hasPrefix("in-") {
-            try store.db.write { try $0.execute(sql: "DELETE FROM import_issues WHERE id = ?", arguments: [issue.id]) }
+            let ids = group.isEmpty ? [issue.id] : group.map(\.id)
+            try store.db.write { db in
+                for id in ids { try db.execute(sql: "DELETE FROM import_issues WHERE id = ?", arguments: [id]) }
+            }
         }
     }
 
