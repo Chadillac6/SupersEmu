@@ -113,6 +113,7 @@ public final class ServerBrowser: @unchecked Sendable {
         defer { connection.cancel() }
         return try await withThrowingTaskGroup(of: URL.self) { group in
             group.addTask {
+                try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
                     let resumed = ResumeOnce()
                     connection.stateUpdateHandler = { state in
@@ -133,9 +134,13 @@ public final class ServerBrowser: @unchecked Sendable {
                     }
                     connection.start(queue: queue)
                 }
+                } onCancel: {
+                    connection.cancel()
+                }
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                connection.cancel()
                 throw URLError(.timedOut)
             }
             let url = try await group.next()!

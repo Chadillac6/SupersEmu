@@ -165,10 +165,11 @@ final class PairingTests: XCTestCase {
     func testRateLimiterWindowSlides() {
         let clock = TestClock(Date(timeIntervalSince1970: 0))
         let limiter = PairingRateLimiter(maxFailures: 2, window: 60, now: { clock.now })
-        limiter.recordFailure(); limiter.recordFailure()
-        XCTAssertFalse(limiter.allowAttempt())
+        limiter.recordFailure(client: "a"); limiter.recordFailure(client: "a")
+        XCTAssertFalse(limiter.allowAttempt(client: "a"))
+        XCTAssertTrue(limiter.allowAttempt(client: "b"), "one client's failures don't lock out others")
         clock.now = clock.now.addingTimeInterval(61)
-        XCTAssertTrue(limiter.allowAttempt())
+        XCTAssertTrue(limiter.allowAttempt(client: "a"))
     }
 
     // MARK: QR payload
@@ -217,5 +218,33 @@ final class TestClock: @unchecked Sendable {
     var now: Date {
         get { lock.withLock { value } }
         set { lock.withLock { value = newValue } }
+    }
+}
+
+extension PairingTests {
+    /// An expired, unused row with the same code must not shadow a live one.
+    func testExpiredDuplicateDoesNotBlockLiveCode() throws {
+        let clock = TestClock(Date(timeIntervalSince1970: 1_800_000_000))
+        let service = PairingService(store: store, now: { clock.now })
+        let old = try service.createCode(for: nil, caller: try adminAuth())
+        clock.now = clock.now.addingTimeInterval(11 * 60)
+        let live = try service.createCode(for: nil, caller: try adminAuth())
+        try store.db.write { db in
+            let salt = try String.fetchOne(db, sql: "SELECT salt FROM pairing_codes WHERE expires_at = ?", arguments: [old.expiresAt])!
+            try db.execute(sql: "UPDATE pairing_codes SET code_hash = ? WHERE expires_at = ?",
+                           arguments: [PairingService.hash(live.code, salt: salt), old.expiresAt])
+        }
+        XCTAssertNoThrow(try service.pair(PairRequest(code: live.code, deviceName: "iPhone", platform: "iOS")))
+    }
+
+    /// If creating the device fails, the code isn't consumed and can be retried.
+    func testFailedDeviceCreationLeavesCodeUsable() throws {
+        let service = PairingService(store: store)
+        let code = try service.createCode(for: nil, caller: try adminAuth())
+        try store.db.write { try $0.execute(sql: "CREATE TRIGGER fail_devices BEFORE INSERT ON devices BEGIN SELECT RAISE(ABORT, 'boom'); END") }
+        XCTAssertThrowsError(try service.pair(PairRequest(code: code.code, deviceName: "iPhone", platform: "iOS")))
+        try store.db.write { try $0.execute(sql: "DROP TRIGGER fail_devices") }
+        let paired = try service.pair(PairRequest(code: code.code, deviceName: "iPhone", platform: "iOS"))
+        XCTAssertNotNil(try store.authenticate(token: paired.token))
     }
 }

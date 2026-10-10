@@ -239,3 +239,33 @@ final class TestBox<Value>: @unchecked Sendable {
     var value: Value { lock.withLock { stored } }
     func update(_ body: (inout Value) -> Void) { lock.withLock { body(&stored) } }
 }
+
+extension NetworkTests {
+    func testTokensOnlyTravelOverPinnedHTTPS() {
+        let pinned = ServerProfile(serverName: "Mini", urls: [], certificateSHA256: String(repeating: "a", count: 64))
+        XCTAssertTrue(pinned.isTrustedTransport(URL(string: "https://mini.local:8487")!))
+        XCTAssertFalse(pinned.isTrustedTransport(URL(string: "http://mini.local:8487")!))
+        let unpinned = ServerProfile(serverName: "Mini", urls: [], certificateSHA256: nil)
+        XCTAssertFalse(unpinned.isTrustedTransport(URL(string: "https://mini.local:8487")!))
+        XCTAssertTrue(ServerProfile(serverName: "Mini", urls: [], certificateSHA256: nil, allowsInsecureTransport: true)
+            .isTrustedTransport(URL(string: "http://127.0.0.1:8487")!))
+    }
+
+    func testTokenAccountSurvivesRename() {
+        var profile = ServerProfile(serverName: "Old Mini", urls: [], certificateSHA256: nil)
+        let account = profile.tokenAccount
+        profile.serverName = "New Mini"
+        XCTAssertEqual(profile.tokenAccount, account)
+    }
+
+    func testBonjourResolveTimesOut() async throws {
+        let server = DiscoveredServer(name: "nobody-\(UUID().uuidString.prefix(8))", txt: [:],
+                                      endpoint: .service(name: "nobody", type: SupersEmuBonjour.serviceType, domain: "local.", interface: nil))
+        let start = Date()
+        do {
+            _ = try await ServerBrowser.resolve(server, timeout: 1)
+            XCTFail("resolved a service that doesn't exist")
+        } catch {}
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+    }
+}

@@ -11,16 +11,21 @@ struct SupersEmuCLI: AsyncParsableCommand {
 
     struct Connection: ParsableArguments {
         @Option(help: "Server URL. Env: SUPERSEMU_SERVER.")
-        var server: String = ProcessInfo.processInfo.environment["SUPERSEMU_SERVER"] ?? "http://127.0.0.1:8487"
+        var server: String = ProcessInfo.processInfo.environment["SUPERSEMU_SERVER"] ?? "https://127.0.0.1:8487"
         @Option(help: "API token. Env: SUPERSEMU_TOKEN. Default: the server's admin.token when run on the Mac mini.")
         var token: String?
+        @Option(help: "Server certificate SHA-256 to pin. Env: SUPERSEMU_CERT_SHA256. Default: the local server's tls/server.cer.")
+        var certificateSHA256: String?
         @Flag(help: "Print JSON instead of text.") var json = false
 
         func client() throws -> APIClient {
             guard let url = URL(string: server) else { throw ValidationError("Invalid --server URL") }
+            let pin = certificateSHA256 ?? ProcessInfo.processInfo.environment["SUPERSEMU_CERT_SHA256"]
+                ?? FileManager.default.contents(atPath: "/Library/Application Support/SupersEmu Server/tls/server.cer").map(CertificatePin.sha256(ofDER:))
+            let session = url.scheme == "https" ? PinnedCertificateDelegate.session(certificateSHA256: pin) : URLSession.shared
             let resolved = token ?? ProcessInfo.processInfo.environment["SUPERSEMU_TOKEN"]
                 ?? (try? String(contentsOfFile: "/Library/Application Support/SupersEmu Server/admin.token", encoding: .utf8))
-            return APIClient(baseURL: url, token: resolved?.trimmingCharacters(in: .whitespacesAndNewlines))
+            return APIClient(baseURL: url, token: resolved?.trimmingCharacters(in: .whitespacesAndNewlines), session: session)
         }
     }
 

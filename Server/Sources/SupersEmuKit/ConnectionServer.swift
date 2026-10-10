@@ -10,30 +10,42 @@ public struct ServerProfile: Codable, Sendable, Equatable {
     public var lastGoodURL: URL?
     public var userID: String?
     public var deviceID: String?
+    /// Keychain account for this server's device token. Fixed at pairing so a server rename doesn't lose it.
+    public var tokenAccount: String
+    /// Allows sending the device token without a pinned HTTPS certificate (`--insecure-http` test servers only).
+    public var allowsInsecureTransport: Bool
 
-    public init(serverName: String, urls: [URL], certificateSHA256: String?, lastGoodURL: URL? = nil, userID: String? = nil, deviceID: String? = nil) {
+    public init(serverName: String, urls: [URL], certificateSHA256: String?, lastGoodURL: URL? = nil, userID: String? = nil, deviceID: String? = nil,
+                tokenAccount: String? = nil, allowsInsecureTransport: Bool = false) {
         self.serverName = serverName; self.urls = urls; self.certificateSHA256 = certificateSHA256
         self.lastGoodURL = lastGoodURL; self.userID = userID; self.deviceID = deviceID
+        self.tokenAccount = tokenAccount ?? certificateSHA256.map(CertificatePin.normalize) ?? "unpinned:\(serverName)"
+        self.allowsInsecureTransport = allowsInsecureTransport
     }
 
-    public init(payload: PairingPayload) {
-        self.init(serverName: payload.serverName, urls: payload.urls, certificateSHA256: payload.certificateSHA256)
+    public init(payload: PairingPayload, allowsInsecureTransport: Bool = false) {
+        self.init(serverName: payload.serverName, urls: payload.urls, certificateSHA256: payload.certificateSHA256,
+                  allowsInsecureTransport: allowsInsecureTransport)
     }
 
-    /// Keychain account for this server's device token.
-    public var tokenAccount: String { certificateSHA256.map(CertificatePin.normalize) ?? serverName }
+    /// Whether a device token may be sent to `url`: only over HTTPS with a pinned certificate, unless opted out.
+    public func isTrustedTransport(_ url: URL) -> Bool {
+        allowsInsecureTransport || (url.scheme?.lowercased() == "https" && certificateSHA256 != nil)
+    }
 }
 
 public enum ServerConnectionError: Error, Equatable, CustomStringConvertible {
     case noURLs
     case unreachable([String])
     case notPaired
+    case insecureTransport
 
     public var description: String {
         switch self {
         case .noURLs: return "The server has no addresses"
         case .unreachable(let errors): return "Couldn't reach the server (\(errors.joined(separator: "; ")))"
         case .notPaired: return "This device isn't paired with the server"
+        case .insecureTransport: return "Refusing to send credentials without a pinned HTTPS certificate"
         }
     }
 }
@@ -88,12 +100,15 @@ public actor ServerConnection {
     /// An authenticated client on the first reachable URL.
     public func client() async throws -> APIClient {
         guard let token = try tokenStore.token(for: profile.tokenAccount) else { throw ServerConnectionError.notPaired }
-        return APIClient(baseURL: try await resolveURL(), token: token, session: session)
+        let url = try await resolveURL()
+        guard profile.isTrustedTransport(url) else { throw ServerConnectionError.insecureTransport }
+        return APIClient(baseURL: url, token: token, session: session)
     }
 
     /// Redeems the pairing code, stores the device token and records who we are.
     public func pair(code: String, deviceName: String, platform: String) async throws -> PairResponse {
         let url = try await resolveURL()
+        guard profile.isTrustedTransport(url) else { throw ServerConnectionError.insecureTransport }
         let response = try await APIClient(baseURL: url, token: nil, session: session)
             .pair(PairRequest(code: code, deviceName: deviceName, platform: platform))
         try tokenStore.setToken(response.token, for: profile.tokenAccount)

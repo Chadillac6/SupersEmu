@@ -31,16 +31,16 @@ final class ServerModeModel {
     private(set) var message: String?
     private(set) var busy = false
 
-    private var process: Process?
+    private var process: Process? {
+        get { SessionServerProcess.shared.process }
+        set { SessionServerProcess.shared.process = newValue }
+    }
     private let daemon = SMAppService.daemon(plistName: ServerModeModel.daemonPlistName)
 
     init() {
         let status = daemon.status
         daemonStatus = status
         source = status == .enabled ? .daemon : .session
-        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.process?.terminate() }
-        }
     }
 
     var dataDirectory: URL {
@@ -55,6 +55,11 @@ final class ServerModeModel {
 
     var port: Int { source == .daemon ? Self.daemonPort : Self.sessionPort }
     var localURL: URL { URL(string: "https://127.0.0.1:\(port)")! }
+    static var daemonPlistEmbedded: Bool {
+        FileManager.default.fileExists(atPath: Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Library/LaunchDaemons/\(daemonPlistName)").path)
+    }
+
     var serverBinary: URL? { Bundle.main.url(forAuxiliaryExecutable: "supersemu-server") }
 
     var certificateSHA256: String? {
@@ -66,7 +71,9 @@ final class ServerModeModel {
         case .notRegistered: return "Not registered"
         case .enabled: return "Enabled (starts at boot)"
         case .requiresApproval: return "Waiting for approval in System Settings › Login Items"
-        case .notFound: return "Not found in app bundle"
+        case .notFound:
+            // SMAppService reports .notFound for a daemon that was never registered.
+            return Self.daemonPlistEmbedded ? "Not registered" : "Not found in app bundle"
         @unknown default: return "Unknown"
         }
     }
@@ -176,6 +183,23 @@ final class ServerModeModel {
             pairingError = nil
         } catch {
             pairingError = "\(error)"
+        }
+    }
+}
+
+/// Owns the session server child process for the app's lifetime, so closing and reopening the Server mode
+/// window keeps control of it, and quitting the app stops it.
+@MainActor
+final class SessionServerProcess {
+    static let shared = SessionServerProcess()
+    var process: Process?
+
+    private init() {
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                SessionServerProcess.shared.process?.terminate()
+                SessionServerProcess.shared.process?.waitUntilExit()
+            }
         }
     }
 }

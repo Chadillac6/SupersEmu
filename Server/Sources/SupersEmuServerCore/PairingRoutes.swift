@@ -22,11 +22,12 @@ func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, au
     }
 
     publicGroup.post("pair") { request, context in
-        guard service.limiter.allowAttempt() else {
+        let client = context.remoteAddress ?? "unknown"
+        guard service.limiter.allowAttempt(client: client) else {
             throw HTTPError(.tooManyRequests, message: "Too many pairing attempts. Wait a minute and try again.")
         }
         let body = try await request.decode(as: PairRequest.self, context: context)
-        return try service.pair(body)
+        return try service.pair(body, client: client)
     }
 }
 
@@ -80,42 +81,44 @@ public final class PairingService: Sendable {
     }
 
     /// Consumes `request.code` and issues a device token for the code's user.
-    public func pair(_ request: PairRequest) throws -> PairResponse {
+    public func pair(_ request: PairRequest, client: String = "local") throws -> PairResponse {
         let code = request.code.filter(\.isNumber)
         let deviceName = request.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard code.count == 6 else {
-            limiter.recordFailure()
+            limiter.recordFailure(client: client)
             throw HTTPError(.unauthorized, message: "Invalid or expired pairing code")
         }
         guard !deviceName.isEmpty, deviceName.count <= 100 else { throw HTTPError(.badRequest, message: "deviceName is required") }
 
         let at = now()
-        let claimed: (id: String, user: UserInfo)? = try store.db.write { db in
+        let platform = String(request.platform.prefix(40))
+        // Claim the code, create the device and audit in one transaction so a failure leaves the code usable.
+        let paired: (user: UserInfo, deviceID: String, token: String)? = try store.db.write { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT p.id AS code_id, p.salt, p.code_hash, p.expires_at, u.*
+                SELECT p.id AS code_id, p.salt, p.code_hash, u.*
                 FROM pairing_codes p JOIN users u ON u.id = p.user_id
-                WHERE p.used_at IS NULL AND u.revoked_at IS NULL
-                """)
-            guard let row = rows.first(where: { Self.hash(code, salt: $0["salt"]) == $0["code_hash"] }),
-                  (row["expires_at"] as Date) > at else { return nil }
-            let id: String = row["code_id"]
-            try db.execute(sql: "UPDATE pairing_codes SET used_at = ?, device_platform = ? WHERE id = ? AND used_at IS NULL",
-                           arguments: [at, String(request.platform.prefix(40)), id])
+                WHERE p.used_at IS NULL AND p.expires_at > ? AND u.revoked_at IS NULL
+                """, arguments: [at])
+            guard let row = rows.first(where: { Self.hash(code, salt: $0["salt"]) == $0["code_hash"] }) else { return nil }
+            let codeID: String = row["code_id"]
+            let user = ServerStore.user(from: row)
+            let token = ServerStore.newToken(prefix: "sed_")
+            let deviceID = UUID().uuidString.lowercased()
+            try db.execute(sql: "UPDATE pairing_codes SET used_at = ?, device_platform = ?, device_id = ? WHERE id = ? AND used_at IS NULL",
+                           arguments: [at, platform, deviceID, codeID])
             guard db.changesCount == 1 else { return nil }
-            return (id, ServerStore.user(from: row))
+            try db.execute(sql: "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+                           arguments: [deviceID, user.id, deviceName, ServerStore.hash(token), at])
+            let actor = AuthContext(user: user, credential: .device(id: deviceID))
+            try db.execute(sql: "INSERT INTO audit_log (at, actor_user_id, actor_credential, action, detail) VALUES (?, ?, ?, ?, ?)",
+                           arguments: [at, user.id, actor.credentialID, "pairing.device_paired", "device=\(deviceName) platform=\(platform)"])
+            return (user, deviceID, token)
         }
-        guard let claimed else {
-            limiter.recordFailure()
+        guard let paired else {
+            limiter.recordFailure(client: client)
             throw HTTPError(.unauthorized, message: "Invalid or expired pairing code")
         }
-
-        let (deviceID, token) = try store.createDeviceToken(userID: claimed.user.id, deviceName: deviceName)
-        try store.db.write { db in
-            try db.execute(sql: "UPDATE pairing_codes SET device_id = ? WHERE id = ?", arguments: [deviceID, claimed.id])
-        }
-        try store.audit(AuthContext(user: claimed.user, credential: .device(id: deviceID)), action: "pairing.device_paired",
-                        detail: "device=\(deviceName) platform=\(request.platform)")
-        return PairResponse(token: token, deviceID: deviceID, user: claimed.user, serverName: store.serverName)
+        return PairResponse(token: paired.token, deviceID: paired.deviceID, user: paired.user, serverName: store.serverName)
     }
 
     static func randomCode() -> String {
@@ -128,31 +131,39 @@ public final class PairingService: Sendable {
     }
 }
 
-/// Global limit on failed `/v1/pair` attempts. With 6-digit codes that live 10 minutes, 5 failures a minute
-/// gives an attacker ~50 guesses out of 1,000,000 per code.
+/// Limits failed `/v1/pair` attempts per client IP (5 a minute by default), with a higher global ceiling so many
+/// addresses can't brute-force together: at 60 failures a minute a 10-minute code faces at most ~600 guesses of
+/// 1,000,000. One client's failures don't lock out others until the ceiling is reached.
 public final class PairingRateLimiter: Sendable {
     let maxFailures: Int
+    let maxGlobalFailures: Int
     let window: TimeInterval
     let now: @Sendable () -> Date
-    private let failures = Mutex<[Date]>([])
+    private let failures = Mutex<[String: [Date]]>([:])
 
-    public init(maxFailures: Int = 5, window: TimeInterval = 60, now: @escaping @Sendable () -> Date = { Date() }) {
+    public init(maxFailures: Int = 5, maxGlobalFailures: Int = 60, window: TimeInterval = 60,
+                now: @escaping @Sendable () -> Date = { Date() }) {
         self.maxFailures = maxFailures
+        self.maxGlobalFailures = maxGlobalFailures
         self.window = window
         self.now = now
     }
 
-    public func allowAttempt() -> Bool {
+    public func allowAttempt(client: String) -> Bool {
         let cutoff = now().addingTimeInterval(-window)
         return failures.withLock { failures in
-            failures.removeAll { $0 < cutoff }
-            return failures.count < maxFailures
+            for key in Array(failures.keys) {
+                failures[key]?.removeAll { $0 < cutoff }
+                if failures[key]?.isEmpty == true { failures[key] = nil }
+            }
+            let total = failures.values.reduce(0) { $0 + $1.count }
+            return (failures[client]?.count ?? 0) < maxFailures && total < maxGlobalFailures
         }
     }
 
-    public func recordFailure() {
+    public func recordFailure(client: String) {
         let at = now()
-        failures.withLock { $0.append(at) }
+        failures.withLock { $0[client, default: []].append(at) }
     }
 }
 
