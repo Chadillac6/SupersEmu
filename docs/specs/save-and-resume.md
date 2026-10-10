@@ -37,11 +37,15 @@ Drive. Revisions, branches and statuses above are unchanged.
   tokens can't upload). Every upload is a new immutable revision at `users/<userID>/saves/<game>/<rev>`;
   nothing is ever overwritten. If `parent` isn't the line's current head the revision is still stored and the
   response says `branched=true`. Re-sending the same bytes on the same parent returns the existing revision
-  (safe retries). Limit 64 MB (413); optional `sha256` must match (400). `native`/`auto` have no slot.
+  (safe retries). Limit 64 MB (413); optional `sha256` must match (400); `core`/`coreVersion` at most 128
+  chars. `native`/`auto` have no slot. `branch=1` keeps the upload only as a branch copy: listed and
+  downloadable, but never the line head.
 - `GET /v1/saves/{game}/revisions/{rev}`: the bytes, re-hashed before serving (corrupt files are a 500,
   never served).
 - Retention: the last 10 `auto` revisions per game are kept; older ones are deleted unless they're a line
-  head. `native` and `manual` revisions are never pruned.
+  head or the revision a device last uploaded/downloaded for that line (`save_device_bases`), so a device
+  that was away can still prove the head descends from its copy. `native` and `manual` revisions are never
+  pruned.
 - Users can never list or download another user's saves (a foreign revision id is a 404).
 
 ### Client (`SupersEmuKit/SavesSync.swift` `SaveSyncEngine`, `App/Sync`)
@@ -57,9 +61,10 @@ Drive. Revisions, branches and statuses above are unchanged.
   newer. States from another core id/version are never downloaded or loaded (same rule as local
   incompatible states); SRAM is portable.
 - Conflicts: if this device has progress the server doesn't, or the server moved on from a different
-  branch, the game waits on "A newer save from <device> is available". This device's copy is uploaded as a
-  branch first, so both stay on the server. *Use Newer Save* downloads the other device's revision;
-  *Keep This Device's* uploads this copy on top of it so it becomes the newest. Leaving without choosing
-  changes nothing and asks again next launch.
+  branch (or its base is no longer on the server), the game waits on "A newer save from <device> is
+  available" and no frames run. This device's copy is uploaded as a branch copy (`branch=1`) first, so
+  both stay on the server without disturbing other devices. *Use Newer Save* downloads the other device's
+  revision; *Keep This Device's* uploads this copy on top of it so it becomes the newest. Leaving without
+  choosing changes nothing and asks again next launch.
 
 Untested in M1 so far: real two-device continuity over the network (manager), very large saves on cellular.

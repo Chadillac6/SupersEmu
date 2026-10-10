@@ -231,4 +231,38 @@ final class SaveRoutesTests: XCTestCase {
                                      headers: self.bearer(self.iPhone.token)) { XCTAssertEqual($0.status, .internalServerError) }
         }
     }
+
+    func testBranchCopiesNeverBecomeHeadAndDeviceBasesSurvivePruning() async throws {
+        try await app(SaveConfiguration(autoRevisionsKept: 2)).test(.router) { client in
+            let a = try await self.upload(client, token: self.iPhone.token, body: "a")!.revision
+            let copy = try await client.execute(
+                uri: "/v1/saves/\(self.game)/auto?slot=&core=Snes9x&coreVersion=1.62&branch=1&parent=\(a.id)", method: .put,
+                headers: self.bearer(self.mac.token), body: ByteBuffer(string: "mac-copy")) { try self.decode(SaveUploadResponse.self, $0) }
+            XCTAssertTrue(copy.branched)
+            XCTAssertFalse(copy.revision.isHead)
+            var listed = try await self.list(client, token: self.iPhone.token)
+            XCTAssertEqual(listed.filter(\.isHead).map(\.id), [a.id], "a branch copy never becomes the head")
+
+            // The Mac moves on while the iPhone is away; the iPhone's base must survive auto retention.
+            var head = a.id
+            for body in ["b", "c", "d"] { head = try await self.upload(client, token: self.mac.token, parent: head, body: body)!.revision.id }
+            listed = try await self.list(client, token: self.iPhone.token)
+            XCTAssertTrue(listed.contains { $0.id == a.id }, "the iPhone's last synced revision is kept")
+            XCTAssertFalse(listed.contains { $0.sha256 == SaveStore.sha256(Data("b".utf8)) }, "other old auto states are pruned")
+            XCTAssertEqual(listed.filter(\.isHead).map(\.id), [head])
+
+            // Downloading moves the iPhone's base, so its old base can be pruned on the next upload.
+            _ = try await client.execute(uri: "/v1/saves/\(self.game)/revisions/\(head)", method: .get, headers: self.bearer(self.iPhone.token)) { _ in }
+            _ = try await self.upload(client, token: self.mac.token, parent: head, body: "e")
+            listed = try await self.list(client, token: self.iPhone.token)
+            XCTAssertFalse(listed.contains { $0.id == a.id })
+        }
+    }
+
+    func testCoreMetadataIsBounded() async throws {
+        try await app().test(.router) { client in
+            _ = try await self.upload(client, token: self.iPhone.token, core: String(repeating: "x", count: 129), body: "s", expect: .badRequest)
+            _ = try await self.upload(client, token: self.iPhone.token, coreVersion: String(repeating: "1", count: 129), body: "s", expect: .badRequest)
+        }
+    }
 }

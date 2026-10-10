@@ -39,12 +39,15 @@ public struct SaveStore: Sendable {
         public var deviceID: String?
         /// Optional client-computed SHA-256; the upload is rejected when it doesn't match the body.
         public var expectedSHA256: String?
+        /// Keep this copy only as a branch: it never becomes the line head.
+        public var keepAsBranch: Bool
         public var data: Data
 
         public init(gameID: String, kind: SaveKind, slot: String, parentID: String?, coreID: String, coreVersion: String,
-                    deviceID: String?, expectedSHA256: String? = nil, data: Data) {
+                    deviceID: String?, expectedSHA256: String? = nil, keepAsBranch: Bool = false, data: Data) {
             self.gameID = gameID; self.kind = kind; self.slot = slot; self.parentID = parentID; self.coreID = coreID
-            self.coreVersion = coreVersion; self.deviceID = deviceID; self.expectedSHA256 = expectedSHA256; self.data = data
+            self.coreVersion = coreVersion; self.deviceID = deviceID; self.expectedSHA256 = expectedSHA256
+            self.keepAsBranch = keepAsBranch; self.data = data
         }
     }
 
@@ -71,7 +74,8 @@ public struct SaveStore: Sendable {
         try store.db.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT r.*, d.name AS device_name,
-                       r.rowid IN (SELECT MAX(rowid) FROM save_revisions WHERE user_id = ? AND game_id = ? GROUP BY kind, slot) AS is_head
+                       r.rowid IN (SELECT MAX(rowid) FROM save_revisions WHERE user_id = ? AND game_id = ? AND detached = 0
+                                   GROUP BY kind, slot) AS is_head
                 FROM save_revisions r LEFT JOIN devices d ON d.id = r.device_id
                 WHERE r.user_id = ? AND r.game_id = ?
                 ORDER BY r.rowid
@@ -80,13 +84,17 @@ public struct SaveStore: Sendable {
     }
 
     /// The revision's bytes, verified against the stored SHA-256.
-    public func data(userID: String, gameID: String, revisionID: String) throws -> Data {
+    /// Downloading by a device records the revision as that device's base for its line.
+    public func data(userID: String, gameID: String, revisionID: String, deviceID: String? = nil) throws -> Data {
         guard Self.isValidIdentifier(revisionID) else { throw HTTPError(.notFound, message: "Save not found") }
         let row = try store.db.read { db in
-            try Row.fetchOne(db, sql: "SELECT stored_path, sha256 FROM save_revisions WHERE id = ? AND user_id = ? AND game_id = ?",
+            try Row.fetchOne(db, sql: "SELECT * FROM save_revisions WHERE id = ? AND user_id = ? AND game_id = ?",
                              arguments: [revisionID, userID, gameID])
         }
         guard let row else { throw HTTPError(.notFound, message: "Save not found") }
+        if let deviceID, !(row["detached"] as Bool) {
+            try store.db.write { try Self.recordBase(db: $0, userID: userID, deviceID: deviceID, row: row) }
+        }
         let data = try Data(contentsOf: store.paths.root.appendingPathComponent(row["stored_path"] as String))
         guard Self.sha256(data) == row["sha256"] as String else {
             throw HTTPError(.internalServerError, message: "Stored save failed its integrity check")
@@ -107,8 +115,8 @@ public struct SaveStore: Sendable {
         if let parentID = upload.parentID, !Self.isValidIdentifier(parentID) {
             throw HTTPError(.badRequest, message: "Invalid parent revision")
         }
-        guard !upload.coreID.isEmpty, !upload.coreVersion.isEmpty else {
-            throw HTTPError(.badRequest, message: "core and coreVersion are required")
+        guard (1...128).contains(upload.coreID.count), (1...128).contains(upload.coreVersion.count) else {
+            throw HTTPError(.badRequest, message: "core and coreVersion are required (at most 128 characters)")
         }
         guard upload.data.count <= configuration.maxBytes else { throw HTTPError(.contentTooLarge, message: "Save is too large") }
         let sha = Self.sha256(upload.data)
@@ -129,25 +137,36 @@ public struct SaveStore: Sendable {
             outcome = try store.db.write { db in
                 let line: StatementArguments = [userID, upload.gameID, upload.kind.rawValue, upload.slot]
                 let lineSQL = "user_id = ? AND game_id = ? AND kind = ? AND slot = ?"
-                let head = try Row.fetchOne(db, sql: "SELECT id, sha256 FROM save_revisions WHERE \(lineSQL) ORDER BY rowid DESC LIMIT 1",
+                let head = try Row.fetchOne(db, sql: "SELECT id, sha256 FROM save_revisions WHERE \(lineSQL) AND detached = 0 ORDER BY rowid DESC LIMIT 1",
                                             arguments: line)
                 let headID: String? = head?["id"]
 
                 // Retries after a lost response, and unchanged content on top of the head, return the existing revision.
                 if let existingID = try String.fetchOne(db, sql: """
-                    SELECT id FROM save_revisions WHERE \(lineSQL) AND sha256 = ? AND parent_id IS ? ORDER BY rowid DESC LIMIT 1
-                    """, arguments: line + [sha, upload.parentID]) ?? (head?["sha256"] == sha && headID == upload.parentID ? headID : nil) {
+                    SELECT id FROM save_revisions WHERE \(lineSQL) AND sha256 = ? AND parent_id IS ? AND detached = ?
+                    ORDER BY rowid DESC LIMIT 1
+                    """, arguments: line + [sha, upload.parentID, upload.keepAsBranch])
+                    ?? (!upload.keepAsBranch && head?["sha256"] == sha && headID == upload.parentID ? headID : nil) {
                     let existing = try revision(db, userID: userID, gameID: upload.gameID, id: existingID)
+                    if let deviceID = upload.deviceID, !upload.keepAsBranch,
+                       let row = try Row.fetchOne(db, sql: "SELECT * FROM save_revisions WHERE id = ?", arguments: [existingID]) {
+                        try Self.recordBase(db: db, userID: userID, deviceID: deviceID, row: row)
+                    }
                     return (SaveUploadResponse(revision: existing.revision, branched: existing.branched), false, [])
                 }
 
-                let branched = headID != nil && headID != upload.parentID
+                let branched = upload.keepAsBranch || (headID != nil && headID != upload.parentID)
                 try db.execute(sql: """
                     INSERT INTO save_revisions (id, user_id, game_id, kind, slot, parent_id, sha256, size, core_id, core_version,
-                                                device_id, stored_path, created_at, branched)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                device_id, stored_path, created_at, branched, detached)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, arguments: [revisionID, userID, upload.gameID, upload.kind.rawValue, upload.slot, upload.parentID, sha,
-                                     upload.data.count, upload.coreID, upload.coreVersion, upload.deviceID, relativePath, Date(), branched])
+                                     upload.data.count, upload.coreID, upload.coreVersion, upload.deviceID, relativePath, Date(), branched,
+                                     upload.keepAsBranch])
+                if let deviceID = upload.deviceID, !upload.keepAsBranch,
+                   let row = try Row.fetchOne(db, sql: "SELECT * FROM save_revisions WHERE id = ?", arguments: [revisionID]) {
+                    try Self.recordBase(db: db, userID: userID, deviceID: deviceID, row: row)
+                }
                 let pruned = upload.kind == .auto ? try pruneAutoRevisions(db, userID: userID, gameID: upload.gameID) : []
                 let inserted = try revision(db, userID: userID, gameID: upload.gameID, id: revisionID)
                 return (SaveUploadResponse(revision: inserted.revision, branched: branched), true, pruned)
@@ -161,14 +180,24 @@ public struct SaveStore: Sendable {
         return outcome.response
     }
 
-    /// Keeps the newest `autoRevisionsKept` auto states per game and never removes a line head.
+    private static func recordBase(db: Database, userID: String, deviceID: String, row: Row) throws {
+        try db.execute(sql: """
+            INSERT INTO save_device_bases (user_id, device_id, game_id, kind, slot, revision_id) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (device_id, game_id, kind, slot) DO UPDATE SET revision_id = excluded.revision_id
+            """, arguments: [userID, deviceID, row["game_id"] as String, row["kind"] as String, row["slot"] as String, row["id"] as String])
+    }
+
+    /// Keeps the newest `autoRevisionsKept` auto states per game. Never removes a line head or a revision a device
+    /// last synced (its base), so ancestry stays provable for devices that were away.
     private func pruneAutoRevisions(_ db: Database, userID: String, gameID: String) throws -> [String] {
         let rows = try Row.fetchAll(db, sql: """
             SELECT id, stored_path FROM save_revisions
             WHERE user_id = ? AND game_id = ? AND kind = 'auto'
-              AND rowid NOT IN (SELECT MAX(rowid) FROM save_revisions WHERE user_id = ? AND game_id = ? AND kind = 'auto' GROUP BY slot)
+              AND rowid NOT IN (SELECT MAX(rowid) FROM save_revisions WHERE user_id = ? AND game_id = ? AND kind = 'auto'
+                                AND detached = 0 GROUP BY slot)
+              AND id NOT IN (SELECT revision_id FROM save_device_bases WHERE user_id = ? AND game_id = ?)
             ORDER BY rowid DESC LIMIT -1 OFFSET ?
-            """, arguments: [userID, gameID, userID, gameID, configuration.autoRevisionsKept - 1])
+            """, arguments: [userID, gameID, userID, gameID, userID, gameID, configuration.autoRevisionsKept - 1])
         for row in rows {
             try db.execute(sql: "DELETE FROM save_revisions WHERE id = ?", arguments: [row["id"] as String])
         }
@@ -179,7 +208,8 @@ public struct SaveStore: Sendable {
         guard let row = try Row.fetchOne(db, sql: """
             SELECT r.*, d.name AS device_name,
                    r.rowid = (SELECT MAX(rowid) FROM save_revisions h WHERE h.user_id = r.user_id AND h.game_id = r.game_id
-                                                                       AND h.kind = r.kind AND h.slot = r.slot) AS is_head
+                                                                       AND h.kind = r.kind AND h.slot = r.slot
+                                                                       AND h.detached = 0) AS is_head
             FROM save_revisions r LEFT JOIN devices d ON d.id = r.device_id
             WHERE r.id = ? AND r.user_id = ? AND r.game_id = ?
             """, arguments: [id, userID, gameID]) else {

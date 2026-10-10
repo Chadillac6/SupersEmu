@@ -246,7 +246,8 @@ public actor SaveSyncEngine {
         defer { uploadingID = nil }
         do {
             let response = try await client.uploadSave(gameID: item.line.gameID, kind: item.line.kind, slot: item.line.slot,
-                                                       parentID: parent, coreID: item.core.id, coreVersion: item.core.version, data: data)
+                                                       parentID: parent, coreID: item.core.id, coreVersion: item.core.version,
+                                                       keepAsBranch: item.detached, data: data)
             guard response.revision.sha256 == item.sha256 else {
                 return markFailed(item.id, "Server stored different bytes; will retry")
             }
@@ -258,7 +259,10 @@ public actor SaveSyncEngine {
             if response.branched, line.conflict == nil, !item.detached {
                 // We uploaded on top of a stale base: another device moved this line while we were offline.
                 let others = (try? await client.saves(gameID: item.line.gameID).revisions) ?? []
-                line.conflict = others.last { $0.kind == item.line.kind && $0.slot == item.line.slot && $0.id != response.revision.id }
+                line.conflict = others.last {
+                    $0.kind == item.line.kind && $0.slot == item.line.slot && $0.id != response.revision.id
+                        && $0.deviceID != response.revision.deviceID
+                }
             }
             state.lines[key] = line
             remove(item.id)
@@ -344,7 +348,9 @@ public actor SaveSyncEngine {
 
         let localIsOnServer = localSHA == nil || (localSHA == line.baseSHA256 && !hasPending)
         let headDescendsFromBase: Bool = {
-            guard let base = line.baseRevisionID, lineRevisions.contains(where: { $0.id == base }) else { return true }
+            guard let base = line.baseRevisionID else { return true }
+            // The server keeps every device's base; if ours is gone, ancestry is unknown, so ask.
+            guard lineRevisions.contains(where: { $0.id == base }) else { return false }
             var byID: [String: SaveRevision] = [:]
             for revision in lineRevisions { byID[revision.id] = revision }
             var cursor: SaveRevision? = head
@@ -399,15 +405,14 @@ public actor SaveSyncEngine {
             line.conflict = nil
             state.lines[key] = line
         case .keepLocal:
+            // Upload this copy on top of the other device's save so it becomes the newest revision, even if its
+            // bytes match what this device last synced.
             var line = state.lines[key] ?? LineState()
-            if hasPending(key) || (try? Data(contentsOf: file.url)).map(Self.sha256) != line.baseSHA256 {
-                // The next upload continues from the other device's save, so this copy becomes the newest revision.
-                line.baseRevisionID = conflict.remote.id
-                line.baseSHA256 = nil
-                state.lines[key] = line
-                if !hasPending(key) { enqueue(file, detachedFrom: nil) }
-                line = state.lines[key] ?? line
-            }
+            line.baseRevisionID = conflict.remote.id
+            line.baseSHA256 = nil
+            state.lines[key] = line
+            if !hasPending(key) { enqueue(file, detachedFrom: nil) }
+            line = state.lines[key] ?? line
             line.conflict = nil
             state.lines[key] = line
         }
@@ -458,5 +463,24 @@ public enum SaveSyncError: Error, Equatable, CustomStringConvertible {
         case .hashMismatch: return "Downloaded save failed its integrity check"
         case .incompatibleCore: return "That save needs a different core version"
         }
+    }
+}
+
+extension APIClient {
+    /// `uploadSave` plus `branch=1`: the server keeps the copy as a branch that never becomes the line head.
+    /// Additive to the Wave 0 contract (save sync track).
+    public func uploadSave(gameID: String, kind: SaveKind, slot: String, parentID: String?, coreID: String, coreVersion: String,
+                           keepAsBranch: Bool, data: Data) async throws -> SaveUploadResponse {
+        guard keepAsBranch else {
+            return try await uploadSave(gameID: gameID, kind: kind, slot: slot, parentID: parentID, coreID: coreID,
+                                        coreVersion: coreVersion, data: data)
+        }
+        var query = URLComponents()
+        query.queryItems = [.init(name: "slot", value: slot), .init(name: "core", value: coreID),
+                            .init(name: "coreVersion", value: coreVersion), .init(name: "branch", value: "1")]
+        if let parentID { query.queryItems?.append(.init(name: "parent", value: parentID)) }
+        let body = try await raw("PUT", "/v1/saves/\(gameID)/\(kind.rawValue)?\(query.percentEncodedQuery ?? "")", body: data,
+                                 contentType: "application/octet-stream")
+        return try SupersEmuJSON.decoder().decode(SaveUploadResponse.self, from: body)
     }
 }

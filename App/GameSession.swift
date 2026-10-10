@@ -54,6 +54,7 @@ final class GameSession {
         } catch {
             isSyncing = false
             errorMessage = error.localizedDescription
+            startTask = nil
             return
         }
         self.host = host
@@ -126,7 +127,8 @@ final class GameSession {
     }
 
     func resume() {
-        guard let host, timer == nil else { return }
+        // Never run frames while saves are still syncing or a conflict is waiting for an answer.
+        guard let host, hasStarted, timer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / max(host.framesPerSecond, 1), repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -164,6 +166,8 @@ final class GameSession {
             status = "Auto-saved on this device"
         } catch {
             status = "Auto-save failed"
+            // The battery save was still flushed; sync it on its own.
+            upload([SaveSync.nativeFile(for: game.id)], saved: "Auto-save failed")
             return
         }
         upload([SaveSync.nativeFile(for: game.id)] + (core.map { [SaveSync.autoFile(for: game.id, core: $0)] } ?? []),
@@ -219,9 +223,12 @@ final class GameSession {
 
     func stop() {
         startTask?.cancel()
+        startTask = nil
         abandonConflict()
         pause()
         autosave()
+        hasStarted = false
+        isSyncing = false
         host?.shutdown()
         host = nil
     }

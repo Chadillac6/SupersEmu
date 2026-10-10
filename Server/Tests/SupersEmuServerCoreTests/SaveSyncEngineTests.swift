@@ -262,4 +262,61 @@ final class SaveSyncEngineTests: XCTestCase {
             guard case .downloaded = native[self.native.key] else { return XCTFail("\(native)") }
         }
     }
+
+    func testAbandonedConflictAsksAgainAndChoosingRemoteDoesNotBotherTheOtherDevice() async throws {
+        try await withServer { server in
+            let phone = try self.device("Chad's iPhone", server: server)
+            let mac = try self.device("Chad's Mac", server: server)
+            try phone.write(self.auto, "shared")
+            await phone.engine.enqueueUpload(phone.file(self.auto))
+            await phone.engine.flush()
+            _ = await mac.engine.prepare([mac.file(self.auto)])
+            try phone.write(self.auto, "phone-progress")
+            await phone.engine.enqueueUpload(phone.file(self.auto))
+            await phone.engine.flush()
+            try mac.write(self.auto, "mac-progress")
+
+            for _ in 0..<2 {
+                let outcomes = await mac.engine.prepare([mac.file(self.auto)])
+                guard case .conflict = outcomes[self.auto.key] else { return XCTFail("leaving without choosing must ask again: \(outcomes)") }
+            }
+            let phoneMeanwhile = await phone.engine.prepare([phone.file(self.auto)])
+            XCTAssertEqual(phoneMeanwhile[self.auto.key], .upToDate, "the Mac's branch copy is not a newer save")
+
+            guard let conflict = await mac.engine.conflict(for: self.auto) else { return XCTFail("no conflict") }
+            try await mac.engine.resolve(conflict, choice: .useRemote, file: mac.file(self.auto))
+            let phoneAfter = await phone.engine.prepare([phone.file(self.auto)])
+            XCTAssertEqual(phoneAfter[self.auto.key], .upToDate)
+            XCTAssertEqual(phone.read(self.auto), "phone-progress")
+        }
+    }
+
+    func testKeepLocalWithUnchangedBytesMovesTheHead() async throws {
+        try await withServer { server in
+            let phone = try self.device("Chad's iPhone", server: server)
+            let mac = try self.device("Chad's Mac", server: server)
+            try phone.write(self.auto, "p")
+            await phone.engine.enqueueUpload(phone.file(self.auto))
+            await phone.engine.flush()
+            _ = await mac.engine.prepare([mac.file(self.auto)])
+            try phone.write(self.auto, "x")
+            await phone.engine.enqueueUpload(phone.file(self.auto))
+            await phone.engine.flush()
+            // The Mac uploads on its stale base, so its branch becomes the head.
+            try mac.write(self.auto, "y")
+            await mac.engine.enqueueUpload(mac.file(self.auto))
+            await mac.engine.flush()
+
+            let outcomes = await phone.engine.prepare([phone.file(self.auto)])
+            guard case .conflict(let conflict) = outcomes[self.auto.key] else { return XCTFail("\(outcomes)") }
+            XCTAssertEqual(conflict.deviceName, "Chad's Mac")
+            try await phone.engine.resolve(conflict, choice: .keepLocal, file: phone.file(self.auto))
+            let again = await phone.engine.prepare([phone.file(self.auto)])
+            XCTAssertEqual(again[self.auto.key], .upToDate)
+
+            let macOutcomes = await mac.engine.prepare([mac.file(self.auto)])
+            guard case .downloaded = macOutcomes[self.auto.key] else { return XCTFail("\(macOutcomes)") }
+            XCTAssertEqual(mac.read(self.auto), "x")
+        }
+    }
 }
