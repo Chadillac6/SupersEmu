@@ -83,6 +83,7 @@ public enum LibraryQueries {
             coverPath: manualCover != nil ? "/v1/games/\(id)/artwork/cover" : merged.artworkPath(id, .cover),
             totalSize: row["total_size"] ?? 0, addedAt: row["created_at"],
             publisher: merged.publisher, region: merged.region, genres: genres, players: merged.players,
-            criticScore: merged.criticScore, backdropPath: merged.artworkPath(id, .backdrop))
+            criticScore: merged.criticScore, backdropPath: merged.artworkPath(id, .backdrop), heroPath: merged.heroPath(id),
+            logoPath: merged.artworkPath(id, .logo))
     }
 }

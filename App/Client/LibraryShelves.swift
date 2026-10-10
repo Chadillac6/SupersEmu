@@ -19,14 +19,29 @@ struct LibraryItem: Identifiable, Hashable {
     /// Set when the game can launch right now (local import or downloaded server game).
     let playable: Game?
     let lastPlayed: Date?
+    var heroPath: String?
+    var logoPath: String?
+    var genres: [String]?
+    var players: Int?
+    var criticScore: Int?
 
     var isCloudOnly: Bool { source == .server && !isDownloaded }
 }
 
-struct Shelf: Identifiable, Equatable {
+/// One letter of "All Games A-Z".
+struct LetterSection: Identifiable, Equatable {
     let id: String
-    let title: String
     let items: [LibraryItem]
+}
+
+/// What the Home screen shows for the selected console (nil is "All").
+struct HomeSections: Equatable {
+    /// Consoles the library has, for the selector.
+    var systems: [SystemID]
+    /// Most recently played, else the newest game.
+    var featured: LibraryItem?
+    var currentlyPlaying: [LibraryItem]
+    var letters: [LetterSection]
 }
 
 enum LibraryShelves {
@@ -39,7 +54,8 @@ enum LibraryShelves {
                 id: summary.id, title: summary.title, console: summary.system.displayName, system: summary.system,
                 year: summary.year, genre: summary.genre, coverPath: summary.coverPath, size: summary.totalSize,
                 addedAt: summary.addedAt ?? firstSeen[summary.id], source: .server, isDownloaded: downloads.isDownloaded(summary.id),
-                playable: playable, lastPlayed: lastPlayed(summary.id))
+                playable: playable, lastPlayed: lastPlayed(summary.id), heroPath: summary.heroPath ?? summary.backdropPath,
+                logoPath: summary.logoPath, genres: summary.genres, players: summary.players, criticScore: summary.criticScore?.score)
         }
         let localItems = local.map { game in
             LibraryItem(
@@ -50,33 +66,31 @@ enum LibraryShelves {
         return serverItems + localItems
     }
 
-    /// Continue Playing, Recently Added, one row per console, then "On this device".
+    static let alphabet = ["#"] + (UnicodeScalar("A").value...UnicodeScalar("Z").value).map { String(UnicodeScalar($0)!) }
+
     /// Offline, only games that can launch without the server are shown.
-    static func shelves(_ items: [LibraryItem], online: Bool) -> [Shelf] {
+    static func home(_ items: [LibraryItem], system: SystemID?, online: Bool) -> HomeSections {
         let visible = online ? items : items.filter { $0.playable != nil }
-        let server = visible.filter { $0.source == .server }
-        var shelves: [Shelf] = []
+        let systems = SystemID.allCases.filter { system in visible.contains { $0.system == system } }
+        let shown = system.map { system in visible.filter { $0.system == system } } ?? visible
 
         var seen = Set<String>()
-        let continuing = visible
+        let playing = shown
             .filter { $0.lastPlayed != nil && $0.playable != nil }
             .sorted { $0.lastPlayed! > $1.lastPlayed! }
             .filter { seen.insert($0.id).inserted }
-        if !continuing.isEmpty { shelves.append(Shelf(id: "continue", title: "Continue Playing", items: continuing)) }
+        seen = []
+        let sorted = shown.sorted(by: titleOrder).filter { seen.insert($0.id).inserted }
+        let newest = sorted.filter { $0.addedAt != nil }.max { $0.addedAt! < $1.addedAt! }
+        let groups = Dictionary(grouping: sorted, by: { letter(for: $0.title) })
+        return HomeSections(systems: systems, featured: playing.first ?? newest ?? sorted.first, currentlyPlaying: playing,
+                            letters: alphabet.compactMap { letter in groups[letter].map { LetterSection(id: letter, items: $0) } })
+    }
 
-        let recent = server.filter { $0.addedAt != nil }.sorted { ($0.addedAt!, $1.title) > ($1.addedAt!, $0.title) }
-        if online, !recent.isEmpty {
-            shelves.append(Shelf(id: "recent", title: "Recently Added", items: Array(recent.prefix(recentlyAddedLimit))))
-        }
-
-        for system in SystemID.allCases {
-            let games = server.filter { $0.system == system }.sorted(by: titleOrder)
-            if !games.isEmpty { shelves.append(Shelf(id: "system-\(system.rawValue)", title: system.displayName, items: games)) }
-        }
-
-        let local = visible.filter { $0.source == .local }.sorted(by: titleOrder)
-        if !local.isEmpty { shelves.append(Shelf(id: "local", title: "On this device", items: local)) }
-        return shelves
+    /// "A"-"Z" by the first letter (accents folded), "#" for everything else.
+    static func letter(for title: String) -> String {
+        let first = title.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).uppercased().first.map(String.init) ?? "#"
+        return alphabet.contains(first) ? first : "#"
     }
 
     static func search(_ items: [LibraryItem], query: String, online: Bool) -> [LibraryItem] {

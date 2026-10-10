@@ -41,7 +41,7 @@ public enum ServerLauncher {
             ? LocalNetwork.advertisedURLs(scheme: scheme, port: options.port, tailscaleHost: options.tailscaleHost)
             : options.advertiseURLs
         let environment = PairingEnvironment(urls: urls, certificateSHA256: pin)
-        let metadata = options.metadata ? MetadataService(store: store) : nil
+        let metadata = options.metadata ? MetadataService.standard(store: store) : nil
         metadata?.startPeriodicRetry()
         let application = Application(
             router: buildRouter(store: store, metadata: metadata), server: server,

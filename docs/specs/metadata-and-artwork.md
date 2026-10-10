@@ -20,16 +20,21 @@ Every provider writes its own row; every field is optional.
 - `games` keeps what the importer found (filename title, system). `games.cover_artwork` is the manual cover override
   (`ArtworkStore.setCover`).
 
-`MetadataMerge` merges field by field in provider precedence order: `manual`, `igdb`, `screenscraper`, `thegamesdb`,
-then `libretro`. Unknown providers come last, and the imported values in `games` are the final fallback. The manual
-cover beats every provider cover. Only `libretro` exists today. The others are placeholders in the precedence list, so
-adding one means implementing `MetadataProvider` (`lookup` + `artwork(for:)`) and registering it in `MetadataService`.
+- Migration `v5_metadata_reviews` adds optional `reception` + `reception_source` + `reception_url` (a short critical
+  reception summary), `review_name` + `review_url` (where to read full reviews) and `artwork_urls` (JSON, kind -> URL,
+  for providers that find art URLs during lookup) to `game_metadata`. Existing rows keep every value and get NULLs.
+
+`MetadataMerge` merges field by field in provider precedence order: `manual`, `igdb`, `steamgriddb`, `screenscraper`,
+`thegamesdb`, `wikipedia`, then `libretro`. Unknown providers come last, and the imported values in `games` are the
+final fallback. The manual cover beats every provider cover. Adding a provider means implementing `MetadataProvider`
+(`lookup` + `artwork(for:)`, plus `isEnabled` if it needs a key) and adding it to `MetadataService.standard`.
 
 ## API (additive; older clients ignore the new fields)
 
-- `GameSummary`: `publisher`, `region`, `genres`, `players`, `criticScore {score, source, url}`, `backdropPath`.
-  `genre` stays as the first genre.
-- `GameDetail`: `summary` (the description/intro), `developer`, `logoPath`, `titleScreenPath`, `screenshotPaths`,
+- `GameSummary`: `publisher`, `region`, `genres`, `players`, `criticScore {score, source, url}`, `backdropPath`,
+  `heroPath` (backdrop, else the first screenshot, else the title screen) and `logoPath`. `genre` stays as the first genre.
+- `GameDetail`: `summary` (the description/intro) and `summarySource` (its attribution), `developer`, `logoPath`,
+  `titleScreenPath`, `screenshotPaths`, `reception {text, source, url}`, `reviewLink {name, url}`,
   `sources [{provider, name, url}]`.
 - `GET /v1/games/:id/artwork/:kind` (position 0) and `GET /v1/games/:id/artwork/:kind/:position`. These use the same
   permission checks, path containment and content-hash ETag as the existing cover route. Paths are only returned when
@@ -47,7 +52,7 @@ adding one means implementing `MetadataProvider` (`lookup` + `artwork(for:)`) an
    or, for PlayStation, by serial. All pinned DATs for a system must load before anything matches, so a failed
    download defers the match instead of leaving fields blank.
    Those supplements exist for the cartridge systems. PlayStation only has `developer`, and Sega CD has none, so disc
-   games mostly get title and region. Neither DAT has descriptions or critic scores; those wait for a later provider.
+   games mostly get title and region. Neither DAT has descriptions or critic scores; those come from Wikipedia and IGDB (below).
 3. Artwork. `Named_Boxarts` becomes `cover`, `Named_Titles` becomes `title`, and `Named_Snaps` becomes `screenshot/0`.
    Files come from `raw.githubusercontent.com/libretro-thumbnails/<System>/<commit>/…`, named by the DAT name with
    `&*/:\`<>?\|"` replaced by `_`. Multi-disc sets also try the name without " (Disc N)". libretro has no backdrops. The artwork version is the
@@ -55,6 +60,35 @@ adding one means implementing `MetadataProvider` (`lookup` + `artwork(for:)`) an
 4. Background. `MetadataService` runs after every import or scan, at launch, and every 30 minutes after that. All
    requests share one rate limiter (at most one request a second). Network errors leave the job pending for the next
    pass. `supersemu-server run --no-metadata` turns the service off.
+
+## Wikipedia provider (keyless)
+
+Searches English Wikipedia (`w/api.php?action=query&list=search`, "<title> <console> video game") using the best title
+known so far (libretro's canonical title, else the imported one). A result only counts when its title, without a
+"(… video game)" qualifier, equals the game's (case, accents, punctuation and a leading "The" ignored), and its REST
+page summary is a standard page whose description mentions "game". The intro is the summary's first four sentences.
+The reception is the first three sentences of the `== Reception ==` section (also "Critical reception", "Reception and
+legacy"), from `prop=extracts&explaintext=1`. Both are attributed with a link to the article (CC BY-SA 4.0); the app
+shows "From Wikipedia" and a "Wikipedia" link.
+
+## Keyed providers (optional)
+
+Keys come from environment variables, else `<data-dir>/metadata.keys` (JSON, mode 0600), written with
+`supersemu-server metadata set-key <name>` (reads the key from stdin, hidden when typed) and removed with
+`metadata clear-key <name>`. `metadata status` says which providers are enabled and never prints a key. Keys are read
+at the start of each pass, so no restart is needed. They never leave the server: no route returns them, nothing logs
+them, artwork CDN downloads don't carry them, and backups skip `metadata.keys` (so a restore keeps the current keys).
+Without a key the provider is skipped entirely and makes no requests.
+
+| Provider | Keys | What it adds |
+|---|---|---|
+| `igdb` | `SUPERSEMU_IGDB_CLIENT_ID` + `SUPERSEMU_IGDB_CLIENT_SECRET` (Twitch app; `igdb-client-id`, `igdb-client-secret`) | `criticScore` from `aggregated_rating` (critics), else `total_rating`, and a "Read on IGN" `reviewLink` from IGDB's websites list, else an IGN search URL. No review text is quoted. |
+| `steamgriddb` | `SUPERSEMU_STEAMGRIDDB_KEY` (`steamgriddb`) | High-res hero (stored as `backdrop`) and `logo` art, static PNG/JPEG only, served through the usual artwork routes. |
+
+IGDB gets a Twitch app access token (client credentials) and reuses it until a minute before expiry; it searches
+`games` by title on the console's platform and takes the result with the same title. SteamGridDB matches by
+`search/autocomplete` title, then takes the top hero and logo. Without SteamGridDB, the libretro screenshot or title screen
+stands in as the hero (`heroPath`), and the app's hero falls back to the cover over a blurred copy of itself.
 
 ## Datasets (pinned, downloaded at runtime, never committed)
 
@@ -74,3 +108,6 @@ adding one means implementing `MetadataProvider` (`lookup` + `artwork(for:)`) an
   the art originates from each game's developers and publishers. We treat the images as third-party copyrighted art.
   Each user's server fetches them only for games that user owns, keeps them for personal use, and never commits or
   bundles them. If SupersEmu is ever distributed beyond Chad's household (Phase 2), this needs review.
+- Wikipedia text: CC BY-SA 4.0, shown with attribution and a link to the article.
+- IGDB data and SteamGridDB images: under each service's API terms, fetched per server with Chad's own keys, for
+  personal use. Review the terms before Phase 2. Console logos: see `branding-assets.md`.

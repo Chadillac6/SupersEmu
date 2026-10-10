@@ -29,6 +29,21 @@ public actor MetadataService {
                   providers: [LibretroMetadataProvider(catalog: catalog, cacheRoot: store.paths.metadata, http: http)])
     }
 
+    /// What the server runs: libretro and Wikipedia, plus IGDB and SteamGridDB once their keys are set (`MetadataKeys`).
+    public static func standard(store: ServerStore, fetcher: any MetadataFetching = URLSessionMetadataFetcher(),
+                                environment: [String: String] = ProcessInfo.processInfo.environment,
+                                minimumInterval: Duration = .seconds(1)) -> MetadataService {
+        let http = RateLimitedFetcher(fetcher, minimumInterval: minimumInterval)
+        let paths = store.paths
+        let keys: @Sendable () -> MetadataKeys = { MetadataKeys.load(paths: paths, environment: environment) }
+        return MetadataService(store: store, http: http, providers: [
+            LibretroMetadataProvider(cacheRoot: paths.metadata, http: http),
+            WikipediaMetadataProvider(http: http),
+            IGDBMetadataProvider(credentials: { keys().igdb }, http: http),
+            SteamGridDBMetadataProvider(key: { keys()[.steamGridDB] }, http: http),
+        ])
+    }
+
     /// Starts a background pass (or queues one more if a pass is running). Never blocks the caller.
     public nonisolated func enqueue() {
         Task { await self.runUntilIdle() }
@@ -58,7 +73,7 @@ public actor MetadataService {
     @discardableResult
     public func enrichPending() async -> Int {
         var changed = 0
-        for provider in providers {
+        for provider in providers where provider.isEnabled {
             do {
                 changed += try await enrich(with: provider)
             } catch {
@@ -88,7 +103,8 @@ public actor MetadataService {
             let status: String? = row["match_status"]
             let previousRef: String? = row["provider_ref"]
             if status == nil || (row["dataset_version"] as String?) != provider.version {
-                let game = MetadataLookup(gameID: id, system: system, title: row["title"], files: try candidateFiles(gameID: id))
+                let title = try await knownTitle(gameID: id, excluding: provider.id) ?? row["title"]
+                let game = MetadataLookup(gameID: id, system: system, title: title, files: try candidateFiles(gameID: id))
                 let result = (try? await provider.lookup(game)) ?? .unavailable
                 switch result {
                 case .unavailable:
@@ -115,6 +131,15 @@ public actor MetadataService {
             try await fetchArtwork(gameID: id, system: system, provider: provider)
         }
         return changed
+    }
+
+    /// The highest-precedence title another provider found, so name-searching providers search the canonical title.
+    private func knownTitle(gameID: String, excluding provider: String) async throws -> String? {
+        try await store.db.read { db in
+            try Row.fetchAll(db, sql: "SELECT provider, title FROM game_metadata WHERE game_id = ? AND provider != ? AND title IS NOT NULL",
+                             arguments: [gameID, provider])
+                .min { MetadataMerge.rank($0["provider"]) < MetadataMerge.rank($1["provider"]) }?["title"]
+        }
     }
 
     private func recordJob(_ gameID: String, _ provider: any MetadataProvider, match: String, clearingRecord: Bool) async throws {

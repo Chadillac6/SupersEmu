@@ -85,7 +85,9 @@ enum LibraryAccess {
             return GameDetail(game: LibraryQueries.summary(from: row, merged: merged), summary: merged.description ?? row["summary"],
                               files: files, developer: merged.developer, logoPath: merged.artworkPath(gameID, .logo),
                               titleScreenPath: merged.artworkPath(gameID, .title),
-                              screenshotPaths: merged.screenshotPaths(gameID), sources: merged.sources.isEmpty ? nil : merged.sources)
+                              screenshotPaths: merged.screenshotPaths(gameID), sources: merged.sources.isEmpty ? nil : merged.sources,
+                              summarySource: merged.description == nil ? nil : merged.descriptionSource,
+                              reception: merged.reception, reviewLink: merged.reviewLink)
         }
     }
 

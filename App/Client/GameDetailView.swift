@@ -11,50 +11,56 @@ struct GameDetailView: View {
     @State private var detail: GameDetail?
 
     var body: some View {
+        let theme = SystemTheme.theme(for: item.system)
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .top, spacing: 20) {
-                    CoverArt(item: item).frame(width: 150)
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(item.title).font(.title.bold()).accessibilityIdentifier("detail-title")
-                        Text(metadata).foregroundStyle(.secondary)
-                        AvailabilityBadge(item: item, state: downloads.states[item.id])
-                    }
-                }
-                if let system = item.system, bios.isMissing(system) {
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(system.missingBIOSMessage).font(.headline)
-                            Text("Add the BIOS file to \(server.serverName) and it will sync to this device automatically.")
-                                .font(.callout).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 0) {
+                header(theme)
+                VStack(alignment: .leading, spacing: 18) {
+                    tags
+                    if let system = item.system, bios.isMissing(system) {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(system.missingBIOSMessage).font(.headline)
+                                Text("Add the BIOS file to \(server.serverName) and it will sync to this device automatically.")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                         }
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("needs-bios")
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("needs-bios")
-                }
-                actions
-                if let detail = gameDetail, detail.discCount > 1 {
-                    Label("\(detail.discCount) discs · \(Self.size(detail.totalFileSize)) total", systemImage: "opticaldisc")
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("disc-count")
-                }
-                if let summary = detail?.summary, !summary.isEmpty {
-                    Text(summary).foregroundStyle(.secondary)
-                }
-                if let files = gameDetail?.files, files.count > 1 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Files").font(.headline)
-                        ForEach(files) { file in
-                            Text("\(file.filename) · \(Self.size(file.size))").font(.callout).foregroundStyle(.secondary)
+                    actions
+                    if let detail = gameDetail, detail.discCount > 1 {
+                        Label("\(detail.discCount) discs · \(Self.size(detail.totalFileSize)) total", systemImage: "opticaldisc")
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("disc-count")
+                    }
+                    if let summary = gameDetail?.summary, !summary.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(summary).foregroundStyle(.secondary).accessibilityIdentifier("detail-intro")
+                            if let source = gameDetail?.summarySource, let url = source.url.flatMap(URL.init(string:)) {
+                                Link("From \(source.name)", destination: url).font(.caption)
+                            }
                         }
                     }
+                    reviews
+                    screenshots
+                    if let files = gameDetail?.files, files.count > 1 {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Files").font(.headline)
+                            ForEach(files) { file in
+                                Text("\(file.filename) · \(Self.size(file.size))").font(.callout).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
+                .padding(24)
             }
-            .padding(24)
         }
-        .frame(minWidth: 360, idealWidth: 520, minHeight: 360)
+        .background(LinearGradient(colors: theme.background, startPoint: .top, endPoint: .bottom).ignoresSafeArea())
+        .tint(theme.accent)
+        .frame(minWidth: 360, idealWidth: 680, minHeight: 360, idealHeight: 760)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() }.accessibilityIdentifier("detail-done") }
         }
@@ -63,6 +69,127 @@ struct GameDetailView: View {
             guard item.source == .server, server.isOnline else { return }
             detail = try? await server.detail(for: item.id)
         }
+    }
+
+    private func header(_ theme: SystemTheme) -> some View {
+        WideArt(item: item)
+            .frame(height: 260)
+            .overlay {
+                LinearGradient(colors: [.clear, theme.background[0].opacity(0.95)], startPoint: .center, endPoint: .bottom)
+            }
+            .overlay(alignment: .topLeading) {
+                if let logo = item.logoPath ?? gameDetail?.logoPath {
+                    RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit)
+                        .frame(maxWidth: 260, maxHeight: 80, alignment: .leading)
+                        .padding(20)
+                        .accessibilityHidden(true)
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                HStack(alignment: .bottom, spacing: 18) {
+                    CoverArt(item: item).frame(width: 110).shadow(radius: 10)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(item.title).font(.title.bold()).lineLimit(3).accessibilityIdentifier("detail-title")
+                        Text(metadata).foregroundStyle(.secondary)
+                        AvailabilityBadge(item: item, state: downloads.states[item.id])
+                    }
+                }
+                .padding(.horizontal, 24)
+                .offset(y: 40)
+            }
+            .padding(.bottom, 40)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("detail-hero")
+    }
+
+    @ViewBuilder private var tags: some View {
+        let values = tagValues
+        if !values.isEmpty {
+            FlowLayout {
+                ForEach(values, id: \.self) { tag in
+                    Text(tag).font(.caption.bold())
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(.white.opacity(0.1), in: Capsule())
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("detail-tags")
+        }
+    }
+
+    private var tagValues: [String] {
+        var tags: [String] = []
+        if let year = item.year { tags.append(String(year)) }
+        tags += item.genres ?? item.genre.map { [$0] } ?? []
+        if let players = item.players { tags.append(players > 1 ? "1–\(players) players" : "1 player") }
+        if let publisher = gameDetail?.game.publisher { tags.append(publisher) }
+        if let region = gameDetail?.game.region { tags.append(region) }
+        return tags
+    }
+
+    /// Critic score (IGDB, only when the server has a key), the Wikipedia reception summary and an IGN link.
+    @ViewBuilder private var reviews: some View {
+        let score = gameDetail?.game.criticScore
+        let reception = gameDetail?.reception
+        let link = gameDetail?.reviewLink.flatMap { link in URL(string: link.url).map { (link.name, $0) } }
+        if score != nil || reception != nil || link != nil {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Reviews").font(.headline)
+                if let score {
+                    HStack(spacing: 12) {
+                        Text("\(score.score)")
+                            .font(.title2.bold().monospacedDigit())
+                            .frame(width: 54, height: 54)
+                            .background(Self.scoreColor(score.score).opacity(0.85), in: RoundedRectangle(cornerRadius: 12))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Critic score").font(.subheadline.bold())
+                            Text(score.source).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("critic-score")
+                }
+                if let reception {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(reception.text).foregroundStyle(.secondary)
+                        if let url = reception.url.flatMap(URL.init(string:)) {
+                            Link(reception.source, destination: url).font(.caption)
+                        }
+                    }
+                    .accessibilityIdentifier("reception")
+                }
+                if let (name, url) = link {
+                    Link(destination: url) { Label("Read on \(name)", systemImage: "arrow.up.right.square") }
+                        .accessibilityIdentifier("review-link")
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+        }
+    }
+
+    @ViewBuilder private var screenshots: some View {
+        let paths = [gameDetail?.titleScreenPath].compactMap { $0 } + (gameDetail?.screenshotPaths ?? [])
+        if !paths.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Screenshots").font(.headline)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(paths, id: \.self) { path in
+                            RemoteArtwork(gameID: item.id, path: path)
+                                .frame(width: 220, height: 160)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                }
+            }
+            .accessibilityIdentifier("screenshots")
+        }
+    }
+
+    static func scoreColor(_ score: Int) -> Color {
+        score >= 75 ? .green : score >= 50 ? .yellow : .red
     }
 
     private var metadata: String {

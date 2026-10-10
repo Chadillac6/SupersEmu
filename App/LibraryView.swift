@@ -2,11 +2,13 @@ import SupersEmuKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Netflix-style library: rows of cover art from the server plus games imported on this device.
+/// Netflix/Plex-style Home: console selector and theme, featured game, Currently Playing, then every game A-Z.
 struct LibraryView: View {
     @Environment(GameLibrary.self) private var library
     @Environment(ServerSession.self) private var server
     @Environment(DownloadCenter.self) private var downloads
+    @Environment(BIOSCenter.self) private var bios
+    @AppStorage("home.system") private var selectedSystem = ""
     let onPlay: (Game) -> Void
     @State private var isImporting = false
     @State private var isConnecting = false
@@ -22,24 +24,55 @@ struct LibraryView: View {
     private var online: Bool { server.isOnline || !server.isPaired }
 
     var body: some View {
+        let all = LibraryShelves.home(items, system: nil, online: online)
+        let system = SystemID(rawValue: selectedSystem).flatMap { all.systems.contains($0) ? $0 : nil }
+        let home = system == nil ? all : LibraryShelves.home(items, system: system, online: online)
+        let theme = SystemTheme.theme(for: system)
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
-                    ConnectionBanner()
-                    if !query.isEmpty {
-                        searchResults
-                    } else {
-                        let shelves = LibraryShelves.shelves(items, online: online)
-                        if shelves.isEmpty {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 26) {
+                        ConnectionBanner()
+                        if !query.isEmpty {
+                            searchResults
+                        } else if all.letters.isEmpty {
                             emptyState
                         } else {
-                            ForEach(shelves) { shelf in ShelfRow(shelf: shelf, select: open) }
+                            SystemSelectorBar(theme: theme, systems: all.systems, selection: Binding(
+                                get: { system }, set: { selectedSystem = $0?.rawValue ?? "" }))
+                            if let featured = home.featured {
+                                HomeHero(item: featured, theme: theme, primaryTitle: heroTitle(featured),
+                                         primary: { heroAction(featured) }, details: { open(featured) })
+                            }
+                            if !home.currentlyPlaying.isEmpty {
+                                CurrentlyPlayingRow(items: home.currentlyPlaying, select: open)
+                            }
+                            AlphabetGrid(sections: home.letters, select: open)
+                        }
+                    }
+                    .padding(.vertical, 16)
+                }
+                .overlay(alignment: .trailing) {
+                    if query.isEmpty, !home.letters.isEmpty {
+                        JumpRail(available: Set(home.letters.map(\.id))) { letter in
+                            withAnimation(.snappy) { proxy.scrollTo("letter-\(letter)", anchor: .top) }
                         }
                     }
                 }
-                .padding(.vertical, 16)
             }
-            .navigationTitle("SupersEmu")
+            .background {
+                ZStack {
+                    LinearGradient(colors: theme.background, startPoint: .top, endPoint: .bottom)
+                    RadialGradient(colors: [theme.accent.opacity(0.35), .clear], center: .topLeading, startRadius: 0, endRadius: 700)
+                }
+                .ignoresSafeArea()
+            }
+            .animation(.easeInOut(duration: 0.35), value: theme.id)
+            .tint(theme.accent)
+            .navigationTitle(system?.displayName ?? "SupersEmu")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
             .searchable(text: $query, prompt: "Search games")
             .refreshable { await server.refresh() }
             .toolbar {
@@ -72,6 +105,8 @@ struct LibraryView: View {
                 NavigationStack { GameDetailView(item: liveItem(item), onPlay: onPlay) }
                     .environment(server)
                     .environment(downloads)
+                    .environment(bios)
+                    .preferredColorScheme(.dark)
             }
             .sheet(isPresented: $isConnecting) {
                 NavigationStack {
@@ -84,6 +119,7 @@ struct LibraryView: View {
                 .frame(minWidth: 420, minHeight: 520)
             }
             .onChange(of: server.isPaired) { _, paired in if paired { isConnecting = false } }
+            .preferredColorScheme(.dark)
             .safeAreaInset(edge: .bottom) {
                 if let message = library.importMessage {
                     Text(message)
@@ -99,6 +135,21 @@ struct LibraryView: View {
 
     private func open(_ item: LibraryItem) {
         selected = item
+    }
+
+    private func heroPlayable(_ item: LibraryItem) -> Game? {
+        let game = item.source == .server ? downloads.playableGame(item.id) : item.playable
+        return bios.isMissing(item.system) ? nil : game
+    }
+
+    private func heroTitle(_ item: LibraryItem) -> String {
+        guard let game = heroPlayable(item) else { return item.isCloudOnly ? "Get Game" : "View Game" }
+        return game.hasResumePoint ? "Resume" : "Play"
+    }
+
+    /// Plays straight away when it can; otherwise the pop-up has the download/BIOS controls.
+    private func heroAction(_ item: LibraryItem) {
+        if let game = heroPlayable(item) { onPlay(game) } else { open(item) }
     }
 
     /// The sheet keeps the tapped item; re-resolve it so badges and buttons follow downloads.
@@ -175,30 +226,6 @@ struct LibraryView: View {
         if server.isPaired, server.isOnline { return "Add games on your server, or import games you own (SNES, Game Boy, GBA, Genesis) onto this device." }
         if server.isPaired { return "Nothing is downloaded yet. Connect to your server to download games." }
         return "Import games you own (SNES, Game Boy, GBA, Genesis), or connect to your SupersEmu Server."
-    }
-}
-
-struct ShelfRow: View {
-    @Environment(DownloadCenter.self) private var downloads
-    let shelf: Shelf
-    let select: (LibraryItem) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(shelf.title).font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier("shelf-\(shelf.id)")
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 16) {
-                    ForEach(shelf.items) { item in
-                        Button { select(item) } label: { GameCard(item: item, state: downloads.states[item.id]) }
-                            .buttonStyle(.plain)
-                            .frame(width: 132)
-                            .accessibilityIdentifier("game-card")
-                            .accessibilityLabel(item.title)
-                    }
-                }
-                .padding(.horizontal, 20)
-            }
-        }
     }
 }
 
