@@ -25,16 +25,21 @@ public struct ArtworkStore: Sendable {
         // Content-addressed name: a path never changes bytes, so the ETag (the hash) always matches what is streamed.
         let name = "cover-\(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()).\(ext)"
         let url = directory.appendingPathComponent(name)
-        try data.write(to: url, options: .atomic)
-        try store.db.write { db in
-            try db.execute(sql: "UPDATE games SET cover_artwork = ? WHERE id = ?", arguments: ["artwork/\(gameID)/\(name)", gameID])
-        }
-        let others = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        for other in others where other != name && other.hasPrefix("cover") {
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent(other))
+        // Write, record and clean up as one step so a concurrent update can't delete the cover just recorded.
+        try Self.writeLock.withLock {
+            try data.write(to: url, options: .atomic)
+            try store.db.write { db in
+                try db.execute(sql: "UPDATE games SET cover_artwork = ? WHERE id = ?", arguments: ["artwork/\(gameID)/\(name)", gameID])
+            }
+            let others = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+            for other in others where other != name && other.hasPrefix("cover") {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(other))
+            }
         }
         return url
     }
+
+    private static let writeLock = NSLock()
 
     /// The content hash embedded in a `cover-<sha256>.<ext>` filename, if present.
     static func contentHash(of url: URL) -> String? {

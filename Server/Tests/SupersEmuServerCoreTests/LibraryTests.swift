@@ -563,3 +563,17 @@ extension LibraryTests {
         }
     }
 }
+
+extension LibraryTests {
+    func testConcurrentCoverUpdatesKeepRecordedFile() async throws {
+        let id = try await importer.importPaths([try write(ROMFixtures.snes(seed: 25), "Race.sfc").path], auth: nil).imported[0].id
+        let artwork = ArtworkStore(store: store)
+        DispatchQueue.concurrentPerform(iterations: 16) { i in
+            do { try artwork.setCover(gameID: id, data: Data([UInt8(i), 1, 2, 3]), fileExtension: "png") } catch { XCTFail("\(error)") }
+        }
+        let recorded = try await store.db.read { try String.fetchOne($0, sql: "SELECT cover_artwork FROM games WHERE id = ?", arguments: [id]) }
+        let path = try XCTUnwrap(recorded)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.paths.root.appendingPathComponent(path).path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: store.paths.artwork.appendingPathComponent(id).path).count, 1)
+    }
+}
