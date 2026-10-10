@@ -11,8 +11,8 @@ final class DownloadCenter {
         case failed(String)
     }
 
-    /// Systems this build has a core for (GameSession is Snes9x-only today); others can download but not launch.
-    static let launchableSystems: Set<SystemID> = [.snes]
+    /// Systems with a linked core; games for other systems can download but not launch.
+    static func isLaunchable(_ system: SystemID) -> Bool { CoreRegistry.core(forSystem: system.rawValue) != nil }
 
     let cache: GameCache
     private(set) var states: [String: State] = [:]
@@ -32,7 +32,7 @@ final class DownloadCenter {
 
     /// Ready-to-play `Game` for a downloaded server game, compatible with GameSession/PlayerView.
     func playableGame(_ gameID: String) -> Game? {
-        guard let cached = downloaded[gameID], Self.launchableSystems.contains(cached.detail.game.system),
+        guard let cached = downloaded[gameID], Self.isLaunchable(cached.detail.game.system),
               let url = cache.launchFileURL(for: cached) else { return nil }
         let game = cached.detail.game
         return Game(id: game.id, title: game.title, fileURL: url, console: game.system.displayName,

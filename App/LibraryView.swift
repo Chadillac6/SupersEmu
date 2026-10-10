@@ -178,9 +178,9 @@ struct LibraryView: View {
     }
 
     private var emptyText: String {
-        if server.isPaired, server.isOnline { return "Add games on your server, or import SNES games (.sfc, .smc) you own onto this device." }
+        if server.isPaired, server.isOnline { return "Add games on your server, or import games you own (SNES, Game Boy, GBA, Genesis) onto this device." }
         if server.isPaired { return "Nothing is downloaded yet. Connect to your server to download games." }
-        return "Import SNES games (.sfc, .smc) you own, or connect to your SupersEmu Server."
+        return "Import games you own (SNES, Game Boy, GBA, Genesis), or connect to your SupersEmu Server."
     }
 }
 

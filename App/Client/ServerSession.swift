@@ -61,7 +61,7 @@ final class ServerSession {
         let request = PairRequest(code: payload.code, deviceName: Self.deviceName, platform: Self.platform)
         var lastError: Error = APIClientError.invalidResponse
         for url in payload.urls {
-            let trust = PinnedTrustDelegate(certificateSHA256: payload.certificateSHA256, trustOnFirstUse: true)
+            let trust = PinnedTrustDelegate(certificateSHA256: payload.certificateSHA256, trustOnFirstUse: true, expectedHost: url.host)
             let pairingSession = URLSession(configuration: Self.configuration, delegate: trust, delegateQueue: nil)
             defer { pairingSession.finishTasksAndInvalidate() }
             let client = APIClient(baseURL: url, token: nil, session: pairingSession)
