@@ -53,7 +53,7 @@ public struct ArtworkStore: Sendable {
     public func coverFile(cover relativePath: String?) -> URL? {
         guard let relativePath, relativePath.hasPrefix("artwork/"), !relativePath.split(separator: "/").contains("..") else { return nil }
         let artworkRoot = store.paths.artwork.resolvingSymlinksInPath().standardizedFileURL.path
-        let url = store.paths.root.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
+        let url = store.paths.libraryFile(relativePath).resolvingSymlinksInPath().standardizedFileURL
         guard url.path.hasPrefix(artworkRoot + "/"),
               (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { return nil }
         return url

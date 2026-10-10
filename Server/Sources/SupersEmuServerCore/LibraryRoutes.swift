@@ -82,7 +82,7 @@ enum LibraryAccess {
                     """, arguments: [gameID, fileID]) else { return nil }
             let storedPath: String = row["stored_path"]
             guard !storedPath.contains("..") else { return nil }
-            return StoredFile(filename: row["filename"], url: store.paths.root.appendingPathComponent(storedPath))
+            return StoredFile(filename: row["filename"], url: store.paths.libraryFile(storedPath))
         }
     }
 }
