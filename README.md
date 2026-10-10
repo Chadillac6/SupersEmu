@@ -4,8 +4,8 @@ A Netflix/Plex-style retro game library for iPhone, iPad and Mac. Import games y
 them as a library, play with touch or a controller, and pick up where you left off.
 
 Status: **M0 feasibility spike done**. SNES (Snes9x) runs on macOS and the iOS simulator. Next
-architecture (proposed): a Plex-style SupersEmu Server on a Mac mini with invited users and local
-play, see [ADR 0004](docs/adr/0004-home-server.md) and [docs/specs/server.md](docs/specs/server.md). See [docs/M0_SPIKE_REPORT.md](docs/M0_SPIKE_REPORT.md) and
+architecture (accepted): a Plex-style SupersEmu Server on a Mac mini with local play. Phase 1 is
+Chad only; Phase 2 adds invited friends, see [ADR 0004](docs/adr/0004-home-server.md) and [docs/specs/server.md](docs/specs/server.md). See [docs/M0_SPIKE_REPORT.md](docs/M0_SPIKE_REPORT.md) and
 [docs/ARCHITECTURE_AND_PLAN.md](docs/ARCHITECTURE_AND_PLAN.md).
 
 SupersEmu does not include games or BIOS files.

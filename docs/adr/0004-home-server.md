@@ -1,6 +1,6 @@
 # ADR 0004: Plex-style home server, local emulation on each device
 
-- Status: Proposed (owner request, 2026-10-10). Supersedes ADR 0003 once approved.
+- Status: Accepted (owner approved, 2026-10-10; phasing revised the same day). Supersedes ADR 0003.
 - Context: in ADR 0003 every user connected their own Google Drive. Chad wants a Plex-style setup
   instead: his Mac mini hosts the library, he decides which games each person sees, and fewer than
   10 invited friends sign in with games already there. Each person's saves stay private to them.
@@ -12,9 +12,17 @@
   server, caches it, and runs the emulator locally through the existing libretro host (ADR 0001).
   The server never runs games and never streams video.
 - **Two phases only.** No game-streaming phase.
-- **LAN and remote access in Phase 1.** On the home network the app finds the server via Bonjour.
-  Away from home it uses the same API over Tailscale (see `docs/specs/server.md`). The server port
-  is never opened to the public internet.
+  - **Phase 1: Chad only.** One admin user (Chad) on his own Mac, iPhone and iPad, so he can use it
+    daily and give feedback before anyone else joins.
+  - **Phase 2 goal: invited friends.** Fewer than 10 people get their own account through an
+    invite. Each sees only the games Chad allows, and their saves and history stay private.
+  - Phase 1 is built so Phase 2 only adds features, with no rewrite: every record and API call is
+    tied to a user ID, devices sign in with tokens, and every request already passes through a
+    permission check (Chad's admin account passes all of them).
+- **LAN and remote access in Phase 1** for Chad's devices. On the home network the app finds the
+  server via Bonjour. Away from home it uses the same API over Chad's Tailscale network. In Phase 2,
+  friends reach it through Tailscale machine sharing (see `docs/specs/server.md`). The server port is
+  never opened to the public internet.
 - **The server starts at boot** with no one logged in: a launch daemon registered with
   `SMAppService.daemon(plistName:)`.
 - **Automation-friendly:** a versioned HTTP API, a `supersemu` CLI and an OpenClaw skill that uses the
@@ -23,7 +31,7 @@
   targets in Phase 2.
 
 ## Why
-- Friends set up nothing. They accept an invite, sign in, and see games. No Drive folders, no OAuth
+- Friends (Phase 2) set up nothing. They accept an invite, sign in, and see games. No Drive folders, no OAuth
   "unverified app" screen, no 7-day token expiry, no restricted-scope review.
 - One place to organise games (Chad's Mac mini) instead of each user's own Drive.
 - Running games on the device keeps controls responsive and works offline once a game is

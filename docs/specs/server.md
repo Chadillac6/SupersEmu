@@ -1,17 +1,47 @@
 # SupersEmu Server (Mac mini)
 
-Status: **Draft for owner review.** [Verified] = checked against vendor docs on 2026-10-10.
+Status: **Accepted defaults (Tailscale, one Mac app with Server/Player modes, invite sign-in).** [Verified] = checked against vendor docs on 2026-10-10.
 [Inference] = design judgement, to be proven in the server spike.
 
 ## Requirements (from Chad)
 - Mac mini (new, Apple silicon) is the server. Chad controls which games exist and who sees them.
-- Fewer than 10 invited users. Optimise for simplicity, not scale.
+- **Phase 1 is Chad only**, so he can use the server and apps and give feedback first.
+- **Phase 2 goal:** fewer than 10 invited users, each with their own account, the games Chad allows,
+  and private saves. Optimise for simplicity, not scale.
 - Works on the home network and remotely.
 - Starts automatically when the Mac mini boots.
 - Each user's saves, favourites and history are private to them.
 - Easy to drive from CLIs and bots such as OpenClaw.
 
 ## Components
+```mermaid
+flowchart LR
+  subgraph Mini["Mac mini (always on)"]
+    D["supersemu-server daemon<br/>API · auth · library · saves"]
+    DB[("library.sqlite + games/ + users/{id}/saves")]
+    A["SupersEmu.app — Server mode<br/>admin UI · menu-bar status"]
+    CLI["supersemu CLI"]
+    OC["OpenClaw / scripts"]
+    TS1["Tailscale daemon"]
+    D --- DB
+    A -->|admin API| D
+    CLI -->|API + scoped token| D
+    OC --> CLI
+  end
+  subgraph Dev["Player devices"]
+    M["Mac app — Player mode"]
+    P["iPhone / iPad app"]
+    H["libretro host + cores<br/>(play locally)"]
+    C[("download cache + local saves")]
+    M --> H
+    P --> H
+    H --- C
+  end
+  M -->|"home Wi-Fi: Bonjour + HTTPS"| D
+  P -->|"away: HTTPS over Tailscale"| TS1 --> D
+```
+Phase 1: only Chad's devices. Phase 2: friends' devices use the same paths, via Tailscale machine sharing.
+
 ```
 Mac mini
  ├─ supersemu-server   launch daemon (headless): HTTP API, SQLite (GRDB), library + user data
@@ -45,6 +75,10 @@ Player devices (Mac, iPhone, iPad)
   ever sees games they're allowed.
 
 ## Accounts and sign-in
+Phase 1: Chad's account is created at server setup (admin). He pairs his own devices by scanning a QR
+code from Server mode, which issues a device token. Steps 1–4 below are the Phase 2 invite flow,
+built on the same pairing code.
+
 1. Chad creates an invite (admin UI or `supersemu users invite <name>`). The invite is a one-time
    link/QR code containing the server's LAN name, its Tailscale name and the server certificate fingerprint.
 2. The friend opens it in SupersEmu, picks a display name, and the server issues a **per-device
@@ -107,16 +141,23 @@ supersemu backups run
   `server.health_changed`.
 
 ## Phases
-| Phase | Server scope |
-|---|---|
-| **1** | Daemon at boot, admin mode, import/organise on server, invites + device tokens, per-user permissions, LAN + Tailscale access, downloads/cache, per-user save sync, CLI + scoped tokens |
-| **2** | Polish: webhooks, OpenClaw skill on ClawHub, server backups (Time Machine / Google Drive / iCloud), health and "server offline" UX, bandwidth limits, multi-server |
+| Phase | Who | Server scope |
+|---|---|---|
+| **1** | Chad only | Daemon at boot, Server mode admin UI, import/organise on the server, Chad's admin account, pair his devices by QR, library + downloads/cache, save sync across his devices, LAN + his Tailscale network, CLI + scoped tokens (OpenClaw) |
+| **2 goal** | Chad + <10 invited friends | Invites, player role, per-user/group game permissions, private per-user saves and history, Tailscale machine sharing to friends, revoke users/devices, users screen in admin, webhooks, server backups, "server offline" UX |
+
+Built in Phase 1 so Phase 2 is additive, not a rewrite:
+- A `users` table from day one, with Chad as the only admin. Saves and profiles live under `users/<id>/`.
+- Every API request resolves token → device → user, then runs a permission check. In Phase 1 the
+  admin passes every check; Phase 2 adds rules, not a new code path.
+- The library API only returns games the requesting user may see (all games for Chad).
+- Device pairing is the same code the Phase 2 invite uses.
 
 ## Legal note (not legal advice)
 The server only ever holds files Chad imports. Sharing copies of games with friends is Chad's
 responsibility. SupersEmu ships no games or BIOS files.
 
-## Spike before M2 (needs the new Mac mini)
+## Spike at the start of M1 (needs the new Mac mini)
 - Daemon starts at boot with no user logged in. API reachable on LAN and over Tailscale from an iPhone on cellular.
-- Pair an iPhone from an invite QR. Revoke it and confirm the next request fails.
+- Pair an iPhone from a pairing QR. Revoke it and confirm the next request fails.
 - Download a 700 MB file over Tailscale with a resume after interruption.

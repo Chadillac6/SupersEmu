@@ -4,14 +4,17 @@ Status: **DRAFT — awaiting owner decisions (Section 9).** No code written yet.
 
 Legend: **[Verified]** = checked today against a primary source. **[Inference]** = my engineering judgement, to be proven in the M0 spike.
 
-## v0.2 change: Plex-style home server (ADR 0004, proposed)
+## v0.2 change: Plex-style home server (ADR 0004, accepted)
 
-- Chad's Mac mini runs **SupersEmu Server**. He imports and organises games once, invites fewer than
-  10 friends, and chooses which games each person sees.
-- Friends sign in with an invite. Games download to their Mac/iPhone/iPad and **run locally**. Saves,
+- Chad's Mac mini runs **SupersEmu Server**. He imports and organises games once. In Phase 2 he
+  invites fewer than 10 friends and chooses which games each person sees.
+- Phase 2 friends sign in with an invite. Games download to their Mac/iPhone/iPad and **run locally**. Saves,
   favourites and history are private per user and sync to the server.
 - LAN and remote (Tailscale) access from Phase 1. Server starts at boot. HTTP API + `supersemu` CLI
   for bots such as OpenClaw.
+- **Phase 1 is Chad only** (server + Mac/iPhone/iPad apps) so he can use it and give feedback.
+  **Phase 2 goal:** invited friends with their own accounts, permitted games and private saves.
+  Phase 1 is multi-user-ready underneath, so Phase 2 adds features without a rewrite.
 - Two phases only, no game streaming. Google Drive is no longer how users get games (ADR 0003 superseded).
 - Details: `docs/specs/server.md`. UI direction: `docs/specs/ui-direction.md`. Sections 2, 4 and 8
   below are updated; the rest of v0.1 still stands.
@@ -129,25 +132,21 @@ Each milestone: spec docs → implementation → tests → demo video/screens �
 | Milestone | Scope | Exit criteria |
 |---|---|---|
 | **M0 — Decision gate + spike** | Done: ADRs, specs, SNES on Mac + iPhone sim, save/load, N64 iOS build check | Merged (#1–#3) |
-| **M1 — Local player, "easy" consoles** | Netflix-style home/shelves/detail; local import (dev path); SNES, GB, GBC, GBA, Genesis; native saves + manual states; controllers; Mac + iPhone + iPad | You play a game on your iPhone from a TestFlight/dev build |
-| **M2 — Home server** | Server spike on the Mac mini, then daemon at boot, admin mode, server-side import, invites + device tokens, per-user permissions, LAN + Tailscale, downloads/cache, per-user save sync, CLI + scoped tokens | A friend on cellular signs in from an invite, plays, and their save shows on their iPad; your saves untouched |
-| **M3 — Smart import + disc systems** | Bulk messy import on the server, hash ID, art, Review Needed; PS1 + Sega CD multi-disc + .m3u; BIOS checker | 200-file messy import fixture; 3-disc PS1 test set |
-| **M4 — Hard consoles + controller polish** | N64, 32X; Retrolink/generic HID on Mac; per-game remapping UI | Per-console device test logs |
-| **Phase 2** | Polish: webhooks, OpenClaw skill on ClawHub, server backups, health/offline UX; Dreamcast if no-JIT speed allows; Apple TV; shaders | — |
+| **M1 — Server + apps for Chad** | Mac mini server spike, then daemon at boot, Server mode, import on the server, Chad's devices paired by QR; Netflix-style library from the server; download and play locally SNES, GB, GBC, GBA, Genesis; native saves, auto/manual states synced across his devices; LAN + his Tailscale; CLI | Chad plays on his iPhone from the Mac mini library (at home and on cellular), quits, and continues on his Mac |
+| **M2 — Smart import + disc systems** | Bulk messy import on the server, hash ID, art, Review Needed; PS1, Sega CD, 32X; multi-disc + .m3u; BIOS checker | 200-file messy import fixture; 3-disc PS1 test set |
+| **M3 — Hard consoles + controller polish** | N64, Retrolink/generic HID on Mac, per-game remapping UI | Per-console device test logs |
+| **Phase 2 — Friends** | Invites, player accounts, per-user game permissions, private saves, Tailscale sharing, revoke; webhooks, OpenClaw skill, backups, offline UX; Dreamcast if no-JIT speed allows; Apple TV; shaders | A friend accepts an invite, sees only permitted games, and their saves never appear in Chad's account |
 
-**Parallelism (per your preference):** M0 is a single blocking "Wave 0". From M1 on, independent tracks (UI shell, server + API, import pipeline, client sync, controllers, per-console core bring-up) can run as parallel Devin sessions consolidated into one PR per milestone.
+**Parallelism (per your preference):** M0 is a single blocking "Wave 0". From M1 on, independent tracks (server + API, player app UI, import pipeline, client sync, controllers, per-console core bring-up) can run as parallel Devin sessions consolidated into one PR per milestone.
 
-## 9. Decisions needed from you (v0.2)
+## 9. Decisions (v0.2)
 
-Settled in v0.1: architecture B, GPLv3 + TestFlight for friends, repo, hardware, name SupersEmu.
+Settled: ADR 0004; Tailscale for remote access; one Mac app with Server and Player modes; invite
+sign-in (Phase 2) on top of QR device pairing (Phase 1); Phase 1 is Chad only.
 
-Open for the home server (defaults in bold, change any):
-1. Approve ADR 0004 (Mac mini server, local play, per-user saves, two phases, no streaming)?
-2. Remote access: **Tailscale with machine sharing** / Cloudflare Tunnel / LAN only at first.
-3. Admin: **one Mac app with Server and Player modes** / a separate admin app / a web admin page.
-4. Sign-in: **invite link + per-device token** / Sign in with Apple / username + password.
-5. Mac mini details: macOS version and storage size (sets the minimum macOS for the server).
-6. UI direction answers (`docs/specs/ui-direction.md`), coming from the side chat.
+Still needed from Chad:
+1. Mac mini macOS version and storage size (sets the server's minimum macOS).
+2. UI direction answers (`docs/specs/ui-direction.md`).
 
 ## 10. What I can and can't verify from my environment
 

@@ -11,7 +11,7 @@ TV-style remotes are out of scope.
 | Apple GameController (`GCController`) | MFi, Xbox Wireless, DualShock 4, DualSense, Switch Pro, Joy-Con, and any 8BitDo/USB pad that identifies as one of these | macOS, iOS, iPadOS | Implemented in M0 (`App/GameInput.swift`) |
 | Keyboard (`GCKeyboard`) | Mac keyboard, iPad hardware keyboard | macOS, iPadOS | Implemented in M0 |
 | Touch overlay | No controller connected | iOS, iPadOS | Implemented in M0 (SNES layout) |
-| Generic HID fallback (`IOHIDManager`) | Generic USB/2.4 GHz pads (D-input, cheap USB pads) that `GCController` ignores | macOS only | Planned M4 |
+| Generic HID fallback (`IOHIDManager`) | Generic USB/2.4 GHz pads (D-input, cheap USB pads) that `GCController` ignores | macOS only | Planned M3 |
 
 [Inference] iOS/iPadOS has no public API for generic HID gamepads, so on iPhone/iPad a controller
 must identify as one of the Apple-supported types. Confirm on Chad's iPad before promising it.
