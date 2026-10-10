@@ -12,6 +12,7 @@ struct LibraryView: View {
     @State private var isConnecting = false
     @State private var selected: LibraryItem?
     @State private var query = ""
+    @State private var isShowingControls = false
 
     private var items: [LibraryItem] {
         LibraryShelves.items(server: server.games, firstSeen: server.firstSeen, downloads: downloads, local: library.games)
@@ -47,7 +48,23 @@ struct LibraryView: View {
                         .accessibilityIdentifier("import-games")
                 }
                 ToolbarItem(placement: .primaryAction) { serverMenu }
+                #if os(iOS)
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Controls", systemImage: "gamecontroller") { isShowingControls = true }
+                        .accessibilityIdentifier("library-controls")
+                }
+                #endif
             }
+            #if os(iOS)
+            .sheet(isPresented: $isShowingControls) {
+                NavigationStack {
+                    ControlsView()
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) { Button("Done") { isShowingControls = false } }
+                        }
+                }
+            }
+            #endif
             .fileImporter(isPresented: $isImporting, allowedContentTypes: [.data], allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result { library.importFiles(urls) }
             }

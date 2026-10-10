@@ -571,16 +571,31 @@ targets:
         HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/cores/snes9x/libretro", "$(SRCROOT)/Host", "$(SRCROOT)/Host/CoreEntry"]
         GENERATE_INFOPLIST_FILE: YES
 
+  SupersEmuInputTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/InputTests
+      - App/Input/PadInput.swift
+      - App/Input/ConsoleLayout.swift
+      - App/Input/InputMapping.swift
+      - App/Input/HIDReport.swift
+      - App/Input/HIDPresets.swift
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   SupersEmu-macOS:
     build:
       targets:
         SupersEmu_macOS: all
         SupersEmuHostTests: [test]
+        SupersEmuInputTests: [test]
     run:
       config: Debug
     test:
-      targets: [SupersEmuHostTests]
+      targets: [SupersEmuHostTests, SupersEmuInputTests]
   SupersEmu-iOS:
     build:
       targets:
