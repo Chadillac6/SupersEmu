@@ -1,0 +1,35 @@
+# Controllers
+
+## Requirement (Chad, Oct 2026)
+Work with **every 8BitDo controller** and with **controllers plugged in by cable**, with no setup
+in the common case.
+
+## Input paths
+| Path | Covers | Platforms | Status |
+|---|---|---|---|
+| Apple GameController (`GCController`) | MFi, Xbox Wireless, DualShock 4, DualSense, Switch Pro, Joy-Con, and any 8BitDo/USB pad that identifies as one of these | macOS, iOS, iPadOS | Implemented in M0 (`App/GameInput.swift`) |
+| Keyboard (`GCKeyboard`) | Mac keyboard, iPad hardware keyboard | macOS, iPadOS | Implemented in M0 |
+| Touch overlay | No controller connected | iOS, iPadOS | Implemented in M0 (SNES layout) |
+| Generic HID fallback (`IOHIDManager`) | Generic USB/2.4 GHz pads (D-input, cheap USB pads) that `GCController` ignores | macOS only | Planned M4 |
+
+[Inference] iOS/iPadOS has no public API for generic HID gamepads, so on iPhone/iPad a controller
+must identify as one of the Apple-supported types. Confirm on Chad's iPad before promising it.
+
+## 8BitDo
+8BitDo controllers have several modes, picked with a button combination at power-on or a switch.
+Which modes Apple devices recognise differs by model and firmware, so the app ships a per-model table
+(model -> recommended mode -> button layout). It's built by testing Chad's controllers and reading 8BitDo's
+docs, then shown in the app as a one-screen "Connect your controller" guide.
+
+## Mapping rules
+1. Map by **position**, not label: the bottom face button is always the console's "confirm" position
+   (SNES B, Genesis B, PS1 Cross) whatever the controller prints on it.
+2. Precedence: console default -> controller-type override -> per-game override.
+3. Hotkeys: a long press of the Home/Guide button (or Select+Start held for 1 s) opens the in-game menu.
+   This is how users save, load, and exit from the couch.
+4. Several controllers: the first one connected is player 1. Reordering happens in the in-game menu.
+5. Disconnect mid-game pauses and shows the touch overlay or a "Reconnect controller" prompt.
+
+## Test matrix (needs Chad's hardware)
+For each controller and platform, record: detected type, mode used, every button mapped, both analog
+sticks (N64/PS1), hotkey, reconnect, and two-player use.

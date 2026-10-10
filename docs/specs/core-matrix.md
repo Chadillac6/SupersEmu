@@ -9,7 +9,7 @@
 | Sega CD | Genesis Plus GX | Non-commercial | Yes | Needs user BIOS |
 | Sega 32X | PicoDrive | MAME (non-commercial) | Yes | Planned M1 |
 | PlayStation | Beetle PSX (mednafen_psx) | GPLv2 | Yes | Needs user BIOS, disc/.m3u support |
-| Nintendo 64 | Mupen64Plus-Next | GPLv2 | Yes | **Risk**: no JIT on iOS; needs device test |
+| Nintendo 64 | Mupen64Plus-Next | GPLv2 | Yes | **Risk**: builds for iOS arm64 (interpreter, no JIT); needs GPU rendering in host + device speed test |
 | Dreamcast | Flycast | GPLv2 | Yes | Phase 2 |
 
 "iOS arm64 build exists" means a build is published on the libretro buildbot; only Snes9x has
