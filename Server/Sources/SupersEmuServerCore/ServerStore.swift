@@ -11,6 +11,8 @@ public struct ServerPaths: Sendable {
     public var bios: URL { root.appendingPathComponent("bios", isDirectory: true) }
     public var users: URL { root.appendingPathComponent("users", isDirectory: true) }
     public var incoming: URL { root.appendingPathComponent("Incoming", isDirectory: true) }
+    /// Downloaded libretro-database DATs (docs/specs/metadata-and-artwork.md).
+    public var metadata: URL { root.appendingPathComponent("metadata", isDirectory: true) }
     public var adminToken: URL { root.appendingPathComponent("admin.token") }
 
     /// Default for the launch daemon. Chad can point `--data-dir` at an external drive.

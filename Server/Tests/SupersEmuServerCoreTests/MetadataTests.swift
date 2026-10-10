@@ -1,0 +1,336 @@
+import CryptoKit
+import Foundation
+import GRDB
+import Hummingbird
+import HummingbirdTesting
+import SupersEmuKit
+import XCTest
+@testable import SupersEmuServerCore
+
+/// Serves canned responses by URL; anything else is a 404. `offline` makes every request a network error.
+final class StubFetcher: MetadataFetching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var responses: [URL: Data] = [:]
+    private var log: [URL] = []
+    var offline: Bool { get { lock.withLock { _offline } } set { lock.withLock { _offline = newValue } } }
+    private var _offline = false
+
+    func set(_ url: URL, _ data: Data) { lock.withLock { responses[url] = data } }
+    var requests: [URL] { lock.withLock { log } }
+
+    func get(_ url: URL) async throws -> Data? {
+        try lock.withLock {
+            log.append(url)
+            if _offline { throw URLError(.notConnectedToInternet) }
+            return responses[url]
+        }
+    }
+}
+
+enum DatFixtures {
+    static func entry(_ name: String, region: String? = "USA", rom data: Data, romName: String, serial: String? = nil) -> String {
+        let h = ROMHasher.hash(data)
+        return """
+            game (
+            \tname "\(name)"
+            \(region.map { "\tregion \"\($0)\"" } ?? "")
+            \(serial.map { "\tserial \"\($0)\"" } ?? "")
+            \trom ( name "\(romName)" size \(data.count) crc \(h.crc) md5 \(h.md5.lowercased()) sha1 \(h.sha1) )
+            )
+
+            """
+    }
+
+    static func supplement(_ field: String, _ value: String, rom data: Data) -> String {
+        "game (\n\tcomment \"x\"\n\t\(field) \"\(value)\"\n\trom ( crc \(ROMHasher.hash(data).crc) )\n)\n"
+    }
+
+    static let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 9, 9, 9])
+}
+
+final class MetadataTests: XCTestCase {
+    var store: ServerStore!
+    var adminToken: String!
+    var sources: URL!
+    var fetcher: StubFetcher!
+
+    override func setUp() async throws {
+        store = try ServerStore.inMemory()
+        let admin = try store.createUser(displayName: "Chad", role: .admin)
+        adminToken = try store.createDeviceToken(userID: admin.id, deviceName: "Chad's Mac").token
+        sources = FileManager.default.temporaryDirectory.appendingPathComponent("se-meta-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        fetcher = StubFetcher()
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: sources)
+        try? FileManager.default.removeItem(at: store.paths.root)
+    }
+
+    func write(_ data: Data, _ name: String) throws -> URL {
+        let url = sources.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url)
+        return url
+    }
+
+    func app() -> some ApplicationProtocol { buildApplication(store: store, configuration: .init()) }
+    func auth() -> HTTPFields { [.authorization: "Bearer \(adminToken!)"] }
+    func decode<T: Decodable>(_ type: T.Type, _ response: TestResponse) throws -> T {
+        try SupersEmuJSON.decoder().decode(T.self, from: Data(buffer: response.body))
+    }
+
+    /// A catalog pinned to the given synthetic DATs (system -> kind -> text), served by the stub fetcher.
+    func catalog(_ dats: [SystemID: (name: String, source: String, files: [String: String])]) -> MetadataCatalog {
+        var systems: [SystemID: MetadataCatalog.SystemSet] = [:]
+        for (system, dat) in dats {
+            systems[system] = .init(name: dat.name, source: dat.source, files: dat.files.mapValues { SHA256.hash(data: Data($0.utf8)).hex },
+                                    thumbnailsCommit: "thumbs1")
+        }
+        let catalog = MetadataCatalog(databaseCommit: "test-commit", systems: systems)
+        for (system, dat) in dats {
+            for (kind, text) in dat.files { fetcher.set(catalog.datURL(systems[system]!, kind: kind), Data(text.utf8)) }
+        }
+        return catalog
+    }
+
+    func service(_ catalog: MetadataCatalog) -> MetadataService {
+        MetadataService(store: store, catalog: catalog, fetcher: fetcher, minimumInterval: .zero)
+    }
+
+    func importROM(_ data: Data, _ name: String) async throws -> String {
+        try await LibraryImporter(store: store).importPaths([try write(data, name).path], auth: nil).imported[0].id
+    }
+
+    // MARK: Parsing
+
+    func testDatParsingAndHashMatching() {
+        let rom = ROMFixtures.snes(seed: 40), other = ROMFixtures.snes(seed: 41)
+        let index = DatIndex(dat: """
+            clrmamepro (
+            \tname "Nintendo - Super Nintendo Entertainment System"
+            )
+
+            \(DatFixtures.entry("Legend of Zelda, The - A Link to the Past (USA)", rom: rom, romName: "Zelda.sfc"))
+            """)
+        let hashes = ROMHasher.hash(rom)
+        XCTAssertEqual(index.match(hashes)?.name, "Legend of Zelda, The - A Link to the Past (USA)")
+        XCTAssertEqual(index.match(ROMHashes(crc: "0", md5: hashes.md5, sha1: "0", size: 0))?.region, "USA", "MD5 alone matches")
+        XCTAssertNotNil(index.match(ROMHashes(crc: hashes.crc, md5: "0", sha1: "0", size: hashes.size)), "CRC + size matches")
+        XCTAssertNil(index.match(ROMHashes(crc: hashes.crc, md5: "0", sha1: "0", size: hashes.size + 1)), "CRC needs the size too")
+        XCTAssertNil(index.match(ROMHasher.hash(other)))
+    }
+
+    func testCanonicalNames() {
+        XCTAssertEqual(CanonicalName.title("Legend of Zelda, The - A Link to the Past (USA) (Rev 1)"), "The Legend of Zelda - A Link to the Past")
+        XCTAssertEqual(CanonicalName.title("Final Fantasy VII (USA) (Disc 1)"), "Final Fantasy VII")
+        XCTAssertEqual(CanonicalName.title("Pokemon - Red Version (USA, Europe) [b]"), "Pokemon - Red Version")
+        XCTAssertEqual(CanonicalName.region("Pokemon - Red Version (USA, Europe)"), "USA, Europe")
+        XCTAssertEqual(CanonicalName.thumbnailName("Ys I & II: Ancient/Ys?"), "Ys I _ II_ Ancient_Ys_")
+        XCTAssertEqual(CanonicalName.withoutDiscNumber("Final Fantasy VII (USA) (Disc 2)"), "Final Fantasy VII (USA)")
+        XCTAssertNil(CanonicalName.withoutDiscNumber("Chrono Trigger (USA)"))
+    }
+
+    func testHashVariantsForHeadersAndByteOrder() throws {
+        let rom = ROMFixtures.snes(seed: 42)
+        let headered = try write(Data(count: 512) + rom, "Headered.smc")
+        XCTAssertTrue(try ROMHasher.variants(of: headered, system: .snes).contains(ROMHasher.hash(rom)))
+
+        var z64 = Data([0x80, 0x37, 0x12, 0x40]) + Data((0..<1020).map { UInt8($0 & 0xFF) })
+        let v64 = ROMHasher.swap(z64, groupSize: 2)
+        XCTAssertTrue(try ROMHasher.variants(of: try write(v64, "Game.v64"), system: .n64).contains(ROMHasher.hash(z64)))
+        let n64 = ROMHasher.swap(z64, groupSize: 4)
+        XCTAssertTrue(try ROMHasher.variants(of: try write(n64, "Game.n64"), system: .n64).contains(ROMHasher.hash(z64)))
+        z64[0] = 0x80
+
+        let genesis = ROMFixtures.genesis(seed: 3)
+        XCTAssertTrue(try ROMHasher.variants(of: try write(ROMFixtures.smd(from: genesis), "Sonic.smd"), system: .genesis)
+            .contains(ROMHasher.hash(genesis)))
+    }
+
+    // MARK: Service
+
+    func testMatchesImportedGameAndServesArtwork() async throws {
+        let rom = ROMFixtures.snes(seed: 43)
+        let name = "Super Metroid (Japan, USA) (En,Ja)"
+        let catalog = catalog([.snes: ("Nintendo - Super Nintendo Entertainment System", "no-intro", [
+            "source": DatFixtures.entry(name, region: "Japan, USA", rom: rom, romName: "\(name).sfc"),
+            "genre": DatFixtures.supplement("genre", "Action", rom: rom),
+            "releaseyear": DatFixtures.supplement("releaseyear", "1994", rom: rom),
+            "publisher": DatFixtures.supplement("publisher", "Nintendo", rom: rom),
+            "developer": DatFixtures.supplement("developer", "Nintendo R&D1", rom: rom),
+            "maxusers": DatFixtures.supplement("users", "1", rom: rom),
+        ])])
+        let set = catalog.systems[.snes]!
+        fetcher.set(catalog.thumbnailURL(set, kind: "Named_Boxarts", name: name), DatFixtures.png)
+        fetcher.set(catalog.thumbnailURL(set, kind: "Named_Snaps", name: name), DatFixtures.png + Data([1]))
+        let id = try await importROM(rom, "sm.sfc")
+
+        let changed = await service(catalog).enrichPending()
+        XCTAssertEqual(changed, 1)
+        XCTAssertEqual(fetcher.requests.filter { $0.path.contains("Named_") }.count, 3, "box art, title (404) and snap")
+
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/library", method: .get, headers: self.auth()) {
+                let game = try XCTUnwrap(try self.decode(LibraryResponse.self, $0).games.first)
+                XCTAssertEqual(game.title, "Super Metroid")
+                XCTAssertEqual(game.region, "Japan, USA")
+                XCTAssertEqual(game.year, 1994)
+                XCTAssertEqual(game.publisher, "Nintendo")
+                XCTAssertEqual(game.genre, "Action")
+                XCTAssertEqual(game.genres, ["Action"])
+                XCTAssertEqual(game.players, 1)
+                XCTAssertEqual(game.coverPath, "/v1/games/\(id)/artwork/cover")
+                XCTAssertNil(game.backdropPath)
+            }
+            try await client.execute(uri: "/v1/games/\(id)", method: .get, headers: self.auth()) {
+                let detail = try self.decode(GameDetail.self, $0)
+                XCTAssertEqual(detail.developer, "Nintendo R&D1")
+                XCTAssertEqual(detail.screenshotPaths, ["/v1/games/\(id)/artwork/screenshot/0"])
+                XCTAssertNil(detail.titleScreenPath)
+                XCTAssertEqual(detail.sources?.first?.provider, "libretro")
+            }
+            try await client.execute(uri: "/v1/games/\(id)/artwork/cover", method: .get, headers: self.auth()) {
+                XCTAssertEqual($0.status, .ok)
+                XCTAssertEqual(Data(buffer: $0.body), DatFixtures.png)
+            }
+            try await client.execute(uri: "/v1/games/\(id)/artwork/screenshot/0", method: .get, headers: self.auth()) {
+                XCTAssertEqual($0.status, .ok)
+            }
+            for missing in ["title", "screenshot/1", "backdrop", "poster", "screenshot/-1"] {
+                try await client.execute(uri: "/v1/games/\(id)/artwork/\(missing)", method: .get, headers: self.auth()) {
+                    XCTAssertEqual($0.status, .notFound, missing)
+                }
+            }
+        }
+
+        // Done games aren't re-fetched; the DAT is cached on disk.
+        let before = fetcher.requests.count
+let pass1 = await service(catalog).enrichPending()
+        XCTAssertEqual(pass1, 0)
+        XCTAssertEqual(fetcher.requests.count, before)
+    }
+
+    func testOfflineKeepsImportedTitleAndRetries() async throws {
+        let rom = ROMFixtures.snes(seed: 44)
+        let catalog = catalog([.snes: ("Nintendo - Super Nintendo Entertainment System", "no-intro", [
+            "source": DatFixtures.entry("Chrono Trigger (USA)", rom: rom, romName: "Chrono Trigger (USA).sfc"),
+        ])])
+        let id = try await importROM(rom, "Chrono Trigger (USA).sfc")
+        fetcher.offline = true
+        let service = service(catalog)
+let pass2 = await service.enrichPending()
+        XCTAssertEqual(pass2, 0)
+        var summary = try LibraryQueries.visibleGames(for: try XCTUnwrap(store.authenticate(token: adminToken)), store: store)[0]
+        XCTAssertEqual(summary.title, "Chrono Trigger")
+        XCTAssertNil(summary.coverPath, "client shows the generated tile")
+        XCTAssertNil(summary.region)
+
+        fetcher.offline = false
+let pass3 = await service.enrichPending()
+        XCTAssertEqual(pass3, 1)
+        summary = try LibraryQueries.visibleGames(for: try XCTUnwrap(store.authenticate(token: adminToken)), store: store)[0]
+        XCTAssertEqual(summary.id, id)
+        XCTAssertEqual(summary.region, "USA")
+        XCTAssertNil(summary.coverPath, "no box art upstream")
+    }
+
+    func testArtworkNetworkFailureIsRetried() async throws {
+        let rom = ROMFixtures.gba(seed: 7)
+        let name = "Advance Wars (USA)"
+        let catalog = catalog([.gba: ("Nintendo - Game Boy Advance", "no-intro", [
+            "source": DatFixtures.entry(name, rom: rom, romName: "\(name).gba"),
+        ])])
+        let id = try await importROM(rom, "aw.gba")
+        let service = service(catalog)
+        _ = try await LibretroMetadataProvider(catalog: catalog, cacheRoot: store.paths.metadata,
+                                               http: RateLimitedFetcher(fetcher, minimumInterval: .zero))
+            .dat(catalog.systems[.gba]!, kind: "source")
+        fetcher.offline = true
+let pass4 = await service.enrichPending()
+        XCTAssertEqual(pass4, 1, "matched from the cached DAT while offline")
+        let status = try await store.db.read { try String.fetchOne($0, sql: "SELECT artwork_status FROM metadata_jobs WHERE game_id = ?", arguments: [id]) }
+        XCTAssertNil(status)
+
+        fetcher.offline = false
+        fetcher.set(catalog.thumbnailURL(catalog.systems[.gba]!, kind: "Named_Boxarts", name: name), DatFixtures.png)
+        await service.enrichPending()
+        let cover = try await store.db.read { try String.fetchOne($0, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND kind = 'cover'", arguments: [id]) }
+        XCTAssertNotNil(cover)
+    }
+
+    func testUnmatchedHomebrewAndBadChecksums() async throws {
+        let rom = ROMFixtures.snes(seed: 45)
+        var catalog = catalog([.snes: ("Nintendo - Super Nintendo Entertainment System", "no-intro", [
+            "source": DatFixtures.entry("Other Game (USA)", rom: ROMFixtures.snes(seed: 46), romName: "Other.sfc"),
+        ])])
+        let id = try await importROM(rom, "My Homebrew.sfc")
+let pass5 = await service(catalog).enrichPending()
+        XCTAssertEqual(pass5, 1)
+        let status = try await store.db.read { try String.fetchOne($0, sql: "SELECT match_status FROM metadata_jobs WHERE game_id = ?", arguments: [id]) }
+        XCTAssertEqual(status, "unmatched")
+        XCTAssertFalse(fetcher.requests.contains { $0.path.contains("Named_") }, "no thumbnail lookups without a match")
+
+        // A tampered download (hash differs from the pin) is never used.
+        let gb = ROMFixtures.gameBoy(seed: 4)
+        catalog = self.catalog([.gb: ("Nintendo - Game Boy", "no-intro", ["source": DatFixtures.entry("Tetris (World)", rom: gb, romName: "Tetris.gb")])])
+        catalog.systems[.gb]!.files["source"] = String(repeating: "0", count: 64)
+        let gbID = try await importROM(gb, "tetris.gb")
+        await service(catalog).enrichPending()
+        let gbStatus = try await store.db.read { try String.fetchOne($0, sql: "SELECT match_status FROM metadata_jobs WHERE game_id = ?", arguments: [gbID]) }
+        XCTAssertNil(gbStatus)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: self.store.paths.metadata.path + "/libretro-database/test-commit/no-intro/Nintendo - Game Boy.dat"))
+    }
+
+    func testRedumpDiscMatchesFirstDiscTrack() async throws {
+        let track = DiscFixtures.psxTrack(seed: 21), audio = DiscFixtures.audioTrack(seed: 22)
+        let name = "Final Fantasy VII (USA) (Disc 1)"
+        let catalog = catalog([.psx: ("Sony - PlayStation", "redump", [
+            "source": DatFixtures.entry(name, rom: track, romName: "\(name) (Track 1).bin", serial: "SCUS-94163"),
+        ])])
+        let names = ["FF7 (Track 1).bin", "FF7 (Track 2).bin"]
+        _ = try write(track, "FF7/\(names[0])")
+        _ = try write(audio, "FF7/\(names[1])")
+        let cue = try write(DiscFixtures.cue(names), "FF7/FF7.cue")
+        let report = try await LibraryImporter(store: store).importPaths([cue.deletingLastPathComponent().path], auth: nil)
+        let id = try XCTUnwrap(report.imported.first, "\(report)").id
+        fetcher.set(catalog.thumbnailURL(catalog.systems[.psx]!, kind: "Named_Boxarts", name: "Final Fantasy VII (USA)"), DatFixtures.png)
+
+let pass6 = await service(catalog).enrichPending()
+        XCTAssertEqual(pass6, 1)
+        let summary = try LibraryQueries.visibleGames(for: try XCTUnwrap(store.authenticate(token: adminToken)), store: store)[0]
+        XCTAssertEqual(summary.id, id)
+        XCTAssertEqual(summary.title, "Final Fantasy VII")
+        XCTAssertEqual(summary.coverPath, "/v1/games/\(id)/artwork/cover", "falls back to the per-set name without (Disc 1)")
+    }
+
+    func testMergePrecedenceAndManualCoverOverride() async throws {
+        let id = try await importROM(ROMFixtures.snes(seed: 47), "Game.sfc")
+        try await store.db.write { db in
+            try MetadataRecord(provider: "libretro", title: "Libretro Title", year: 1993, genres: ["Action"]).save(gameID: id, db: db)
+            try MetadataRecord(provider: "igdb", title: "IGDB Title", description: "An intro.",
+                               criticScore: CriticScore(score: 91, source: "IGDB", url: "https://example.com/r")).save(gameID: id, db: db)
+        }
+        let artwork = ArtworkStore(store: store)
+        try artwork.setProviderArtwork(.cover, provider: "libretro", gameID: id, data: DatFixtures.png, fileExtension: "png")
+        try artwork.setProviderArtwork(.backdrop, provider: "igdb", gameID: id, data: DatFixtures.png, fileExtension: "png")
+        let manual = DatFixtures.png + Data([7])
+        try artwork.setCover(gameID: id, data: manual, fileExtension: "png")
+
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/games/\(id)", method: .get, headers: self.auth()) {
+                let detail = try self.decode(GameDetail.self, $0)
+                XCTAssertEqual(detail.game.title, "IGDB Title")
+                XCTAssertEqual(detail.game.year, 1993)
+                XCTAssertEqual(detail.game.genres, ["Action"])
+                XCTAssertEqual(detail.game.criticScore, CriticScore(score: 91, source: "IGDB", url: "https://example.com/r"))
+                XCTAssertEqual(detail.game.backdropPath, "/v1/games/\(id)/artwork/backdrop")
+                XCTAssertEqual(detail.summary, "An intro.")
+            }
+            try await client.execute(uri: "/v1/games/\(id)/artwork/cover", method: .get, headers: self.auth()) {
+                XCTAssertEqual(Data(buffer: $0.body), manual, "manual cover beats provider covers")
+            }
+        }
+    }
+}

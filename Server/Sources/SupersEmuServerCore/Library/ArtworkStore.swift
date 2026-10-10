@@ -2,8 +2,13 @@ import CryptoKit
 import Foundation
 import GRDB
 
-/// Artwork lives under `artwork/<gameID>/cover-<sha256>.<ext>`; `games.cover_artwork` holds the path relative to the data dir.
-/// M2 scraping calls `setCover` (the hook); serving only reads what's recorded here.
+/// Artwork served at `/v1/games/:id/artwork/<kind>[/<position>]`.
+public enum ArtworkKind: String, CaseIterable, Sendable {
+    case cover, backdrop, logo, title, screenshot
+}
+
+/// Artwork lives under `artwork/<gameID>/`. `setCover` is the manual override (`games.cover_artwork`); metadata providers
+/// write `<provider>-<kind>-<position>-<sha256>.<ext>` recorded in `game_artwork`. Paths are relative to the data dir.
 public struct ArtworkStore: Sendable {
     let store: ServerStore
 
@@ -39,17 +44,60 @@ public struct ArtworkStore: Sendable {
         return url
     }
 
+    @discardableResult
+    public func setProviderArtwork(_ kind: ArtworkKind, position: Int = 0, provider: String, gameID: String, data: Data,
+                                   fileExtension: String, sourceURL: String? = nil) throws -> URL {
+        let ext = fileExtension.lowercased()
+        guard Self.contentTypes[ext] != nil else { throw ArtworkError.unsupportedType(ext) }
+        guard data.count <= Self.maxCoverSize else { throw ArtworkError.tooLarge }
+        guard Self.isSafeComponent(gameID), Self.isSafeComponent(provider), position >= 0 else { throw ArtworkError.invalidGameID }
+        guard try store.db.read({ try Bool.fetchOne($0, sql: "SELECT EXISTS(SELECT 1 FROM games WHERE id = ?)", arguments: [gameID]) }) == true else {
+            throw ArtworkError.unknownGame
+        }
+        let directory = store.paths.artwork.appendingPathComponent(gameID, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let prefix = "\(provider)-\(kind.rawValue)-\(position)-"
+        let name = "\(prefix)\(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()).\(ext)"
+        let url = directory.appendingPathComponent(name)
+        try Self.writeLock.withLock {
+            try data.write(to: url, options: .atomic)
+            try store.db.write { db in
+                try db.execute(sql: """
+                    INSERT INTO game_artwork (game_id, provider, kind, position, path, source_url, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (game_id, provider, kind, position) DO UPDATE SET path = excluded.path, source_url = excluded.source_url,
+                        updated_at = excluded.updated_at
+                    """, arguments: [gameID, provider, kind.rawValue, position, "artwork/\(gameID)/\(name)", sourceURL, Date()])
+            }
+            let others = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+            for other in others where other != name && other.hasPrefix(prefix) {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(other))
+            }
+        }
+        return url
+    }
+
+    /// Recorded path for a kind/position: the manual cover first, then providers in `MetadataMerge` precedence.
+    static func recordedPath(gameID: String, kind: ArtworkKind, position: Int, db: Database) throws -> String? {
+        if kind == .cover, position == 0,
+           let manual = try String.fetchOne(db, sql: "SELECT cover_artwork FROM games WHERE id = ?", arguments: [gameID]) {
+            return manual
+        }
+        let rows = try Row.fetchAll(db, sql: "SELECT provider, path FROM game_artwork WHERE game_id = ? AND kind = ? AND position = ?",
+                                    arguments: [gameID, kind.rawValue, position])
+        return rows.min { MetadataMerge.rank($0["provider"]) < MetadataMerge.rank($1["provider"]) }?["path"]
+    }
+
     private static let writeLock = NSLock()
 
-    /// The content hash embedded in a `cover-<sha256>.<ext>` filename, if present.
+    /// The content hash ending a `…-<sha256>.<ext>` filename, if present.
     static func contentHash(of url: URL) -> String? {
         let stem = url.deletingPathExtension().lastPathComponent
-        guard stem.hasPrefix("cover-") else { return nil }
-        let hash = String(stem.dropFirst("cover-".count))
+        guard let dash = stem.lastIndex(of: "-") else { return nil }
+        let hash = String(stem[stem.index(after: dash)...])
         return hash.count == 64 && hash.allSatisfy(\.isHexDigit) ? hash : nil
     }
 
-    /// The cover file on disk, if one is recorded and present.
+    /// The artwork file on disk, if one is recorded and present.
     public func coverFile(cover relativePath: String?) -> URL? {
         guard let relativePath, relativePath.hasPrefix("artwork/"), !relativePath.split(separator: "/").contains("..") else { return nil }
         let artworkRoot = store.paths.artwork.resolvingSymlinksInPath().standardizedFileURL.path

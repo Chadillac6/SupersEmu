@@ -1,0 +1,175 @@
+import Foundation
+import GRDB
+import Logging
+import SupersEmuKit
+
+/// Runs every provider over imported games in the background: match, store a `game_metadata` row, then fetch artwork.
+/// Failures leave the game as imported (filename title, generated tile) and are retried on the next pass.
+public actor MetadataService {
+    let store: ServerStore
+    let providers: [any MetadataProvider]
+    let http: RateLimitedFetcher
+    private let artwork: ArtworkStore
+    private var running = false
+    private var rerun = false
+    private let logger = Logger(label: "supersemu-metadata")
+
+    public init(store: ServerStore, http: RateLimitedFetcher, providers: [any MetadataProvider]) {
+        self.store = store
+        self.http = http
+        self.providers = providers
+        self.artwork = ArtworkStore(store: store)
+    }
+
+    /// The default: libretro only, at most one request a second.
+    public init(store: ServerStore, catalog: MetadataCatalog = .pinned, fetcher: any MetadataFetching = URLSessionMetadataFetcher(),
+                minimumInterval: Duration = .seconds(1)) {
+        let http = RateLimitedFetcher(fetcher, minimumInterval: minimumInterval)
+        self.init(store: store, http: http,
+                  providers: [LibretroMetadataProvider(catalog: catalog, cacheRoot: store.paths.metadata, http: http)])
+    }
+
+    /// Starts a background pass (or queues one more if a pass is running). Never blocks the caller.
+    public nonisolated func enqueue() {
+        Task { await self.runUntilIdle() }
+    }
+
+    /// Retries pending games every `interval`, e.g. after the Mac mini was offline.
+    public nonisolated func startPeriodicRetry(every interval: Duration = .seconds(30 * 60)) {
+        Task {
+            while !Task.isCancelled {
+                await self.runUntilIdle()
+                try? await Task.sleep(for: interval)
+            }
+        }
+    }
+
+    func runUntilIdle() async {
+        if running { rerun = true; return }
+        running = true
+        repeat {
+            rerun = false
+            await enrichPending()
+        } while rerun
+        running = false
+    }
+
+    /// One pass over every game still waiting for a match or artwork. Returns how many games changed.
+    @discardableResult
+    public func enrichPending() async -> Int {
+        var changed = 0
+        for provider in providers {
+            do {
+                changed += try await enrich(with: provider)
+            } catch {
+                logger.warning("Metadata pass (\(provider.id)) failed: \(error)")
+            }
+        }
+        return changed
+    }
+
+    private func enrich(with provider: any MetadataProvider) async throws -> Int {
+        let pending = try await store.db.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT g.id, g.system, g.title, j.match_status, j.dataset_version FROM games g
+                LEFT JOIN metadata_jobs j ON j.game_id = g.id AND j.provider = ?
+                WHERE g.needs_review = 0 AND (j.game_id IS NULL OR j.match_status IS NULL OR j.dataset_version IS NOT ?
+                    OR (j.match_status = 'matched' AND j.artwork_status IS NULL))
+                ORDER BY g.created_at DESC
+                """, arguments: [provider.id, provider.version])
+        }
+        var changed = 0
+        var unavailable = Set<SystemID>()
+        for row in pending {
+            let id: String = row["id"]
+            guard let system = SystemID(rawValue: row["system"]), !unavailable.contains(system) else { continue }
+            let status: String? = row["match_status"]
+            if status == nil || (row["dataset_version"] as String?) != provider.version {
+                let game = MetadataLookup(gameID: id, system: system, title: row["title"], files: try candidateFiles(gameID: id))
+                let result = (try? await provider.lookup(game)) ?? .unavailable
+                switch result {
+                case .unavailable:
+                    unavailable.insert(system)
+                    continue
+                case .unmatched:
+                    try await recordJob(id, provider, match: "unmatched", clearingRecord: true)
+                    changed += 1
+                    continue
+                case .matched(let record):
+                    try await store.db.write { db in try record.save(gameID: id, db: db) }
+                    try await recordJob(id, provider, match: "matched", clearingRecord: false)
+                    logger.info("\(provider.id) matched \(id.prefix(12)) to \"\(record.providerRef ?? record.title ?? "?")\"")
+                    changed += 1
+                }
+            } else if status != "matched" {
+                continue
+            }
+            try await fetchArtwork(gameID: id, system: system, provider: provider)
+        }
+        return changed
+    }
+
+    private func recordJob(_ gameID: String, _ provider: any MetadataProvider, match: String, clearingRecord: Bool) async throws {
+        try await store.db.write { db in
+            if clearingRecord {
+                try db.execute(sql: "DELETE FROM game_metadata WHERE game_id = ? AND provider = ?", arguments: [gameID, provider.id])
+            }
+            try db.execute(sql: """
+                INSERT OR REPLACE INTO metadata_jobs (game_id, provider, match_status, artwork_status, dataset_version, updated_at)
+                VALUES (?, ?, ?, NULL, ?, ?)
+                """, arguments: [gameID, provider.id, match, provider.version, Date()])
+        }
+    }
+
+    /// Marks artwork done unless a request failed on the network, in which case the next pass retries.
+    private func fetchArtwork(gameID: String, system: SystemID, provider: any MetadataProvider) async throws {
+        let record = try await store.db.read { db in
+            try Row.fetchOne(db, sql: "SELECT * FROM game_metadata WHERE game_id = ? AND provider = ?", arguments: [gameID, provider.id])
+                .map(MetadataRecord.init(row:))
+        }
+        guard let record else { return }
+        for candidate in provider.artwork(for: record, system: system) {
+            for url in candidate.urls {
+                let data: Data?
+                do {
+                    data = try await http.get(url)
+                } catch {
+                    logger.info("Artwork for \(gameID.prefix(12)) deferred: \(error)")
+                    return
+                }
+                guard let data else { continue }
+                guard let ext = Self.imageExtension(data) else { break }
+                try artwork.setProviderArtwork(candidate.kind, position: candidate.position, provider: provider.id, gameID: gameID,
+                                               data: data, fileExtension: ext, sourceURL: url.absoluteString)
+                break
+            }
+        }
+        try await store.db.write { db in
+            try db.execute(sql: "UPDATE metadata_jobs SET artwork_status = 'done', updated_at = ? WHERE game_id = ? AND provider = ?",
+                           arguments: [Date(), gameID, provider.id])
+        }
+    }
+
+    static func imageExtension(_ data: Data) -> String? {
+        if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "png" }
+        if data.starts(with: [0xFF, 0xD8, 0xFF]) { return "jpg" }
+        return nil
+    }
+
+    /// ROM, or the data files of the first disc (track 01 sorts first), resolved and contained under the store root.
+    private func candidateFiles(gameID: String) throws -> [URL] {
+        let rows = try store.db.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT stored_path, disc_number FROM game_files WHERE game_id = ? AND role IN ('rom', 'disc')
+                ORDER BY COALESCE(disc_number, 1), filename
+                """, arguments: [gameID])
+        }
+        let firstDisc: Int? = rows.first?["disc_number"]
+        let root = store.paths.root.resolvingSymlinksInPath().standardizedFileURL.path
+        return rows.filter { ($0["disc_number"] as Int?) == firstDisc }.prefix(4).compactMap { row in
+            let path: String = row["stored_path"]
+            let url = store.paths.root.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
+            return url.path.hasPrefix(root + "/") ? url : nil
+        }
+    }
+}
