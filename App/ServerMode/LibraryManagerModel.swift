@@ -28,7 +28,17 @@ final class LibraryManagerModel {
 
     init(server: ServerModeModel) { self.server = server }
 
-    var canImport: Bool { progress == nil && storage?.move?.isRunning != true && storage?.available != false }
+    var canImport: Bool { progress == nil && storage?.move?.isRunning != true && storage?.available == true }
+
+    /// Called when Server Mode switches servers: nothing from the previous one may be acted on.
+    func reset() {
+        report = nil
+        issues = []
+        bios = []
+        biosGames = []
+        storage = nil
+        error = nil
+    }
 
     func refreshAll() async {
         await refreshStorage()
@@ -38,7 +48,12 @@ final class LibraryManagerModel {
 
     private func perform(_ body: (APIClient) async throws -> Void) async {
         do {
-            try await body(try server.adminClient())
+            do {
+                try await body(try server.adminClient())
+            } catch is URLError where !server.isLocal {
+                await server.resolvePairedURL()
+                try await body(try server.adminClient())
+            }
             error = nil
         } catch {
             self.error = Self.describe(error)

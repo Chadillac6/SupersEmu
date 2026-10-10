@@ -78,10 +78,21 @@ extension LibraryImporter {
         if let free = ServerStore.freeBytes(at: chosen), free < total + Self.moveFreeSpaceMargin {
             throw StorageMoveError.invalid("Not enough free space on that drive: the library needs \(Self.byteString(total)), \(Self.byteString(free)) is free.")
         }
-        storage.move = StorageMove(destination: target.path, phase: .copying, bytesDone: 0, bytesTotal: total)
+        do {
+            try storage.beginMove(StorageMove(destination: target.path, phase: .copying, bytesDone: 0, bytesTotal: total))
+        } catch LibraryStorage.GateError.uploadsActive {
+            throw StorageMoveError.invalid("Games are being added right now. Try again when that's finished.")
+        } catch {
+            throw StorageMoveError.busy
+        }
         try store.audit(auth, action: "storage.move.start", detail: "\(current.path) -> \(target.path)")
         Task.detached { [self] in
-            try? await run { importer in try importer.moveLibrary(from: current, to: target, files: files, toDataRoot: toDataRoot) }
+            try? await run { importer in
+                // Snapshot inside the serial queue so imports queued before the move are included.
+                let files = Self.libraryFiles(at: current)
+                storage.move?.bytesTotal = files.reduce(0) { $0 + $1.size }
+                try importer.moveLibrary(from: current, to: target, files: files, toDataRoot: toDataRoot)
+            }
             if let move = storage.move { try? store.audit(auth, action: "storage.move.\(move.phase.rawValue)", detail: move.error ?? target.path) }
         }
         return storageStatus()

@@ -47,7 +47,7 @@ struct ReviewNeededView: View {
                 Text(issue.filename).font(.headline).textSelection(.enabled)
                 Text(Self.title(issue.kind)).font(.subheadline.weight(.medium))
                 Text(issue.reason).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                if let hint = Self.hint(issue.kind) { Text(hint).font(.callout).foregroundStyle(.secondary) }
+                if let hint = Self.hint(issue.kind, canPick: !issue.candidateSystems.isEmpty) { Text(hint).font(.callout).foregroundStyle(.secondary) }
                 if let path = issue.incomingPath {
                     Text("Incoming/\(path)").font(.caption.monospaced()).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
                 }
@@ -92,8 +92,9 @@ struct ReviewNeededView: View {
         }
     }
 
-    static func hint(_ kind: LibraryIssue.Kind) -> String? {
+    static func hint(_ kind: LibraryIssue.Kind, canPick: Bool) -> String? {
         switch kind {
+        case .unknownSystem where !canPick, .ambiguous where !canPick: return "It doesn't look like a game SupersEmu can play. Delete it, or add a good copy."
         case .missingFiles: return "Add the missing files to the same folder (drop the whole folder again), then Retry."
         case .unknownSystem, .ambiguous: return "If you know which console it's for, pick it. Otherwise delete it."
         case .unsupportedFormat: return "Convert it to .chd or .cue/.bin, add the converted copy, then delete this one."

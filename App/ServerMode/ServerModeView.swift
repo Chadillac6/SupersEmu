@@ -92,6 +92,11 @@ struct ServerModeView: View {
         }
         .task {
             if library == nil { library = LibraryManagerModel(server: model) }
+            await library?.refreshStorage()
+        }
+        .onChange(of: model.source) {
+            library?.reset()
+            Task { await model.refresh(); await library?.refreshAll() }
         }
     }
 

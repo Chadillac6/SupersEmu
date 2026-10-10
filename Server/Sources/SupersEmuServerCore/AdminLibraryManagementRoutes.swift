@@ -7,7 +7,7 @@ func registerAdminLibraryManagementRoutes(_ group: RouterGroup<SERequestContext>
     let importer = LibraryImporter(store: store)
 
     group.post("admin/library/upload") { request, context -> Response in
-        _ = try requireLibraryAdmin(context)
+        let auth = try requireLibraryAdmin(context)
         try requireLibraryAvailable(store)
         let query = request.uri.queryParameters
         guard let batch = query["batch"].map(String.init), LibraryImporter.isSafeBatch(batch) else {
@@ -17,6 +17,8 @@ func registerAdminLibraryManagementRoutes(_ group: RouterGroup<SERequestContext>
               let destination = importer.uploadDestination(batch: batch, parts: parts) else {
             throw HTTPError(.badRequest, message: "path must be a relative path of visible names")
         }
+        try uploadGate { try store.paths.storage.beginUpload(batch: batch, owner: auth.uploadOwner) }
+        defer { store.paths.storage.endUpload(batch: batch) }
         if let length = request.headers[.contentLength].flatMap({ Int64($0) }) {
             try checkUploadSize(length, store: store)
         }
@@ -29,7 +31,11 @@ func registerAdminLibraryManagementRoutes(_ group: RouterGroup<SERequestContext>
         try requireLibraryAvailable(store)
         let batch = try context.parameters.require("batch")
         guard LibraryImporter.isSafeBatch(batch) else { throw HTTPError(.badRequest, message: "invalid batch") }
+        try uploadGate { try store.paths.storage.beginFinish(batch: batch, owner: auth.uploadOwner) }
+        var finished = false
+        defer { store.paths.storage.endFinish(batch: batch, finished: finished) }
         try await issueErrors { try await importer.finishUpload(batch: batch) }
+        finished = true
         return try LibraryHTTP.json(try await importer.scanIncoming(auth: auth))
     }
 
@@ -83,6 +89,28 @@ func requireLibraryAvailable(_ store: ServerStore) throws {
     }
     if store.paths.storage.move?.isRunning == true { throw HTTPError(.conflict, message: "The library is being moved") }
     try store.paths.createLibraryDirectories()
+}
+
+private extension AuthContext {
+    var uploadOwner: String {
+        switch credential {
+        case .device(let id): return "device:" + id
+        case .apiToken(let id, _): return "token:" + id
+        }
+    }
+}
+
+private func uploadGate(_ body: () throws -> Void) throws {
+    do {
+        try body()
+    } catch let error as LibraryStorage.GateError {
+        switch error {
+        case .moving: throw HTTPError(.conflict, message: "The library is being moved")
+        case .batchBusy: throw HTTPError(.conflict, message: "That upload batch is being finished")
+        case .notOwner: throw HTTPError(.notFound, message: "No such upload batch")
+        case .uploadsActive: throw HTTPError(.conflict, message: "Files in this batch are still uploading")
+        }
+    }
 }
 
 private func checkUploadSize(_ size: Int64, store: ServerStore) throws {

@@ -9,6 +9,9 @@ public final class LibraryStorage: @unchecked Sendable {
     private var _root: URL
     private var _isDefault = true
     private var _move: StorageMove?
+    private var activeUploads: [String: Int] = [:]
+    private var batchOwners: [String: String] = [:]
+    private var finishing = Set<String>()
 
     init(root: URL) { _root = root }
 
@@ -41,7 +44,7 @@ public final class LibraryStorage: @unchecked Sendable {
         let url = url.standardizedFileURL
         let isDefault = url.path == dataRoot.standardizedFileURL.path
         if isDefault {
-            try? FileManager.default.removeItem(at: config)
+            if FileManager.default.fileExists(atPath: config.path) { try FileManager.default.removeItem(at: config) }
         } else {
             let data = try JSONEncoder().encode(Config(libraryPath: url.path))
             try data.write(to: config, options: .atomic)
@@ -49,6 +52,49 @@ public final class LibraryStorage: @unchecked Sendable {
         lock.withLock {
             _root = url
             _isDefault = isDefault
+        }
+    }
+
+    enum GateError: Error { case moving, batchBusy, notOwner, uploadsActive }
+
+    /// Uploads, batch finishes and Move Library exclude each other, and a batch belongs to the credential that started it.
+    func beginUpload(batch: String, owner: String) throws {
+        try lock.withLock {
+            if _move?.isRunning == true { throw GateError.moving }
+            if finishing.contains(batch) { throw GateError.batchBusy }
+            if let existing = batchOwners[batch], existing != owner { throw GateError.notOwner }
+            batchOwners[batch] = owner
+            activeUploads[batch, default: 0] += 1
+        }
+    }
+
+    func endUpload(batch: String) {
+        lock.withLock {
+            let count = (activeUploads[batch] ?? 1) - 1
+            activeUploads[batch] = count > 0 ? count : nil
+        }
+    }
+
+    func beginFinish(batch: String, owner: String) throws {
+        try lock.withLock {
+            guard batchOwners[batch] == owner else { throw GateError.notOwner }
+            if activeUploads[batch] != nil { throw GateError.uploadsActive }
+            if !finishing.insert(batch).inserted { throw GateError.batchBusy }
+        }
+    }
+
+    func endFinish(batch: String, finished: Bool) {
+        lock.withLock {
+            finishing.remove(batch)
+            if finished { batchOwners[batch] = nil }
+        }
+    }
+
+    func beginMove(_ move: StorageMove) throws {
+        try lock.withLock {
+            if _move?.isRunning == true { throw GateError.moving }
+            if !activeUploads.isEmpty || !finishing.isEmpty { throw GateError.uploadsActive }
+            _move = move
         }
     }
 

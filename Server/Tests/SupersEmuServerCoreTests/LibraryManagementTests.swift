@@ -226,6 +226,31 @@ final class LibraryManagementTests: XCTestCase {
         XCTAssertEqual(issues.first?.reason, "Unrecognised disc (no PS1 or Sega CD header)")
     }
 
+    func testUploadGateKeepsBatchesMovesAndOwnersApart() throws {
+        let storage = LibraryStorage(root: store.paths.root)
+        try storage.beginUpload(batch: "b1", owner: "device:a")
+        XCTAssertThrowsError(try storage.beginUpload(batch: "b1", owner: "device:b"))
+        XCTAssertThrowsError(try storage.beginFinish(batch: "b1", owner: "device:a"), "finish waits for streams")
+        XCTAssertThrowsError(try storage.beginMove(StorageMove(destination: "/x", phase: .copying, bytesDone: 0, bytesTotal: 0)))
+        storage.endUpload(batch: "b1")
+        XCTAssertThrowsError(try storage.beginFinish(batch: "b1", owner: "device:b"))
+        try storage.beginFinish(batch: "b1", owner: "device:a")
+        XCTAssertThrowsError(try storage.beginUpload(batch: "b1", owner: "device:a"), "no appending while finishing")
+        storage.endFinish(batch: "b1", finished: true)
+        try storage.beginMove(StorageMove(destination: "/x", phase: .copying, bytesDone: 0, bytesTotal: 0))
+        XCTAssertThrowsError(try storage.beginUpload(batch: "b2", owner: "device:a"), "no uploads during a move")
+    }
+
+    func testDeletingWrongBIOSClearsItsStatus() async throws {
+        try write(Data(repeating: 9, count: 524_288), "scph5501.bin", in: store.paths.incoming)
+        _ = try await importer.scanIncoming(auth: nil)
+        let wrong = try BIOSLibrary.status(store: store, known: KnownBIOS.all).first { $0.filename == "scph5501.bin" }
+        XCTAssertEqual(wrong?.state, .wrongHash)
+        let issue = try XCTUnwrap(try importer.issues().first { $0.kind == .wrongBIOS })
+        try await importer.deleteIssue(issue.id, auth: nil)
+        XCTAssertEqual(try BIOSLibrary.status(store: store, known: KnownBIOS.all).first { $0.filename == "scph5501.bin" }?.state, .missing)
+    }
+
     func testDeletingQueuedImportRemovesStoredCopy() async throws {
         let source = FileManager.default.temporaryDirectory.appendingPathComponent("se-src-\(UUID().uuidString)", isDirectory: true)
         extraFolders.append(source)

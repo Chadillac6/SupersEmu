@@ -145,6 +145,10 @@ extension LibraryImporter {
                 try importer.store.db.write { try $0.execute(sql: "DELETE FROM games WHERE id = ? AND needs_review = 1", arguments: [reviewID]) }
                 try? FileManager.default.removeItem(at: importer.store.paths.games.appendingPathComponent(reviewID, isDirectory: true))
             }
+            if issue.kind == .wrongBIOS, let path = issue.incomingPath,
+               let (sha, _) = try? Self.sha256AndHeader(of: importer.store.paths.incoming.appendingPathComponent(path)) {
+                try importer.store.db.write { try $0.execute(sql: "DELETE FROM bios_files WHERE id = ? AND verified = 0", arguments: [sha]) }
+            }
             try importer.removeSource(of: issue, settled: false)
             return issue
         }

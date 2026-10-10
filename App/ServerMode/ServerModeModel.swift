@@ -66,7 +66,18 @@ final class ServerModeModel {
 
     var port: Int { source == .daemon ? Self.daemonPort : Self.sessionPort }
     var localURL: URL { URL(string: "https://127.0.0.1:\(port)")! }
-    var serverURL: URL { isLocal ? localURL : pairedCredential?.urls.first ?? localURL }
+    private(set) var pairedURL: URL?
+    var serverURL: URL { isLocal ? localURL : pairedURL ?? pairedCredential?.urls.first ?? localURL }
+
+    /// Paired servers have LAN and Tailscale addresses; keep using whichever answered last.
+    func resolvePairedURL() async {
+        guard !isLocal, (try? await client(authenticated: false).health()) == nil else { return }
+        for url in pairedCredential?.urls ?? [] where url != serverURL {
+            let candidate = APIClient(baseURL: url, token: nil,
+                                      session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256, timeout: 4))
+            if (try? await candidate.health()) != nil { pairedURL = url; return }
+        }
+    }
     static var daemonPlistEmbedded: Bool {
         FileManager.default.fileExists(atPath: Bundle.main.bundleURL
             .appendingPathComponent("Contents/Library/LaunchDaemons/\(daemonPlistName)").path)
@@ -112,6 +123,7 @@ final class ServerModeModel {
     func refresh() async {
         daemonStatus = daemon.status
         sessionRunning = process?.isRunning == true
+        await resolvePairedURL()
         do {
             health = try await client(authenticated: false).health()
             statusError = nil
