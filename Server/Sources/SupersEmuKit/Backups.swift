@@ -111,9 +111,12 @@ public struct CreateBackupRequest: Codable, Sendable, Equatable {
 public struct RestoreBackupResponse: Codable, Sendable, Equatable {
     public var backup: BackupInfo
     public var message: String
-    public init(backup: BackupInfo, message: String) {
+    /// The restored server's certificate (the backup's), so a pinned client can follow it.
+    public var certificateSHA256: String?
+    public init(backup: BackupInfo, message: String, certificateSHA256: String? = nil) {
         self.backup = backup
         self.message = message
+        self.certificateSHA256 = certificateSHA256
     }
 }
 

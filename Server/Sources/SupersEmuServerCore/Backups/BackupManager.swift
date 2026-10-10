@@ -92,6 +92,9 @@ public actor BackupManager {
         if let destination = update.destination {
             let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.isEmpty || trimmed.hasPrefix("/") else { throw BackupError.invalidConfig("destination must be an absolute path") }
+            guard trimmed.isEmpty || isSafeDestination(URL(fileURLWithPath: trimmed, isDirectory: true)) else {
+                throw BackupError.invalidConfig("destination can't be inside the server's data folder (other than \(paths.root.path)/Backups)")
+            }
             state.config.destination = trimmed.isEmpty ? nil : trimmed
         }
         if let keep = update.keep {
@@ -179,9 +182,18 @@ public actor BackupManager {
         }
     }
 
+    /// A backup must never copy itself: anywhere in the data folder other than `Backups/` is refused.
+    func isSafeDestination(_ url: URL) -> Bool {
+        let destination = url.standardizedFileURL.resolvingSymlinksInPath().path
+        let root = paths.root.standardizedFileURL.resolvingSymlinksInPath().path
+        func inside(_ base: String) -> Bool { destination == base || destination.hasPrefix(base + "/") }
+        return !inside(root) || inside(root + "/Backups")
+    }
+
     private func makeBackup(config: BackupConfig, includeROMs: Bool, now: Date) throws -> BackupInfo {
         let fm = FileManager.default
         let destination = destination(for: config)
+        guard isSafeDestination(destination) else { throw BackupError.invalidConfig("destination is inside the server's data folder") }
         guard destinationAvailable(destination) else { throw BackupError.destinationUnavailable(destination.path) }
         try fm.createDirectory(at: destination, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
 
@@ -194,18 +206,26 @@ public actor BackupManager {
         let staging = destination.appendingPathComponent(".\(Self.folderPrefix)\(id).partial", isDirectory: true)
         try? fm.removeItem(at: staging)
         try fm.createDirectory(at: staging, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // It holds the admin token and TLS key, so it stays private even in a shared destination.
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: staging.path)
         do {
-            // Database first: files copied afterwards can only be newer than what it references.
+            let items = Self.items(paths: paths, includeROMs: includeROMs).filter { $0 != "library.sqlite" }
+            func copyItem(_ item: String) throws {
+                let source = paths.root.appendingPathComponent(item)
+                guard fm.fileExists(atPath: source.path) else { return }
+                try fm.copyItem(at: source, to: staging.appendingPathComponent(item))
+            }
             let copy = try DatabaseQueue(path: staging.appendingPathComponent("library.sqlite").path)
-            try db.backup(to: copy)
+            // Holding the writer: no upload can commit (and then delete pruned save files) until the save files
+            // the snapshot references are copied. ROMs are copied after, they're only added or removed by imports.
+            try db.writeWithoutTransaction { source in
+                try copy.writeWithoutTransaction { try source.backup(to: $0) }
+                for item in items where item != "games" && item != "bios" { try copyItem(item) }
+            }
             // The copy inherits WAL mode; a single self-contained file verifies (read-only) and restores cleanly.
             try copy.writeWithoutTransaction { try $0.execute(sql: "PRAGMA journal_mode=DELETE") }
             try copy.close()
-            for item in Self.items(paths: paths, includeROMs: includeROMs) where item != "library.sqlite" {
-                let source = paths.root.appendingPathComponent(item)
-                guard fm.fileExists(atPath: source.path) else { continue }
-                try fm.copyItem(at: source, to: staging.appendingPathComponent(item))
-            }
+            for item in items where item == "games" || item == "bios" { try copyItem(item) }
             let manifest = BackupManifest(
                 format: BackupManifest.currentFormat, id: id, createdAt: now, serverName: serverName,
                 serverVersion: ServerInfo.version, includesROMs: includeROMs, files: try Self.hashFiles(in: staging))
@@ -271,8 +291,12 @@ public actor BackupManager {
         do {
             let queue = try DatabaseQueue(path: folder.appendingPathComponent("library.sqlite").path, configuration: configuration)
             defer { try? queue.close() }
-            let result = try queue.read { try String.fetchAll($0, sql: "PRAGMA integrity_check") }
+            let (result, savePaths) = try queue.read { db in
+                (try String.fetchAll(db, sql: "PRAGMA integrity_check"),
+                 try db.tableExists("save_revisions") ? try String.fetchAll(db, sql: "SELECT stored_path FROM save_revisions") : [])
+            }
             guard result == ["ok"] else { throw BackupError.corrupted("integrity_check: \(result.prefix(3).joined(separator: "; "))") }
+            if let missing = savePaths.first(where: { found[$0] == nil }) { throw BackupError.corrupted("save file \(missing) is missing") }
         } catch let error as BackupError {
             throw error
         } catch {
@@ -299,7 +323,24 @@ public actor BackupManager {
     /// Replaces the data directory's contents with a verified backup. The server must not be serving and the
     /// database must be closed. What's replaced is moved to `.pre-restore/` first and put back if anything fails.
     /// ROMs and BIOS files are left as they are unless the backup includes them.
-    public static func applyRestore(folder: URL, to paths: ServerPaths) throws {
+    public struct RestoreRecord: Sendable {
+        var moved: [String] = []
+        var copied: [String] = []
+
+        /// Puts back what a restore replaced (from `.pre-restore/`).
+        public func revert(_ paths: ServerPaths) {
+            let fm = FileManager.default
+            let safety = paths.root.appendingPathComponent(".pre-restore", isDirectory: true)
+            for item in copied { try? fm.removeItem(at: paths.root.appendingPathComponent(item)) }
+            for item in moved {
+                try? fm.removeItem(at: paths.root.appendingPathComponent(item))
+                try? fm.moveItem(at: safety.appendingPathComponent(item), to: paths.root.appendingPathComponent(item))
+            }
+        }
+    }
+
+    @discardableResult
+    public static func applyRestore(folder: URL, to paths: ServerPaths) throws -> RestoreRecord {
         let manifest = try verify(folder: folder)
         let fm = FileManager.default
         let safety = paths.root.appendingPathComponent(".pre-restore", isDirectory: true)
@@ -308,28 +349,26 @@ public actor BackupManager {
 
         let backedUp = Set(((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).filter { $0 != manifestName })
         var replaced = ["library.sqlite", "library.sqlite-wal", "library.sqlite-shm", "users", "artwork", "tls", "admin.token"]
-        replaced += backedUp.filter { $0.hasSuffix(".json") }.sorted()
+        // Settings files added after the backup go too, so the restored server has the backup's settings.
+        let live = ((try? fm.contentsOfDirectory(atPath: paths.root.path)) ?? []).filter { $0.hasSuffix(".json") && $0 != "backups.json" }
+        replaced += Set(live).union(backedUp.filter { $0.hasSuffix(".json") }).sorted()
         if manifest.includesROMs { replaced += ["games", "bios"] }
-        var moved: [String] = []
-        var copied: [String] = []
+        var record = RestoreRecord()
         do {
             for item in replaced where fm.fileExists(atPath: paths.root.appendingPathComponent(item).path) {
                 try fm.moveItem(at: paths.root.appendingPathComponent(item), to: safety.appendingPathComponent(item))
-                moved.append(item)
+                record.moved.append(item)
             }
             for item in backedUp.sorted() {
                 try fm.copyItem(at: folder.appendingPathComponent(item), to: paths.root.appendingPathComponent(item))
-                copied.append(item)
+                record.copied.append(item)
             }
             try paths.createDirectories()
         } catch {
-            for item in copied { try? fm.removeItem(at: paths.root.appendingPathComponent(item)) }
-            for item in moved {
-                try? fm.removeItem(at: paths.root.appendingPathComponent(item))
-                try? fm.moveItem(at: safety.appendingPathComponent(item), to: paths.root.appendingPathComponent(item))
-            }
+            record.revert(paths)
             throw error
         }
+        return record
     }
 
     func finishRestore() { busy = false }

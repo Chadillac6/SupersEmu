@@ -78,6 +78,36 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(destination, scratch.appendingPathComponent("drive").path)
     }
 
+    func testRestoreReplacesSettingsAddedAfterTheBackup() async throws {
+        let backup = try await store.backups.create()
+        try write("{}", "options.json")
+        let paths = store.paths
+        try store.close()
+        try BackupManager.applyRestore(folder: URL(fileURLWithPath: backup.path), to: paths)
+        store = try ServerStore.open(paths: paths)
+        XCTAssertNil(read("options.json"))
+        XCTAssertEqual(read(".pre-restore/options.json"), "{}")
+    }
+
+    func testBackupFolderIsPrivate() async throws {
+        let backup = try await store.backups.create()
+        let mode = try FileManager.default.attributesOfItem(atPath: backup.path)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o700, "it holds the admin token and TLS key")
+    }
+
+    func testDestinationInsideDataIsRefused() async throws {
+        let root = store.paths.root
+        for inside in [root.path, root.appendingPathComponent("users/backups").path, root.appendingPathComponent("tls").path] {
+            do {
+                try await store.backups.updateConfig(.init(destination: inside))
+                XCTFail("\(inside) accepted")
+            } catch BackupError.invalidConfig {}
+        }
+        try await store.backups.updateConfig(.init(destination: root.appendingPathComponent("Backups/nightly").path))
+        let backup = try await store.backups.create()
+        XCTAssertTrue(backup.path.hasPrefix(root.appendingPathComponent("Backups").path))
+    }
+
     func testIncludeROMsCopiesGames() async throws {
         try write("rom", "games/snes/game.sfc")
         try write("bios", "bios/ps1/scph5501.bin")
@@ -184,6 +214,8 @@ final class BackupTests: XCTestCase {
             }
             try await client.execute(uri: "/v1/admin/backups/config", method: .put, headers: headers(adminToken),
                                      body: ByteBuffer(string: #"{"keep":0}"#)) { XCTAssertEqual($0.status, .badRequest) }
+            try await client.execute(uri: "/v1/admin/backups", method: .post, headers: headers(adminToken),
+                                     body: ByteBuffer(string: #"{"includeROMs":"yes"}"#)) { XCTAssertEqual($0.status, .badRequest) }
             var id = ""
             try await client.execute(uri: "/v1/admin/backups", method: .post, headers: headers(adminToken), body: ByteBuffer(string: "{}")) { response in
                 XCTAssertEqual(response.status, .created)

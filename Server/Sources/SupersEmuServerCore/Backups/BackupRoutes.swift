@@ -44,7 +44,7 @@ func registerBackupRoutes(_ group: RouterGroup<SERequestContext>, store: ServerS
 
     backups.post { request, context in
         let auth = try adminCaller(context)
-        let body = (try? await request.decode(as: CreateBackupRequest.self, context: context)) ?? CreateBackupRequest()
+        let body = try await request.decode(as: CreateBackupRequest.self, context: context)
         let info = try await mapped { try await store.backups.create(trigger: .manual, includeROMs: body.includeROMs) }
         audit(auth, "backup.create", info.id)
         return EditedResponse(status: .created, response: info)
@@ -75,6 +75,7 @@ func registerBackupRoutes(_ group: RouterGroup<SERequestContext>, store: ServerS
         let info = try await mapped { try await store.backups.requestRestore(id: id) }
         audit(auth, "backup.restore", info.id)
         return EditedResponse(status: .accepted, response: RestoreBackupResponse(
-            backup: info, message: "Restoring \(info.id). The server stops serving, restores and restarts; this takes a few seconds."))
+            backup: info, message: "Restoring \(info.id). The server stops serving, restores and restarts; this takes a few seconds.",
+            certificateSHA256: TLSIdentity.storedFingerprint(paths: ServerPaths(root: URL(fileURLWithPath: info.path, isDirectory: true)))))
     }
 }

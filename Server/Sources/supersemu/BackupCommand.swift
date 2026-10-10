@@ -75,9 +75,16 @@ struct Backup: AsyncParsableCommand {
         func run() async throws {
             try await CLIOutput.run(json: connection.json) {
                 guard yes else { throw CLIError.usage("Restoring replaces the server's current data. Re-run with --yes to confirm.") }
-                let client = try connection.client()
-                let response = try await client.restoreBackup(id)
+                let resolved = try connection.resolve()
+                let response = try await connection.client().restoreBackup(id)
+                // The backup brings back its own TLS certificate; follow it (it came over the pinned connection).
+                let newPin = response.certificateSHA256.flatMap { pin in
+                    resolved.certificateSHA256 != nil && pin != resolved.certificateSHA256 ? pin : nil
+                }
                 if !noWait {
+                    let restored = Connection.Resolved(server: resolved.server, token: resolved.token,
+                                                       certificateSHA256: newPin ?? resolved.certificateSHA256)
+                    let client = APIClient(baseURL: restored.server, token: restored.token, session: try Connection.session(for: restored))
                     try await Task.sleep(for: .seconds(2))
                     var healthy = false
                     for _ in 0..<60 {
@@ -88,6 +95,9 @@ struct Backup: AsyncParsableCommand {
                 }
                 if connection.json { return try CLIOutput.json(response) }
                 CLIOutput.stdout(noWait ? response.message : "Restored \(response.backup.id); the server is serving again.")
+                if let newPin {
+                    CLIOutput.stdout("The server's certificate is the backup's again (SHA-256 \(newPin)). Update certificateSHA256 in your CLI config; devices paired before the backup keep working.")
+                }
             }
         }
     }

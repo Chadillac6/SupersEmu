@@ -194,25 +194,27 @@ final class ServerSession {
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
             let signature = "\(path.status)|" + path.availableInterfaces.map(\.name).joined(separator: ",")
-            let satisfied = path.status == .satisfied
-            Task { @MainActor [weak self] in self?.networkChanged(signature: signature, satisfied: satisfied) }
+            Task { @MainActor [weak self] in self?.networkChanged(signature: signature) }
         }
         monitor.start(queue: DispatchQueue(label: "SupersEmu.ServerSession.path"))
         pathMonitor = monitor
     }
 
-    private func networkChanged(signature: String, satisfied: Bool) {
+    private func networkChanged(signature: String) {
         defer { lastPath = signature }
         guard let lastPath, lastPath != signature, credential != nil else { return }
         monitor.networkChanged()
         retryTask?.cancel()
         retryTask = nil
-        guard satisfied else { return }
         // The old connection may be gone (or a better route available); drop pooled connections.
         urlSession?.finishTasksAndInvalidate()
         urlSession = nil
         trust = nil
-        Task { await refresh() }
+        // Always try again, even with no network (a loopback server still works): a failure schedules the backoff.
+        Task {
+            await refreshTask?.value
+            await refresh()
+        }
     }
 
     static func isLoopback(_ url: URL) -> Bool {

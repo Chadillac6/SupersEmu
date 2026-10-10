@@ -96,16 +96,26 @@ public enum ServerLauncher {
             logger.notice("Stopped serving to restore backup \(info.id) from \(info.path)")
             do {
                 try store.close()
-                do {
-                    try BackupManager.applyRestore(folder: URL(fileURLWithPath: info.path, isDirectory: true), to: paths)
-                    logger.notice("Restored backup \(info.id); the replaced data is in \(paths.root.path)/.pre-restore")
-                } catch {
-                    logger.error("Restore failed, kept the current data: \(error)")
-                }
-                store = try ServerStore.open(paths: paths)
             } catch {
                 logger.error("Couldn't close the database for the restore, kept the current data: \(error)")
                 await store.backups.finishRestore()
+                continue
+            }
+            var record: BackupManager.RestoreRecord?
+            do {
+                record = try BackupManager.applyRestore(folder: URL(fileURLWithPath: info.path, isDirectory: true), to: paths)
+                logger.notice("Restored backup \(info.id); the replaced data is in \(paths.root.path)/.pre-restore")
+            } catch {
+                logger.error("Restore failed, kept the current data: \(error)")
+            }
+            do {
+                store = try ServerStore.open(paths: paths)
+            } catch {
+                // Never serve a closed store: put the previous data back, or exit so launchd restarts the daemon.
+                guard let record else { throw error }
+                logger.error("The restored data didn't open (\(error)); putting the previous data back")
+                record.revert(paths)
+                store = try ServerStore.open(paths: paths)
             }
         }
     }

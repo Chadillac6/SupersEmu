@@ -37,7 +37,13 @@ struct BackupsSection: View {
             }
             if let error { Text(error).font(.callout).foregroundStyle(.red) }
         }
-        .task(id: "\(model.source.rawValue)-\(model.health != nil)") { await load() }
+        .task(id: "\(model.source.rawValue)-\(model.health != nil)") {
+            // Picks up scheduled and CLI backups while the window is open.
+            while !Task.isCancelled {
+                await load()
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+            }
+        }
     }
 
     @ViewBuilder private func lastResult(_ overview: BackupOverview) -> some View {
