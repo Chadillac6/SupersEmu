@@ -20,7 +20,8 @@ final class SaveSyncEngineTests: XCTestCase {
     var store: ServerStore!
     var chad: UserInfo!
     var scratch: URL!
-    let game = String(repeating: "5e", count: 32)
+    // Unique per test so runs against a shared external server stay independent.
+    let game = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
     let core = SaveCore(id: "Snes9x", version: "1.62.3")
 
     override func setUp() async throws {
