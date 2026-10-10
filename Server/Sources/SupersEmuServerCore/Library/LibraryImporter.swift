@@ -220,6 +220,15 @@ public final class LibraryImporter: @unchecked Sendable {
             }
             units.append(DiscUnit(primary: cue, cue: sheet, cueData: data, tracks: tracks, missing: missing))
         }
+        // Tracks named after an unreadable cue stay with it (unsettled) instead of being guessed as cartridges.
+        for cue in batch.candidates where cue.ext == "cue" && !units.contains(where: { $0.primary.key == cue.key }) {
+            let stem = (cue.filename as NSString).deletingPathExtension.lowercased()
+            for track in batch.candidates where track.container == cue.container && ["bin", "img"].contains(track.ext)
+                && !consumed.contains(track.key) && track.filename.lowercased().hasPrefix(stem) {
+                consumed.insert(track.key)
+                batch.record(.unsupported("\(track.label): track of unreadable cue sheet \(cue.filename)"), origins: [track.origin])
+            }
+        }
         for disc in batch.candidates where ["chd", "iso"].contains(disc.ext) && !consumed.contains(disc.key) {
             consumed.insert(disc.key)
             units.append(DiscUnit(primary: disc, cue: nil, cueData: nil, tracks: [], missing: []))

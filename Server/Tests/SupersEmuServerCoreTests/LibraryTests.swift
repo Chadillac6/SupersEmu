@@ -75,7 +75,14 @@ final class SystemDetectorTests: XCTestCase {
         guard case .needsReview = detect("Bad.gb", Data(count: 0x8000)) else { return XCTFail("gb without logo") }
         guard case .needsReview = detect("Bad.gba", Data(count: 0x400)) else { return XCTFail("gba without fixed byte") }
         guard case .needsReview = detect("Tiny.sfc", Data(count: 100)) else { return XCTFail("tiny snes") }
-        guard case .needsReview = detect("Knux.md", ROMFixtures.genesis(name: "SEGA 32X        ")) else { return XCTFail("32X") }
+        XCTAssertEqual(detect("Knux.md", ROMFixtures.genesis(name: "SEGA 32X        ")), .system(.sega32x))
+        XCTAssertEqual(detect("Knux.32x", ROMFixtures.genesis(name: "SEGA 32X        ")), .system(.sega32x))
+        var mars = [UInt8](ROMFixtures.genesis(name: "SEGA GENESIS    "))
+        mars.replaceSubrange(0x3C0..<0x3CF, with: Array("MARS CHECK MODE".utf8))
+        XCTAssertEqual(detect("Doom.32X", Data(mars)), .system(.sega32x))
+        XCTAssertEqual(detect("Doom.bin", Data(mars)), .system(.sega32x))
+        guard case .needsReview = detect("Plain.32x", ROMFixtures.genesis(name: "SEGA GENESIS    ")) else { return XCTFail("ambiguous 32x") }
+        guard case .needsReview = detect("Blank.32x", Data(count: 0x4000)) else { return XCTFail("blank 32x") }
         guard case .needsReview = detect("game.xyz", Data(count: 10)) else { return XCTFail("unknown ext") }
         XCTAssertEqual(detect("readme.txt", Data(count: 10)), .ignored)
         XCTAssertEqual(detect("Box Art.PNG", Data(count: 10)), .ignored)

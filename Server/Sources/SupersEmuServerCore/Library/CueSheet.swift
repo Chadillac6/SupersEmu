@@ -71,9 +71,10 @@ struct CueSheet: Equatable {
             return start == close ? nil : start..<close
         }
         let rest = line[i...].trimmingCharacters(in: .whitespaces)
-        guard let lastSpace = rest.lastIndex(of: " ") else { return i..<line.index(i, offsetBy: rest.count) }
-        let nameLength = rest.distance(from: rest.startIndex, to: lastSpace)
-        return nameLength == 0 ? nil : i..<line.index(i, offsetBy: nameLength)
+        let isBlank: (Character) -> Bool = { $0 == " " || $0 == "\t" }
+        guard let lastBlank = rest.lastIndex(where: isBlank) else { return i..<line.index(i, offsetBy: rest.count) }
+        let name = rest[..<lastBlank].reversed().drop(while: isBlank)
+        return name.isEmpty ? nil : i..<line.index(i, offsetBy: name.count)
     }
 }
 
@@ -93,15 +94,19 @@ struct DiscName: Equatable {
 
     init(filename: String, folder: String? = nil) {
         var base = (filename as NSString).deletingPathExtension
+        var tagSource = base
         if let (range, number, count) = Self.match(base) {
             base = (base as NSString).replacingCharacters(in: NSRange(range), with: "")
+            tagSource = base
             discNumber = number; discCount = count
-        } else if let folder, let (_, number, count) = Self.match(folder) {
+        } else if let folder, let (range, number, count) = Self.match(folder) {
+            // Generic cue names ("game.cue") take their region/revision tags from the folder too.
+            tagSource = base + " " + (folder as NSString).replacingCharacters(in: NSRange(range), with: "")
             discNumber = number; discCount = count
         }
-        let ns = base as NSString
-        tags = Self.tag.matches(in: base, range: NSRange(location: 0, length: ns.length))
-            .map { ns.substring(with: $0.range(at: 1)).lowercased().trimmingCharacters(in: .whitespaces) }
+        let ns = tagSource as NSString
+        tags = Set(Self.tag.matches(in: tagSource, range: NSRange(location: 0, length: ns.length))
+            .map { ns.substring(with: $0.range(at: 1)).lowercased().trimmingCharacters(in: .whitespaces) })
             .sorted().joined(separator: "|")
         var cleaned = TitleNormalizer.title(fromFilename: base + ".x")
         while let last = cleaned.last, last == "-" || last == " " || last == "," { cleaned.removeLast() }

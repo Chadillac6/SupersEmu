@@ -137,7 +137,8 @@ extension LibraryImporter {
                 batch.record(try reviewPlaylist(m3u, reason: "Playlist mixes discs from different systems", batch: batch), origins: origins)
             } else {
                 let title = DiscName(filename: m3u.filename).title
-                batch.record(try commitGame(members, title: title), origins: origins)
+                let playlistSHA = try? examineFile(m3u, role: .m3u, batch: batch).sha
+                batch.record(try commitGame(members, title: title, clearingReview: playlistSHA.map { [$0] } ?? []), origins: origins)
             }
         }
 
@@ -164,16 +165,17 @@ extension LibraryImporter {
             }
             set.sort { $0.name.discNumber! < $1.name.discNumber! }
             let numbers = set.map { $0.name.discNumber! }
-            let declared = set.compactMap(\.name.discCount).max() ?? numbers.count
-            let expected = Array(1...max(declared, numbers.last ?? 1))
-            if numbers == expected {
+            let declared = Set(set.compactMap(\.name.discCount))
+            let expected = Array(1...max(declared.max() ?? 0, numbers.last ?? 1))
+            if numbers == expected, declared.allSatisfy({ $0 == numbers.count }) {
                 batch.record(try commitGame(set, title: set[0].name.title), origins: set.flatMap(\.unit.origins))
                 continue
             }
             let missing = expected.filter { !numbers.contains($0) }.map { "Disc \($0)" }
-            let reason = missing.isEmpty
-                ? "Disc set has more than one Disc \(Dictionary(grouping: numbers, by: { $0 }).first { $0.value.count > 1 }!.key)"
-                : "Disc set is missing \(missing.joined(separator: ", "))"
+            let repeated = Dictionary(grouping: numbers, by: { $0 }).first { $0.value.count > 1 }?.key
+            let reason = !missing.isEmpty ? "Disc set is missing \(missing.joined(separator: ", "))"
+                : repeated.map { "Disc set has more than one Disc \($0)" }
+                ?? "Disc set says \(declared.sorted().map(String.init).joined(separator: "/")) discs but has \(numbers.count)"
             for var disc in set {
                 disc.reason = reason
                 batch.record(try review(disc), origins: disc.unit.origins)
@@ -184,7 +186,7 @@ extension LibraryImporter {
     // MARK: Committing
 
     /// Stores every disc of one game under `games/<gameID>/` and inserts its rows. Generated .m3u for multi-disc sets.
-    func commitGame(_ discs: [Disc], title: String) throws -> Outcome {
+    func commitGame(_ discs: [Disc], title: String, clearingReview extraReviewIDs: [String] = []) throws -> Outcome {
         let multi = discs.count > 1
         let gameID: String = {
             guard multi else { return discs[0].id }
@@ -274,7 +276,7 @@ extension LibraryImporter {
         }
 
         // Replace any review-queue copies of these discs (or a crashed earlier attempt) before moving in.
-        let stale = Set(discs.map { $0.files[0].sha } + [gameID])
+        let stale = Set(discs.map { $0.files[0].sha } + extraReviewIDs + [gameID])
         let staleIDs = try store.db.read { db in
             try stale.filter { try Int.fetchOne(db, sql: "SELECT needs_review FROM games WHERE id = ?", arguments: [$0]) == 1 }
         }

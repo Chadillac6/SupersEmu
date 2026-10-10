@@ -76,6 +76,8 @@ extension LibraryTests {
         XCTAssertTrue(rewritten.contains("FILE \"Disc 2 - Track2.bin\" BINARY"), rewritten)
         XCTAssertTrue(rewritten.contains("FILE \"Game (Track 1).BIN\" BINARY"))
         XCTAssertNil(CueSheet(data: Data("not a cue".utf8)))
+        let tabbed = try XCTUnwrap(CueSheet(data: Data("FILE\tTrack.bin\tBINARY\n  TRACK 01 MODE1/2352\nFILE Two Words.bin  \t BINARY\n".utf8)))
+        XCTAssertEqual(tabbed.files.map(\.name), ["Track.bin", "Two Words.bin"])
     }
 
     func testDiscNameParsing() {
@@ -91,6 +93,8 @@ extension LibraryTests {
         XCTAssertNotEqual(DiscName(filename: "Game (USA) (Disc 1).cue").groupKey, DiscName(filename: "Game (Europe) (Disc 1).cue").groupKey)
         XCTAssertNil(DiscName(filename: "Discworld (USA).cue").discNumber)
         XCTAssertEqual(DiscName(filename: "game.cue", folder: "Game (USA) (Disc 2)").discNumber, 2)
+        XCTAssertEqual(DiscName(filename: "game.cue", folder: "Game (USA) (Rev 1) (Disc 2)").tags, "rev 1|usa")
+        XCTAssertEqual(DiscName(filename: "Game (USA).cue", folder: "Game (USA) (Disc 2)").tags, "usa")
     }
 
     func testDiscHeaderDetection() {
@@ -225,6 +229,36 @@ extension LibraryTests {
         XCTAssertEqual(report.needsReview.count, 2)
     }
 
+    func testFolderRegionsAndContradictoryCountsDoNotGroup() async throws {
+        for (region, disc) in [("USA", 1), ("Europe", 2)] {
+            try write(DiscFixtures.psxTrack(seed: UInt8(60 + disc)), "Game (\(region)) (Disc \(disc))/track.bin")
+            try write(DiscFixtures.cue(["track.bin"]), "Game (\(region)) (Disc \(disc))/game.cue")
+        }
+        let regions = try await importer.importPaths([sources.path], auth: nil)
+        // A lone Disc 1 is a one-disc game; the Europe Disc 2 isn't merged into it.
+        XCTAssertEqual(regions.imported.count, 1)
+        XCTAssertEqual(regions.needsReview.map(\.reason), ["Disc set is missing Disc 1"])
+        let loneRows = try await fileRows(regions.imported[0].id)
+        XCTAssertEqual(loneRows.compactMap(\.disc), [1, 1])
+
+        let other = sources.appendingPathComponent("counts", isDirectory: true)
+        for disc in 1...2 { try writeCueGame("", name: "Odd Disc \(disc) of 1", tracks: [DiscFixtures.psxTrack(seed: UInt8(70 + disc))], in: other) }
+        let counts = try await importer.importPaths([other.path], auth: nil)
+        XCTAssertEqual(counts.imported, [])
+        XCTAssertEqual(Set(counts.needsReview.map(\.reason)), ["Disc set says 1 discs but has 2"])
+    }
+
+    func testUnreadableCueKeepsItsTracksInIncoming() async throws {
+        let incoming = store.paths.incoming
+        try write(Data("garbage".utf8), "Game/Game.cue", in: incoming)
+        try write(ROMFixtures.genesis(seed: 77), "Game/Game (Track 1).bin", in: incoming)
+        try write(ROMFixtures.genesis(seed: 78), "Game/Other Cart.bin", in: incoming)
+        let report = try await importer.scanIncoming(auth: nil)
+        XCTAssertEqual(report.imported.map(\.title), ["Other Cart"])
+        XCTAssertEqual(report.unsupported.count, 2, "\(report.unsupported)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: incoming.appendingPathComponent("Game/Game (Track 1).bin").path))
+    }
+
     func testUserM3UOverridesInferredGrouping() async throws {
         try writeCueGame("Odd", name: "Start Here", tracks: [DiscFixtures.psxTrack(seed: 31)])
         try writeCueGame("Odd", name: "Then This", tracks: [DiscFixtures.psxTrack(seed: 32)])
@@ -240,6 +274,10 @@ extension LibraryTests {
         try writeCueGame("Other", name: "Start Here", tracks: [DiscFixtures.psxTrack(seed: 33)])
         let broken = try await importer.importPaths([sources.appendingPathComponent("Other").path], auth: nil)
         XCTAssertEqual(broken.needsReview.map(\.reason), ["Missing disc: Gone.cue"])
+        try writeCueGame("Other", name: "Gone", tracks: [DiscFixtures.psxTrack(seed: 34)])
+        let fixed = try await importer.importPaths([sources.appendingPathComponent("Other").path], auth: nil)
+        XCTAssertEqual(fixed.imported.map(\.title), ["Broken"])
+        XCTAssertEqual(try importer.reviewQueue(), [], "the playlist's review entry is cleared once the game imports")
     }
 
     func testISOAndCHDSingleFileDiscs() async throws {

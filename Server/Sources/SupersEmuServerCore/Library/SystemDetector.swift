@@ -79,6 +79,9 @@ public enum SystemDetector {
             return .system(.gba)
         case "md", "gen", "bin", "smd":
             return detectGenesis(ext: ext, bytes: bytes, size: size)
+        case "32x":
+            if let header = segaHeader(bytes, at: 0x100), is32X(header: header, bytes: bytes) { return .system(.sega32x) }
+            return .needsReview("No Sega 32X header (\"32X\" at 0x100 or \"MARS\" at 0x3C0 missing)")
         case "zip":
             return .unsupported("Archive inside an archive")
         case _ where archiveExtensions.contains(ext):
@@ -92,8 +95,7 @@ public enum SystemDetector {
 
     static func detectGenesis(ext: String, bytes: [UInt8], size: Int64) -> Result {
         if let header = segaHeader(bytes, at: 0x100) ?? (size % 0x4000 == 512 ? smdHeader(bytes) : nil) {
-            if header.contains("32X") { return .needsReview("Sega 32X ROM (not supported yet)") }
-            return .system(.genesis)
+            return .system(is32X(header: header, bytes: bytes) ? .sega32x : .genesis)
         }
         if bytes.count >= 0x20, String(decoding: bytes[0..<0x20], as: UTF8.self).contains("SEGADISCSYSTEM") {
             return .needsReview("Sega CD disc image without a .cue sheet")
@@ -101,6 +103,13 @@ public enum SystemDetector {
         return .needsReview(ext == "bin"
             ? "Ambiguous .bin: no SEGA header at 0x100"
             : "No SEGA header at 0x100")
+    }
+
+    /// 32X carts have a Genesis header naming "SEGA 32X", and/or the "MARS CHECK MODE" security string at 0x3C0.
+    static func is32X(header: String, bytes: [UInt8]) -> Bool {
+        if header.contains("32X") { return true }
+        guard bytes.count >= 0x3C4 else { return false }
+        return bytes[0x3C0..<0x3C4].elementsEqual("MARS".utf8)
     }
 
     /// The 16-byte system name at `offset` if it contains "SEGA" (e.g. "SEGA GENESIS", " SEGA MEGA DRIVE").
