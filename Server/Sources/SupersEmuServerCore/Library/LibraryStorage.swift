@@ -40,6 +40,15 @@ public final class LibraryStorage: @unchecked Sendable {
         }
     }
 
+    /// Re-reads `storage.json`; without one the library is back in the data folder.
+    func reload(config: URL, dataRoot: URL) throws {
+        if FileManager.default.fileExists(atPath: config.path) { return try load(config: config, dataRoot: dataRoot) }
+        lock.withLock {
+            _root = dataRoot
+            _isDefault = true
+        }
+    }
+
     func switchTo(_ url: URL, config: URL, dataRoot: URL) throws {
         let url = url.standardizedFileURL
         let isDefault = url.path == dataRoot.standardizedFileURL.path
@@ -58,11 +67,16 @@ public final class LibraryStorage: @unchecked Sendable {
     enum GateError: Error { case moving, batchBusy, notOwner, uploadsActive }
 
     /// Uploads, batch finishes and Move Library exclude each other, and a batch belongs to the credential that started it.
-    func beginUpload(batch: String, owner: String) throws {
+    /// `stagedOnDisk`: the batch already has files from before a restart, whose owner isn't known, so nobody can use it.
+    func beginUpload(batch: String, owner: String, stagedOnDisk: Bool = false) throws {
         try lock.withLock {
             if _move?.isRunning == true { throw GateError.moving }
             if finishing.contains(batch) { throw GateError.batchBusy }
-            if let existing = batchOwners[batch], existing != owner { throw GateError.notOwner }
+            if let existing = batchOwners[batch] {
+                if existing != owner { throw GateError.notOwner }
+            } else if stagedOnDisk {
+                throw GateError.notOwner
+            }
             batchOwners[batch] = owner
             activeUploads[batch, default: 0] += 1
         }

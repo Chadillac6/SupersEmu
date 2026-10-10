@@ -107,8 +107,9 @@ public enum ServerLauncher {
             }
             var record: BackupManager.RestoreRecord?
             do {
-                record = try BackupManager.applyRestore(folder: URL(fileURLWithPath: info.path, isDirectory: true), to: paths)
-                logger.notice("Restored backup \(info.id); the replaced data is in \(paths.root.path)/.pre-restore")
+                let restored = try BackupManager.applyRestore(folder: URL(fileURLWithPath: info.path, isDirectory: true), to: paths)
+                record = restored
+                logger.notice("Restored backup \(info.id); the replaced data is in \(restored.safety.path)")
             } catch {
                 logger.error("Restore failed, kept the current data: \(error)")
             }

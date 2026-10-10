@@ -63,7 +63,7 @@ struct Backup: AsyncParsableCommand {
     struct Restore: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Restore a backup. The server verifies it, stops serving, replaces its data and restarts.",
-            discussion: "Saves and changes made after the backup are replaced; the previous data is kept in <data dir>/.pre-restore.")
+            discussion: "Saves and changes made after the backup are replaced; the previous data is kept in a new <data dir>/.pre-restore-<date> folder.")
         @OptionGroup var connection: Connection
         @Argument(help: "Backup ID from `supersemu backup list`.")
         var id: String

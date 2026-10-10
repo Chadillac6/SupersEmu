@@ -17,7 +17,8 @@ func registerAdminLibraryManagementRoutes(_ group: RouterGroup<SERequestContext>
               let destination = importer.uploadDestination(batch: batch, parts: parts) else {
             throw HTTPError(.badRequest, message: "path must be a relative path of visible names")
         }
-        try uploadGate { try store.paths.storage.beginUpload(batch: batch, owner: auth.uploadOwner) }
+        let staged = FileManager.default.fileExists(atPath: importer.uploadStagingRoot.appendingPathComponent(batch, isDirectory: true).path)
+        try uploadGate { try store.paths.storage.beginUpload(batch: batch, owner: auth.uploadOwner, stagedOnDisk: staged) }
         defer { store.paths.storage.endUpload(batch: batch) }
         if let length = request.headers[.contentLength].flatMap({ Int64($0) }) {
             try checkUploadSize(length, store: store)

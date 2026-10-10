@@ -241,6 +241,15 @@ final class LibraryManagementTests: XCTestCase {
         XCTAssertThrowsError(try storage.beginUpload(batch: "b2", owner: "device:a"), "no uploads during a move")
     }
 
+    func testBatchStagedBeforeRestartHasNoOwner() throws {
+        let storage = LibraryStorage(root: FileManager.default.temporaryDirectory)
+        XCTAssertThrowsError(try storage.beginUpload(batch: "b1", owner: "device:b", stagedOnDisk: true))
+        XCTAssertThrowsError(try storage.beginFinish(batch: "b1", owner: "device:b"))
+        try storage.beginUpload(batch: "b2", owner: "device:a", stagedOnDisk: false)
+        storage.endUpload(batch: "b2")
+        try storage.beginUpload(batch: "b2", owner: "device:a", stagedOnDisk: true)
+    }
+
     func testDeletingWrongBIOSClearsItsStatus() async throws {
         try write(Data(repeating: 9, count: 524_288), "scph5501.bin", in: store.paths.incoming)
         _ = try await importer.scanIncoming(auth: nil)

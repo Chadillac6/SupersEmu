@@ -64,7 +64,7 @@ final class BackupTests: XCTestCase {
         // ...are undone by a restore, except ROMs, which the backup doesn't have.
         let paths = store.paths
         try store.close()
-        try BackupManager.applyRestore(folder: URL(fileURLWithPath: backup.path), to: paths)
+        let record = try BackupManager.applyRestore(folder: URL(fileURLWithPath: backup.path), to: paths)
         store = try ServerStore.open(paths: paths)
         XCTAssertEqual(try gameCount(store), 1)
         XCTAssertEqual(read("users/u1/saves/rev1"), "save-v1")
@@ -72,7 +72,7 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(read("games/snes/game.sfc"), "rom-v2")
         XCTAssertEqual(read("settings.json"), "{\"theme\":\"dark\"}")
         XCTAssertEqual(try store.adminUser()?.id, admin.id)
-        XCTAssertEqual(String(decoding: try Data(contentsOf: paths.root.appendingPathComponent(".pre-restore/users/u1/saves/rev2")), as: UTF8.self), "save-new")
+        XCTAssertEqual(String(decoding: try Data(contentsOf: record.safety.appendingPathComponent("users/u1/saves/rev2")), as: UTF8.self), "save-new")
         // The backup config isn't part of the backup.
         let destination = await store.backups.config().destination
         XCTAssertEqual(destination, scratch.appendingPathComponent("drive").path)
@@ -83,10 +83,54 @@ final class BackupTests: XCTestCase {
         try write("{}", "options.json")
         let paths = store.paths
         try store.close()
-        try BackupManager.applyRestore(folder: URL(fileURLWithPath: backup.path), to: paths)
+        let record = try BackupManager.applyRestore(folder: URL(fileURLWithPath: backup.path), to: paths)
         store = try ServerStore.open(paths: paths)
         XCTAssertNil(read("options.json"))
-        XCTAssertEqual(read(".pre-restore/options.json"), "{}")
+        XCTAssertEqual(String(decoding: try Data(contentsOf: record.safety.appendingPathComponent("options.json")), as: UTF8.self), "{}")
+    }
+
+    func testSecondRestoreKeepsTheFirstRestoresCopy() async throws {
+        let backup = try await store.backups.create()
+        try write("wednesday", "users/u1/saves/rev1")
+        let paths = store.paths
+        try store.close()
+        let first = try BackupManager.applyRestore(folder: URL(fileURLWithPath: backup.path), to: paths)
+        store = try ServerStore.open(paths: paths)
+        try write("thursday", "users/u1/saves/rev1")
+        try store.close()
+        let second = try BackupManager.applyRestore(folder: URL(fileURLWithPath: backup.path), to: paths)
+        store = try ServerStore.open(paths: paths)
+        XCTAssertNotEqual(first.safety, second.safety)
+        XCTAssertEqual(String(decoding: try Data(contentsOf: first.safety.appendingPathComponent("users/u1/saves/rev1")), as: UTF8.self), "wednesday")
+        XCTAssertEqual(String(decoding: try Data(contentsOf: second.safety.appendingPathComponent("users/u1/saves/rev1")), as: UTF8.self), "thursday")
+    }
+
+    func testBackupAndRestoreFollowMovedLibrary() async throws {
+        let paths = store.paths
+        let library = scratch.appendingPathComponent("external/SupersEmu Library", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        try paths.storage.switchTo(library, config: paths.storageConfig, dataRoot: paths.root)
+        func put(_ text: String, _ relative: String) throws {
+            let url = library.appendingPathComponent(relative)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: url)
+        }
+        try put("art-v1", "artwork/g1/cover.png")
+        try put("rom-v1", "games/snes/game.sfc")
+        let backup = try await store.backups.create(includeROMs: true)
+        let files = try BackupManager.verify(folder: URL(fileURLWithPath: backup.path)).files.map(\.path)
+        XCTAssertTrue(files.contains("artwork/g1/cover.png"))
+        XCTAssertTrue(files.contains("games/snes/game.sfc"))
+
+        try put("art-v2", "artwork/g1/cover.png")
+        try put("rom-v2", "games/snes/game.sfc")
+        try store.close()
+        try BackupManager.applyRestore(folder: URL(fileURLWithPath: backup.path), to: paths)
+        store = try ServerStore.open(paths: paths)
+        XCTAssertEqual(paths.libraryRoot.standardizedFileURL.path, library.standardizedFileURL.path)
+        XCTAssertEqual(String(decoding: try Data(contentsOf: library.appendingPathComponent("artwork/g1/cover.png")), as: UTF8.self), "art-v1")
+        XCTAssertEqual(String(decoding: try Data(contentsOf: library.appendingPathComponent("games/snes/game.sfc")), as: UTF8.self), "rom-v1")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.root.appendingPathComponent("artwork/g1/cover.png").path))
     }
 
     func testBackupFolderIsPrivate() async throws {

@@ -211,7 +211,7 @@ public actor BackupManager {
         do {
             let items = Self.items(paths: paths, includeROMs: includeROMs).filter { $0 != "library.sqlite" }
             func copyItem(_ item: String) throws {
-                let source = paths.root.appendingPathComponent(item)
+                let source = (Self.libraryItems.contains(item) ? paths.libraryRoot : paths.root).appendingPathComponent(item)
                 guard fm.fileExists(atPath: source.path) else { return }
                 try fm.copyItem(at: source, to: staging.appendingPathComponent(item))
             }
@@ -321,47 +321,71 @@ public actor BackupManager {
     }
 
     /// Replaces the data directory's contents with a verified backup. The server must not be serving and the
-    /// database must be closed. What's replaced is moved to `.pre-restore/` first and put back if anything fails.
+    /// database must be closed. What's replaced is moved to a `.pre-restore-<date>` folder first (one per restore,
+    /// in the data folder, and in the library folder for artwork, games and BIOS) and put back if anything fails.
     /// ROMs and BIOS files are left as they are unless the backup includes them.
     public struct RestoreRecord: Sendable {
-        var moved: [String] = []
-        var copied: [String] = []
+        struct Kept: Sendable { let live: URL; let kept: URL }
+        /// Where this restore kept the data folder's replaced files.
+        public let safety: URL
+        var moved: [Kept] = []
+        var copied: [URL] = []
 
-        /// Puts back what a restore replaced (from `.pre-restore/`).
+        /// Puts back what the restore replaced.
         public func revert(_ paths: ServerPaths) {
             let fm = FileManager.default
-            let safety = paths.root.appendingPathComponent(".pre-restore", isDirectory: true)
-            for item in copied { try? fm.removeItem(at: paths.root.appendingPathComponent(item)) }
-            for item in moved {
-                try? fm.removeItem(at: paths.root.appendingPathComponent(item))
-                try? fm.moveItem(at: safety.appendingPathComponent(item), to: paths.root.appendingPathComponent(item))
+            for url in copied.reversed() { try? fm.removeItem(at: url) }
+            for item in moved.reversed() {
+                try? fm.removeItem(at: item.live)
+                try? fm.moveItem(at: item.kept, to: item.live)
             }
+            try? paths.storage.reload(config: paths.storageConfig, dataRoot: paths.root)
         }
     }
 
+    /// Backup entries that live in the library folder, which Move Library can put on another drive.
+    static let libraryItems: Set<String> = ["artwork", "games", "bios"]
+
     @discardableResult
-    public static func applyRestore(folder: URL, to paths: ServerPaths) throws -> RestoreRecord {
-        let manifest = try verify(folder: folder)
+    public static func applyRestore(folder: URL, to paths: ServerPaths, now: Date = Date()) throws -> RestoreRecord {
+        try verify(folder: folder)
         let fm = FileManager.default
-        let safety = paths.root.appendingPathComponent(".pre-restore", isDirectory: true)
-        try? fm.removeItem(at: safety)
+        let name = ".pre-restore-\(idFormatter.string(from: now))-\(UUID().uuidString.prefix(8).lowercased())"
+        let safety = paths.root.appendingPathComponent(name, isDirectory: true)
         try fm.createDirectory(at: safety, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
 
         let backedUp = Set(((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).filter { $0 != manifestName })
-        var replaced = ["library.sqlite", "library.sqlite-wal", "library.sqlite-shm", "users", "artwork", "tls", "admin.token"]
+        let dataItems = backedUp.subtracting(libraryItems)
+        var replaced = ["library.sqlite", "library.sqlite-wal", "library.sqlite-shm", "users", "tls", "admin.token"]
         // Settings files added after the backup go too, so the restored server has the backup's settings.
         let live = ((try? fm.contentsOfDirectory(atPath: paths.root.path)) ?? []).filter { $0.hasSuffix(".json") && $0 != "backups.json" }
-        replaced += Set(live).union(backedUp.filter { $0.hasSuffix(".json") }).sorted()
-        if manifest.includesROMs { replaced += ["games", "bios"] }
-        var record = RestoreRecord()
+        replaced += Set(live).union(dataItems.filter { $0.hasSuffix(".json") }).sorted()
+        var record = RestoreRecord(safety: safety)
         do {
-            for item in replaced where fm.fileExists(atPath: paths.root.appendingPathComponent(item).path) {
-                try fm.moveItem(at: paths.root.appendingPathComponent(item), to: safety.appendingPathComponent(item))
-                record.moved.append(item)
+            func keep(_ live: URL, in kept: URL) throws {
+                guard fm.fileExists(atPath: live.path) else { return }
+                try fm.createDirectory(at: kept.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                       attributes: [.posixPermissions: 0o700])
+                try fm.moveItem(at: live, to: kept)
+                record.moved.append(.init(live: live, kept: kept))
             }
-            for item in backedUp.sorted() {
-                try fm.copyItem(at: folder.appendingPathComponent(item), to: paths.root.appendingPathComponent(item))
-                record.copied.append(item)
+            func put(_ item: String, at live: URL) throws {
+                try fm.copyItem(at: folder.appendingPathComponent(item), to: live)
+                record.copied.append(live)
+            }
+            for item in replaced { try keep(paths.root.appendingPathComponent(item), in: safety.appendingPathComponent(item)) }
+            for item in dataItems.sorted() { try put(item, at: paths.root.appendingPathComponent(item)) }
+            // The restored storage.json decides where artwork, games and BIOS go.
+            try paths.storage.reload(config: paths.storageConfig, dataRoot: paths.root)
+            let library = backedUp.intersection(libraryItems).sorted()
+            if !library.isEmpty {
+                guard paths.storage.isAvailable else { throw BackupError.destinationUnavailable(paths.libraryRoot.path) }
+                let librarySafety = paths.libraryRoot.appendingPathComponent(name, isDirectory: true)
+                for item in library {
+                    let target = paths.libraryRoot.appendingPathComponent(item)
+                    try keep(target, in: librarySafety.appendingPathComponent(item))
+                    try put(item, at: target)
+                }
             }
             try paths.createDirectories()
         } catch {
