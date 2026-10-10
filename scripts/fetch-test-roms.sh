@@ -8,6 +8,7 @@
 #   GBC       mattcurrie/cgb-acid2 v1.1                      (MIT)
 #   GBA       jsmolka/gba-tests ppu/hello.gba                (MIT)
 #   Genesis   rhargreaves/mega-drive-midi-interface v1.34    (GPLv3)
+#   32X       haroldo-ok/noudar-32x v0.0.2                   (BSD 2-Clause)
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dest="$root/Tests/Fixtures/local"
@@ -43,5 +44,17 @@ fetch gba-tests-hello.gba https://raw.githubusercontent.com/jsmolka/gba-tests/a7
   38aed48b67bc0f701e8aa222b0c3334bd306bd29888707bb7224d81f5576c264
 fetch mega-drive-midi-interface.md https://github.com/rhargreaves/mega-drive-midi-interface/releases/download/v1.34/mega-drive-midi-interface-generic-v1.34.bin \
   7fc340e1f0ecd210c91a3a70956248dda57c5b2067a6eba592aeb2b1a5e27f68
+
+noudar_sha=e162e5b9fc80b1671eaf8c68d886b8fc51601141ed2373b678f9465981875c0d
+if [ ! -f "$dest/noudar.32x" ] || [ "$(shasum -a 256 "$dest/noudar.32x" | cut -d' ' -f1)" != "$noudar_sha" ]; then
+  if curl -fsSL --retry 2 -o "$tmp/noudar.zip" https://github.com/haroldo-ok/noudar-32x/releases/download/v0.0.2/noudar.0.0.2.32x.zip &&
+     unzip -p "$tmp/noudar.zip" noudar.0.0.2.32x > "$tmp/noudar.32x" &&
+     [ "$(shasum -a 256 "$tmp/noudar.32x" | cut -d' ' -f1)" = "$noudar_sha" ]; then
+    mv "$tmp/noudar.32x" "$dest/noudar.32x"
+  else
+    echo "warning: could not fetch noudar-32x v0.0.2 (32X frame tests will skip)" >&2
+    failures=$((failures + 1))
+  fi
+fi
 
 echo "Fixtures ready in $dest ($failures unavailable)"

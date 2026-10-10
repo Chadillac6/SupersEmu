@@ -3,6 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 git submodule update --init --depth 1
+git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
 [ -f Tests/Fixtures/local/HelloWorld.sfc ] || scripts/fetch-test-roms.sh
 xcodegen generate
 xcodebuild test -project SupersEmu.xcodeproj -scheme SupersEmu-macOS \
