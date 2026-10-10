@@ -44,6 +44,14 @@ docs, then shown in the app as a one-screen "Connect your controller" guide.
 4. Several controllers: the first one connected is player 1. Reordering happens in the in-game menu.
 5. Disconnect mid-game pauses and shows the touch overlay or a "Reconnect controller" prompt.
 
+## Chad's hardware (Oct 2026)
+- Controllers: 8BitDo (models TBD) and **Retrolink** USB Genesis and N64 pads.
+- Phones: iPhone 16 or newer (A18-class, so no DriverKit). Macs: M1.
+- [Inference] Retrolink pads are generic USB HID. They should work on the M1 Macs through `IOHIDManager`
+  presets, but are likely invisible to `GCController` on iPhone. To verify: plug one into the iPhone 16
+  and check whether `GCController.controllers()` lists it. If it doesn't, the iPhone options are an
+  adapter that identifies as an Apple-supported type, or 8BitDo controllers.
+
 ## Test matrix (needs Chad's hardware)
 For each controller and platform, record: detected type, mode used, every button mapped, both analog
 sticks (N64/PS1), hotkey, reconnect, and two-player use.
