@@ -61,7 +61,7 @@ final class ServerSession {
         let request = PairRequest(code: payload.code, deviceName: Self.deviceName, platform: Self.platform)
         var lastError: Error = APIClientError.invalidResponse
         for url in payload.urls {
-            let trust = PinnedTrustDelegate(certificateSHA256: payload.certificateSHA256, trustOnFirstUse: true, expectedHost: url.host)
+            let trust = PinnedCertificateDelegate(certificateSHA256: payload.certificateSHA256, trustOnFirstUse: true, expectedHost: url.host)
             let pairingSession = URLSession(configuration: Self.configuration, delegate: trust, delegateQueue: nil)
             defer { pairingSession.finishTasksAndInvalidate() }
             let client = APIClient(baseURL: url, token: nil, session: pairingSession)
@@ -155,7 +155,7 @@ final class ServerSession {
     func downloader(cache: GameCache) -> GameDownloader? {
         guard let client = client() else { return nil }
         let pin = credential?.certificateSHA256
-        return GameDownloader(client: client, cache: cache, trust: { PinnedTrustDelegate.evaluate($0, pin: pin) })
+        return GameDownloader(client: client, cache: cache, trust: { PinnedCertificateDelegate.disposition(for: $0, pin: pin) })
     }
 
     private func apply(_ games: [GameSummary]) {
@@ -175,7 +175,7 @@ final class ServerSession {
 
     private func session(pin: String?) -> URLSession {
         if let urlSession { return urlSession }
-        let session = URLSession(configuration: Self.configuration, delegate: PinnedTrustDelegate(certificateSHA256: pin), delegateQueue: nil)
+        let session = URLSession(configuration: Self.configuration, delegate: PinnedCertificateDelegate(certificateSHA256: pin), delegateQueue: nil)
         if credential != nil { urlSession = session }
         return session
     }

@@ -356,13 +356,7 @@ public enum PairingLinkParser {
 
     /// Parses `supersemu://pair?d=<base64url(JSON PairingPayload)>`.
     public static func payload(fromLink link: String) -> PairingPayload? {
-        guard let components = URLComponents(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
-              components.scheme?.lowercased() == "supersemu", components.host?.lowercased() == "pair",
-              let encoded = components.queryItems?.first(where: { $0.name == "d" })?.value else { return nil }
-        var base64 = encoded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
-        guard let data = Data(base64Encoded: base64) else { return nil }
-        return try? SupersEmuJSON.decoder().decode(PairingPayload.self, from: data)
+        try? PairingLink.payload(from: link.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Typed entry: "mac-mini.local", "192.168.1.20:8487" or a full URL, plus the 6-digit code.
@@ -386,9 +380,6 @@ public enum PairingLinkParser {
     }
 
     public static func link(for payload: PairingPayload) throws -> String {
-        let data = try SupersEmuJSON.encoder().encode(payload)
-        let encoded = data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-        return "supersemu://pair?d=\(encoded)"
+        try PairingLink.url(for: payload).absoluteString
     }
 }

@@ -13,7 +13,13 @@ struct SupersEmuApp: App {
                 .environment(server)
                 .environment(downloads)
                 .preferredColorScheme(.dark)
+                #if os(macOS)
+                .serverModeLaunchHook()
+                #endif
         }
+        #if os(macOS)
+        ServerModeScene()
+        #endif
     }
 }
 

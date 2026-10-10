@@ -32,7 +32,7 @@ game files or overwrite a user's save.
 Either set environment variables for the process that runs the CLI:
 
 ```sh
-export SUPERSEMU_SERVER=https://macmini.<tailnet>.ts.net:8487   # or http://127.0.0.1:8487 on the Mac mini
+export SUPERSEMU_SERVER=https://macmini.<tailnet>.ts.net:8487   # or https://127.0.0.1:8487 on the Mac mini (pins tls/server.cer)
 export SUPERSEMU_TOKEN=sek_…
 ```
 

@@ -280,9 +280,24 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_GCSupportsControllerUserInteraction: YES
         INFOPLIST_KEY_NSCameraUsageDescription: "SupersEmu uses the camera to scan the pairing QR code from your SupersEmu Server."
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "SupersEmu connects to your SupersEmu Server on your home network."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "SupersEmu finds and connects to your SupersEmu Server on your home network."
         TARGETED_DEVICE_FAMILY: "1,2"
         ENABLE_APP_SANDBOX: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    # Merged with the generated Info.plist: keys that need arrays.
+    info:
+      path: Config/SupersEmu-Info.plist
+      properties:
+        NSBonjourServices: ["_supersemu._tcp"]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.chadillac6.supersemu.pair
+            CFBundleURLSchemes: ["supersemu"]
+    # macOS only (the script exits on iOS): embeds supersemu-server in Contents/MacOS and the launchd plist in
+    # Contents/Library/LaunchDaemons for SMAppService.daemon.
+    postBuildScripts:
+      - name: Embed supersemu-server daemon
+        script: '"$SRCROOT/scripts/embed-server-daemon.sh"'
+        basedOnDependencyAnalysis: false
 
   SupersEmuHostTests:
     type: bundle.unit-test
