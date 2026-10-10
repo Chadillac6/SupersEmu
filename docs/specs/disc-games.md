@@ -69,12 +69,16 @@ Not verified: real PS1/Sega CD dumps and real BIOS files (only synthetic headers
   Built: the host stores the legacy or EXT callbacks (a NULL interface clears them; they are reset on load and shutdown) and reports interface version 1.
   `insertDisk(_:error:)` opens the tray (unless it is already open), sets the index, and always closes the tray again, so a failed swap leaves the previous disc running. Labels come from `get_image_label` (EXT only).
   Verified by `Tests/HostTests/SEDiskControlTests.mm` against a stub three-disc core (`SELibretroHostRegisterCore` in `Host/SELibretroHost+Testing.h`).
-  **Unverified:** swapping with a real disc core (PS1/Sega CD cores land in parallel tracks).
+  Also verified with Beetle PSX: `SEBeetlePSXTests.testM3UPlaylistExposesBothDiscsAndSwaps` loads an `.m3u` of two synthetic cues (`diskCount` 2) and swaps to disc 2.
+  **Unverified:** swapping with a real PS1/Sega CD disc, and Sega CD swapping in general.
 - Player: the "Swap disc" button (Command-D, or L + R + Select on a controller) pauses the game and opens a "Disc N of M" picker.
   In the picker, up/down or the d-pad moves, Return / Start / the bottom face button inserts, and Esc / Select / the right face button cancels. Number keys 1-9 pick a disc directly.
   `SUPERSEMU_DEBUG_DISC_COUNT=N` (Debug builds only) fakes an N-disc game so the UI can be captured without a disc core.
 - Library: a multi-disc game is one tile (one `GameSummary`). Its detail view shows "N discs · total size". The file-list downloader fetches and verifies every file; `ClientCacheTests.testDownloadsEveryFileOfSyntheticMultiDiscGame` (m3u + 2 discs) launches from the `.m3u`.
 - Save states and SRAM stay per game ID, shared across discs (for PS1, memory card 1 is per game).
+- PS1 (Beetle PSX, built): `need_fullpath` is true, so the host passes the `.cue`/`.chd`/`.m3u`/`.pbp` path and the core opens the tracks beside it.
+  The core looks for `scph5500.bin`/`scph5501.bin`/`scph5502.bin` (by disc region) in `AppPaths.system`; with none present it boots its bundled OpenBIOS instead of failing.
+  So "Needs PlayStation BIOS" is a frontend policy, not something the core enforces. Commercial-game compatibility on OpenBIOS is unverified.
 
 ## Track ownership (Wave 1)
 | Track | Owns |
