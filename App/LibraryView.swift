@@ -24,7 +24,7 @@ struct LibraryView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
-                    statusBanner
+                    ConnectionBanner()
                     if !query.isEmpty {
                         searchResults
                     } else {
@@ -87,29 +87,6 @@ struct LibraryView: View {
     /// The sheet keeps the tapped item; re-resolve it so badges and buttons follow downloads.
     private func liveItem(_ item: LibraryItem) -> LibraryItem {
         items.first { $0.id == item.id && $0.source == item.source } ?? item
-    }
-
-    @ViewBuilder private var statusBanner: some View {
-        switch server.status {
-        case .offline(let message):
-            HStack(spacing: 12) {
-                Image(systemName: "wifi.slash")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(message).font(.callout.bold())
-                    Text("Showing games you can play offline.").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Retry") { Task { await server.refresh() } }.accessibilityIdentifier("retry-server")
-            }
-            .padding(14)
-            .background(.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
-            .padding(.horizontal, 20)
-            .accessibilityIdentifier("offline-banner")
-        case .connecting where server.games.isEmpty:
-            ProgressView("Connecting to \(server.serverName)…").padding(.horizontal, 20)
-        default:
-            EmptyView()
-        }
     }
 
     private var serverMenu: some View {

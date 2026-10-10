@@ -36,11 +36,13 @@ public final class ServerStore: @unchecked Sendable {
     public let db: any DatabaseWriter
     public let paths: ServerPaths
     public let serverName: String
+    public let backups: BackupManager
 
     public init(db: any DatabaseWriter, paths: ServerPaths, serverName: String = Host.current().localizedName ?? "SupersEmu Server") throws {
         self.db = db
         self.paths = paths
         self.serverName = serverName
+        self.backups = BackupManager(paths: paths, db: db, serverName: serverName)
         try ServerMigrations.migrator.migrate(db)
     }
 
@@ -48,6 +50,8 @@ public final class ServerStore: @unchecked Sendable {
         try paths.createDirectories()
         return try ServerStore(db: DatabasePool(path: paths.database.path), paths: paths)
     }
+
+    public func close() throws { try db.close() }
 
     public static func inMemory(root: URL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)) throws -> ServerStore {
         let paths = ServerPaths(root: root)

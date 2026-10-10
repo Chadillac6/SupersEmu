@@ -125,13 +125,50 @@ admin: /v1/admin/users, /invites, /permissions, /library/import, /library/publis
 - Downloads: whole files to the device cache with resumable Range requests. PS1 discs are large, so
   the cache UI shows sizes and lets users remove downloaded games.
 
+## Backups (`SupersEmuServerCore/Backups`)
+- `BackupManager` writes `SupersEmu-<yyyyMMdd-HHmmss>/` into the destination (default
+  `<data dir>/Backups`, typically an external drive): `library.sqlite` via SQLite's online backup API
+  (consistent while serving, switched to a single-file journal), `users/` (save revisions), `artwork/`,
+  `tls/` + `admin.token` (paired devices keep their pin after a restore), other top-level settings
+  `*.json`, and `manifest.json` with size + SHA-256 for every file. `games/` and `bios/` only with
+  `includeROMs`; the BIOS index is always in the database. Written to a `.partial` folder and renamed
+  only after verification.
+- Verification (after every backup, before every restore, `POST …/:id/verify`): every file matches the
+  manifest (none missing, extra or changed) and `PRAGMA integrity_check` is `ok`.
+- Config and the last result live in `<data dir>/backups.json` (not backed up): destination, keep N
+  (default 7), includeROMs, daily hour (default 03:00). The daemon runs today's slot if it hasn't
+  been attempted (catch-up after sleep/power-off), then daily. A destination under `/Volumes/<name>`
+  needs that volume mounted; an unplugged drive is a failed backup, never a write to the boot disk.
+  After a successful backup older ones beyond N are deleted.
+- Restore: the route verifies, answers 202, then `ServerLauncher.run` stops serving, closes the
+  database, moves what it replaces to `<data dir>/.pre-restore/`, copies the backup in (ROMs/BIOS
+  files only when the backup has them), reopens (running migrations) and serves again. Any failure
+  puts the previous data back.
+- Admin API (admin + `users:admin`, audited): `GET /v1/admin/backups` (config, last result, next run,
+  backups), `POST /v1/admin/backups` (`{includeROMs?}`), `GET|PUT /v1/admin/backups/config`,
+  `POST /v1/admin/backups/:id/verify`, `POST /v1/admin/backups/:id/restore`.
+
+## Offline and unreachable (`ServerSession`, `ConnectionBanner`)
+- `ServerSession.connection` is `connected(.home | .tailscale)` (Tailscale = `*.ts.net`,
+  100.64.0.0/10 or `fd7a:115c:a1e0::/48`), `connecting`, `unreachable`, `certificateMismatch` (the
+  pinning delegate refused the certificate) or `signedOut(.notPaired | .revoked)` (401). The state
+  machine is `SupersEmuKit.ConnectionMonitor`.
+- Unreachable and certificate mismatch retry with backoff (2, 4, 8 … 60 s; 300 s cap for a
+  mismatch). A network change (`NWPathMonitor`: Wi-Fi, leaving home, Tailscale on/off) resets the
+  backoff and retries at once, as do foregrounding and the banner's Retry.
+- `ConnectionBanner` above the library: "Can't reach <server>. Check that it's on, or turn on
+  Tailscale when you're away.", a certificate or signed-out message, a "via Tailscale" pill and a
+  short "Back online" after recovering. Offline, downloaded games play; games that aren't downloaded
+  are unavailable (counted in the banner, "Unavailable offline" on the game page, no download
+  attempt).
+
 ## CLI and bots (OpenClaw)
 ```
 supersemu server status
 supersemu library scan | import <path> | publish <game> --to <user|group>
 supersemu users list | invite <name> | revoke <user>
 supersemu tokens create --scope library:read,library:write --name openclaw
-supersemu backups run
+supersemu backup create | list [--verify] | restore <id> --yes | config [--destination …] [--keep N]
 ```
 - OpenClaw [Verified: openclaw.ai, github.com/openclaw/openclaw] is a self-hosted agent gateway with
   a CLI and a skills/plugin system. We ship a SupersEmu skill that calls the `supersemu` CLI, so a

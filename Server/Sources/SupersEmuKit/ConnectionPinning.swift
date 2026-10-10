@@ -39,7 +39,10 @@ public final class PinnedCertificateDelegate: NSObject, URLSessionTaskDelegate, 
     public let expectedHost: String?
     private let lock = NSLock()
     private var observed: String?
+    private var rejections = 0
     public var observedSHA256: String? { lock.withLock { observed } }
+    /// Certificates refused so far; a change across a request means it failed on the pin, not the network.
+    public var rejectionCount: Int { lock.withLock { rejections } }
 
     public init(certificateSHA256: String?, trustOnFirstUse: Bool = false, expectedHost: String? = nil) {
         self.certificateSHA256 = certificateSHA256
@@ -89,6 +92,7 @@ public final class PinnedCertificateDelegate: NSObject, URLSessionTaskDelegate, 
             return
         }
         let (disposition, credential) = Self.disposition(for: challenge, pin: certificateSHA256)
+        if disposition == .cancelAuthenticationChallenge { lock.withLock { rejections += 1 } }
         completionHandler(disposition, credential)
     }
 

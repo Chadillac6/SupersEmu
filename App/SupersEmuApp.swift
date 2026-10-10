@@ -55,7 +55,7 @@ struct RootView: View {
             }
         }
         .task {
-            SaveSync.shared.provider.use { [server] in server.client() }
+            SaveSync.shared.provider.use({ [server] in server.client() }, reachable: { [server] in server.isReachable })
             await server.refresh()
         }
         .onChange(of: scenePhase) { _, phase in

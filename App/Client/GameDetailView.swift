@@ -116,7 +116,9 @@ struct GameDetailView: View {
                     } else if server.isOnline {
                         downloadButton(title: "Download (\(Self.size(item.size)))")
                     } else {
-                        Text("Connect to \(server.serverName) to download this game.").foregroundStyle(.secondary)
+                        Label("Unavailable offline. Connect to \(server.serverName) to download this game.", systemImage: "icloud.slash")
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("unavailable-offline")
                     }
                 }
             }

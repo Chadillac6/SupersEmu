@@ -78,7 +78,9 @@ final class ServerModeModel {
         }
     }
 
-    private func client(authenticated: Bool) throws -> APIClient {
+    func adminClient(timeout: TimeInterval = 4) throws -> APIClient { try client(authenticated: true, timeout: timeout) }
+
+    private func client(authenticated: Bool, timeout: TimeInterval = 4) throws -> APIClient {
         var token: String?
         if authenticated {
             let tokenURL = dataDirectory.appendingPathComponent("admin.token")
@@ -88,7 +90,7 @@ final class ServerModeModel {
             token = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return APIClient(baseURL: localURL, token: token,
-                         session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256, timeout: 4))
+                         session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256, timeout: timeout))
     }
 
     func refresh() async {
