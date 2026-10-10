@@ -175,14 +175,19 @@ struct ControlsView: View {
         let state = currentPhysical()
         let fresh = state.subtracting(captureHeld)
         captureHeld = state
-        guard controllerType != ControllerType.keyboard,
-              let input = PadInput.allCases.first(where: { fresh.contains($0) }) else { return }
+        #if os(macOS)
+        if controllerType == ControllerType.keyboard { return }  // The key monitor captures keys.
+        #endif
+        guard let input = PadInput.allCases.first(where: { fresh.contains($0) }) else { return }
         assign(input)
     }
 
     /// Held inputs on pads of the selected type, with sticks counted once pushed past 60%.
     private func currentPhysical() -> Set<PadInput> {
         var held: Set<PadInput> = []
+        #if os(iOS)
+        if controllerType == ControllerType.keyboard { held = GameInput.hardwareKeyboardPressed() }
+        #endif
         for controller in hub.controllers where controller.type == controllerType {
             let state = hub.state(of: controller, console: system)
             held.formUnion(state.pressed)

@@ -55,7 +55,8 @@ struct PadState: Equatable, Sendable {
 
     /// 0...1: 1 or 0 for buttons, the deflection toward that direction for sticks.
     func value(of input: PadInput) -> Float {
-        switch input {
+        if input != .unbound, pressed.contains(input) { return 1 }
+        return switch input {
         case .leftStickUp: max(0, leftStick.y)
         case .leftStickDown: max(0, -leftStick.y)
         case .leftStickLeft: max(0, -leftStick.x)
@@ -64,8 +65,7 @@ struct PadState: Equatable, Sendable {
         case .rightStickDown: max(0, -rightStick.y)
         case .rightStickLeft: max(0, -rightStick.x)
         case .rightStickRight: max(0, rightStick.x)
-        case .unbound: 0
-        default: pressed.contains(input) ? 1 : 0
+        default: 0
         }
     }
 

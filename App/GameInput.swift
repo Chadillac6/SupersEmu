@@ -83,9 +83,11 @@ final class GameInput {
     private var keyboardState: PadState { PadState(pressed: keyboardPressed) }
     #else
     // On macOS the AppKit monitor handles keyboards; GCKeyboard keeps keys stuck when they're released in another app.
-    private var keyboardState: PadState {
-        var state = PadState()
-        guard let keyboard = GCKeyboard.coalesced?.keyboardInput else { return state }
+    private var keyboardState: PadState { PadState(pressed: Self.hardwareKeyboardPressed()) }
+
+    static func hardwareKeyboardPressed() -> Set<PadInput> {
+        var pressed: Set<PadInput> = []
+        guard let keyboard = GCKeyboard.coalesced?.keyboardInput else { return pressed }
         let mapping: [(GCKeyCode, PadInput)] = [
             (.upArrow, .dpadUp), (.downArrow, .dpadDown), (.leftArrow, .dpadLeft), (.rightArrow, .dpadRight),
             (.keyZ, .south), (.keyX, .east), (.keyA, .west), (.keyS, .north),
@@ -94,9 +96,9 @@ final class GameInput {
             (.returnOrEnter, .start), (.rightShift, .select), (.tab, .select),
         ]
         for (key, input) in mapping where keyboard.button(forKeyCode: key)?.isPressed == true {
-            state.pressed.insert(input)
+            pressed.insert(input)
         }
-        return state
+        return pressed
     }
     #endif
 
@@ -120,10 +122,13 @@ final class GameInput {
     /// Every physical control held right now, by position; drives menus, hotkeys and remapping capture.
     func physicalState() -> PadState {
         var state = keyboardState
-        for controller in hub.controllers {
-            state.merge(hub.state(of: controller, console: layout.system))
-        }
+        sourceStates().dropFirst().forEach { state.merge($0) }
         return state
+    }
+
+    /// The keyboard first, then each controller, kept apart so chords only count when one player holds them.
+    func sourceStates() -> [PadState] {
+        [keyboardState] + hub.controllers.map { hub.state(of: $0, console: layout.system) }
     }
 
     private func bindings(_ controllerType: String) -> [String: PadInput] {

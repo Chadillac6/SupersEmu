@@ -88,9 +88,10 @@ struct TouchControls: View {
             }
             .frame(width: 118)
             Spacer(minLength: 0)
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 HStack(spacing: 6) { pill("L"); pill("R") }
                 pill("Start")
+                dpad(size: 26)
             }
             Spacer(minLength: 0)
             VStack(spacing: 4) {
@@ -105,11 +106,13 @@ struct TouchControls: View {
         }
     }
 
-    private var dpad: some View {
+    private var dpad: some View { dpad(size: 44) }
+
+    private func dpad(size: CGFloat) -> some View {
         VStack(spacing: 2) {
-            pad("Up", label: "▲")
-            HStack(spacing: 30) { pad("Left", label: "◀"); pad("Right", label: "▶") }
-            pad("Down", label: "▼")
+            pad("Up", label: "▲", size: size)
+            HStack(spacing: size * 0.68) { pad("Left", label: "◀", size: size); pad("Right", label: "▶", size: size) }
+            pad("Down", label: "▼", size: size)
         }
     }
 

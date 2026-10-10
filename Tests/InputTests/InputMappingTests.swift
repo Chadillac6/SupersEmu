@@ -54,6 +54,11 @@ final class InputMappingTests: XCTestCase {
         XCTAssertEqual(output.rightStick, SIMD2(0, 32767))
     }
 
+    func testDigitalStickPressesDriveN64CButtons() {
+        let output = InputMapper.output(for: PadState(pressed: [.rightStickUp, .rightStickLeft]), layout: n64, bindings: n64.defaults)
+        XCTAssertEqual(output.rightStick, SIMD2(-32767, -32767))
+    }
+
     func testDigitalConsolesReadTheLeftStickAsDpad() {
         let output = InputMapper.output(for: PadState(leftStick: [-0.9, 0.2]), layout: snes, bindings: snes.defaults)
         XCTAssertEqual(output.buttons, RetroButton.left.mask)

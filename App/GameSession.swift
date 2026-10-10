@@ -46,6 +46,8 @@ final class GameSession {
     /// The chord opens the picker only after it has been released since it last fired.
     @ObservationIgnored private var chordArmed = true
     @ObservationIgnored private var hotkeyHeldSince: ContinuousClock.Instant?
+    /// False after the menu opens until the hotkey is released, so a still-held hotkey doesn't reopen it.
+    @ObservationIgnored private var hotkeyArmed = true
     @ObservationIgnored private var overlayTimer: Timer?
     @ObservationIgnored private var overlayHeld: Set<PadInput> = []
     @ObservationIgnored private var controllerObservers: [NSObjectProtocol] = []
@@ -323,12 +325,15 @@ final class GameSession {
 
     /// Select+Start held for 1 s, or Home/Guide held, on any controller or the keyboard (Tab+Return).
     private func menuHotkeyHeld() -> Bool {
-        let pressed = input.physicalState().pressed
-        let chord = pressed.isSuperset(of: [.select, .start])
-        guard chord || pressed.contains(.home) else {
+        let sources = input.sourceStates().map(\.pressed)
+        let chord = sources.contains { $0.isSuperset(of: [.select, .start]) }
+        let home = sources.contains { $0.contains(.home) }
+        guard chord || home else {
             hotkeyHeldSince = nil
+            hotkeyArmed = true
             return false
         }
+        guard hotkeyArmed else { return false }
         let since = hotkeyHeldSince ?? .now
         hotkeyHeldSince = since
         return ContinuousClock.now - since >= (chord ? Self.menuChordDuration : Self.homeLongPress)
@@ -338,6 +343,7 @@ final class GameSession {
         guard hasStarted, !isMenuOpen, !isChoosingDisc, pendingConflict == nil else { return }
         pause()
         hotkeyHeldSince = nil
+        hotkeyArmed = false
         menuSelection = 0
         isMenuOpen = true
         startOverlayPolling()
@@ -347,7 +353,7 @@ final class GameSession {
         guard isMenuOpen else { return }
         isMenuOpen = false
         isShowingControls = false
-        stopOverlayPolling()
+        if disconnectedController == nil { stopOverlayPolling() }
         resume()
     }
 
@@ -504,6 +510,7 @@ final class GameSession {
         input.releaseAll()
         #endif
         resume()
+        if disconnectedController != nil, overlayTimer == nil { startOverlayPolling() }
     }
 
     private func insert(_ disc: Int) {
