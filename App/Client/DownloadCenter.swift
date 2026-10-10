@@ -108,6 +108,8 @@ final class DownloadCenter {
 
     /// Downloads belong to the account that made them; called when this device disconnects.
     func removeAll() {
+        // Also invalidates pending restoreIfIntact work for games with no active task.
+        for id in Set(generations.keys).union(downloaded.keys) { generations[id, default: 0] += 1 }
         for (id, task) in tasks {
             generations[id, default: 0] += 1
             retire(task, for: id)
@@ -161,6 +163,7 @@ final class DownloadCenter {
         Task { [weak self] in
             let game = await Task.detached(priority: .userInitiated) { cache.cachedGame(gameID) }.value
             guard let self, let game, self.generations[gameID] == generation, self.tasks[gameID] == nil else { return }
+            self.states[gameID] = nil
             self.setDownloaded(gameID, game)
         }
     }
