@@ -1,8 +1,9 @@
 # Controllers
 
 ## Requirement (Chad, Oct 2026)
-Work with **every 8BitDo controller** and with **controllers plugged in by cable**, with no setup
-in the common case.
+Work with **every 8BitDo controller** and with **USB controllers plugged in by cable**, including
+retro-style pads such as Genesis 6-button and N64 controllers, with no setup in the common case.
+TV-style remotes are out of scope.
 
 ## Input paths
 | Path | Covers | Platforms | Status |
@@ -14,6 +15,19 @@ in the common case.
 
 [Inference] iOS/iPadOS has no public API for generic HID gamepads, so on iPhone/iPad a controller
 must identify as one of the Apple-supported types. Confirm on Chad's iPad before promising it.
+
+## Retro-style USB pads (Genesis, N64)
+- Most of these are generic HID pads. On **macOS** the `IOHIDManager` fallback reads them, and a
+  vendor/product-ID table picks a preset layout.
+- Presets:
+  - **Genesis 6-button:** A/B/C, X/Y/Z, Start, Mode.
+  - **N64:** A, B, Z trigger, L/R, Start, four C buttons, analog stick.
+
+  Each preset maps every button to its matching console button.
+- **iPhone/iPad:** works when the pad (or its adapter, e.g. 8BitDo retro receivers) identifies as an
+  Apple-supported type. Generic pads need either an adapter or an iPadOS DriverKit HID driver.
+  [Inference] DriverKit runs only on M-series iPads and needs extra Apple entitlements, so it's a
+  later option and depends on which controllers Chad actually owns.
 
 ## 8BitDo
 8BitDo controllers have several modes, picked with a button combination at power-on or a switch.
