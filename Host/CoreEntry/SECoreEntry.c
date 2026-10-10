@@ -15,14 +15,26 @@ bool SE_CORE_LOAD_GAME(const struct retro_game_info *game);
 #define SE_CORE_LOAD_GAME retro_load_game
 #endif
 
+#ifdef SE_CORE_DEINIT
+void SE_CORE_DEINIT(void);
+#else
+#define SE_CORE_DEINIT retro_deinit
+#endif
+
+#ifdef SE_CORE_UNSERIALIZE
+bool SE_CORE_UNSERIALIZE(const void *data, size_t size);
+#else
+#define SE_CORE_UNSERIALIZE retro_unserialize
+#endif
+
 const SECoreAPI *SE_ENTRY(SE_CORE_ID)(void) {
     static const SECoreAPI api = {
         SE_STR(SE_CORE_ID), SE_STR(SE_CORE_REVISION),
         retro_set_environment, retro_set_video_refresh, retro_set_audio_sample,
         retro_set_audio_sample_batch, retro_set_input_poll, retro_set_input_state,
-        retro_init, retro_deinit, retro_get_system_info, retro_get_system_av_info,
+        retro_init, SE_CORE_DEINIT, retro_get_system_info, retro_get_system_av_info,
         retro_set_controller_port_device, retro_run, retro_serialize_size, retro_serialize,
-        retro_unserialize, SE_CORE_LOAD_GAME, retro_unload_game, retro_get_memory_data,
+        SE_CORE_UNSERIALIZE, SE_CORE_LOAD_GAME, retro_unload_game, retro_get_memory_data,
         retro_get_memory_size,
     };
     return &api;

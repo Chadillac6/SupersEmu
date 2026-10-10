@@ -34,6 +34,8 @@ public enum SystemDetector {
         0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
     ]
 
+    static let n64Magics: Set<[UInt8]> = [[0x80, 0x37, 0x12, 0x40], [0x37, 0x80, 0x40, 0x12], [0x40, 0x12, 0x37, 0x80]]
+
     public static func isIgnorable(_ filename: String) -> Bool {
         filename == ".DS_Store" || filename.hasPrefix("._") || filename == "Thumbs.db" || filename == "desktop.ini"
             || junkExtensions.contains((filename as NSString).pathExtension.lowercased())
@@ -72,6 +74,12 @@ public enum SystemDetector {
             case 0x80: return .system(ext == "gbc" ? .gbc : .gb)
             default: return .system(.gb)
             }
+        case "z64", "n64", "v64":
+            // The first word is 0x80371240 in big-endian .z64; .v64 swaps each 16-bit pair, .n64 each 32-bit word.
+            guard bytes.count >= 0x40, n64Magics.contains(Array(bytes[0..<4])) else {
+                return .needsReview("No Nintendo 64 header (0x80371240 in any byte order)")
+            }
+            return .system(.n64)
         case "gba":
             guard bytes.count >= 0xC0, bytes[0xB2] == 0x96 else {
                 return .needsReview("No Game Boy Advance header (fixed byte 0x96 at 0xB2 missing)")
