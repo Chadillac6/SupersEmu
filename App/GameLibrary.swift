@@ -60,12 +60,12 @@ final class GameLibrary {
 
     init() {
         AppPaths.ensureDirectories()
+        refresh()
         if let dir = ProcessInfo.processInfo.environment["SUPERSEMU_IMPORT_DIR"] {
             let urls = (try? FileManager.default.contentsOfDirectory(
                 at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil)) ?? []
             importFiles(urls)
         }
-        refresh()
     }
 
     func refresh() {

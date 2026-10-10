@@ -80,32 +80,33 @@ struct TouchControls: View {
     @State private var pressed: SEJoypadButtons = []
 
     var body: some View {
-        HStack(alignment: .center) {
-            VStack(spacing: 4) {
+        // Fits a 375-pt-wide portrait iPhone: 2 x 118 (pads) + 106 (pills) + 20 (padding).
+        HStack(alignment: .center, spacing: 0) {
+            VStack(spacing: 2) {
                 pad("▲", .up)
-                HStack(spacing: 44) { pad("◀", .left); pad("▶", .right) }
+                HStack(spacing: 30) { pad("◀", .left); pad("▶", .right) }
                 pad("▼", .down)
             }
-            Spacer()
+            Spacer(minLength: 0)
             VStack(spacing: 10) {
-                HStack { pill("L", .l); pill("R", .r) }
-                HStack { pill("Select", .select); pill("Start", .start) }
+                HStack(spacing: 6) { pill("L", .l); pill("R", .r) }
+                HStack(spacing: 6) { pill("Select", .select); pill("Start", .start) }
             }
-            Spacer()
-            VStack(spacing: 4) {
+            Spacer(minLength: 0)
+            VStack(spacing: 2) {
                 pad("X", .x)
-                HStack(spacing: 44) { pad("Y", .y); pad("A", .a) }
+                HStack(spacing: 30) { pad("Y", .y); pad("A", .a) }
                 pad("B", .b)
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 10)
         .padding(.vertical, 12)
     }
 
     private func pad(_ label: String, _ button: SEJoypadButtons) -> some View {
         Circle()
             .fill(.white.opacity(pressed.contains(button) ? 0.45 : 0.18))
-            .frame(width: 52, height: 52)
+            .frame(width: 44, height: 44)
             .overlay(Text(label).font(.headline))
             .gesture(press(button))
             .accessibilityIdentifier("pad-\(label)")
@@ -114,7 +115,7 @@ struct TouchControls: View {
     private func pill(_ label: String, _ button: SEJoypadButtons) -> some View {
         Capsule()
             .fill(.white.opacity(pressed.contains(button) ? 0.45 : 0.18))
-            .frame(width: 64, height: 28)
+            .frame(width: 50, height: 28)
             .overlay(Text(label).font(.caption.bold()))
             .gesture(press(button))
             .accessibilityIdentifier("pad-\(label)")

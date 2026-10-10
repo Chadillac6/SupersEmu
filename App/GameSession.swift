@@ -14,9 +14,9 @@ final class GameSession {
     @ObservationIgnored weak var displayLayer: CALayer?
     @ObservationIgnored private var host: SELibretroHost?
     @ObservationIgnored private var timer: Timer?
-    @ObservationIgnored private var framesSinceAutosave = 0
+    @ObservationIgnored private var lastAutosave = ContinuousClock.now
 
-    private static let autosaveIntervalSeconds = 30.0
+    private static let autosaveInterval = Duration.seconds(30)
 
     init(game: Game) {
         self.game = game
@@ -37,10 +37,12 @@ final class GameSession {
                     try host.loadState(from: autoState)
                     status = "Resumed where you left off"
                 } catch {
-                    status = "Couldn't resume; started fresh"
+                    preserveIncompatibleState(at: autoState)
+                    status = "Couldn't resume; old save kept, started fresh"
                 }
             }
             host.audioEnabled = true
+            lastAutosave = .now
             resume()
         } catch {
             errorMessage = error.localizedDescription
@@ -68,22 +70,28 @@ final class GameSession {
         if let image = host.copyFrameImage() {
             displayLayer?.contents = image
         }
-        framesSinceAutosave += 1
-        if Double(framesSinceAutosave) >= host.framesPerSecond * Self.autosaveIntervalSeconds {
+        if ContinuousClock.now - lastAutosave >= Self.autosaveInterval {
             autosave()
         }
     }
 
     func autosave() {
-        framesSinceAutosave = 0
+        lastAutosave = .now
         guard let host else { return }
+        host.flushSaveRAM()
         do {
             try host.saveState(to: AppPaths.autoState(for: game.id))
-            host.flushSaveRAM()
             status = "Auto-saved on this device"
         } catch {
             status = "Auto-save failed"
         }
+    }
+
+    /// Moves an auto state the current core can't load aside so later autosaves never overwrite it.
+    private func preserveIncompatibleState(at url: URL) {
+        let stamp = Int(Date().timeIntervalSince1970)
+        let destination = url.deletingLastPathComponent().appendingPathComponent("auto.incompatible-\(stamp).state")
+        try? FileManager.default.moveItem(at: url, to: destination)
     }
 
     func saveManualState() {
