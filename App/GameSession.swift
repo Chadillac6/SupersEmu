@@ -184,7 +184,7 @@ final class GameSession {
             switch result {
             case .synced: text = "\(saved) · synced"
             case .conflict: text = "\(saved) · newer save on another device"
-            case .failed, .waitingToUpload, .uploading: text = "\(saved) · will sync when your server is reachable"
+            case .failed, .waitingToUpload, .uploading: text = "\(saved) · will sync later"
             case .savedLocally: return
             }
             if let self, self.status.hasPrefix(saved) { self.status = text }

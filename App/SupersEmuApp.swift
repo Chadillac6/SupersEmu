@@ -52,8 +52,10 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await server.refresh() } }
         }
-        .onChange(of: server.isOnline) { _, online in
-            if online { Task { await SaveSync.shared.engine.flush() } }
+        // Every successful refresh (including a LAN -> Tailscale switch) retries queued saves; overlapping
+        // flushes coalesce inside the engine.
+        .onChange(of: server.lastRefreshed) { _, refreshed in
+            if refreshed != nil { Task { await SaveSync.shared.engine.flush() } }
         }
     }
 }

@@ -17,7 +17,8 @@ func registerSaveRoutes(_ group: RouterGroup<SERequestContext>, store: ServerSto
         return SaveListResponse(revisions: try saves.list(userID: auth.user.id, gameID: gameID))
     }
 
-    // Query: slot, parent, core, coreVersion, optional sha256, optional branch=1 (keep as a branch, never the head).
+    // Query: slot, parent, core, coreVersion, optional sha256, optional branch=1 (keep as a branch, never the head),
+    // optional ifHead=1 (keep as a branch copy if parent is no longer the head).
     // Body: raw save bytes.
     group.put("saves/:game/:kind") { request, context -> SaveUploadResponse in
         let auth = try context.caller()
@@ -37,7 +38,8 @@ func registerSaveRoutes(_ group: RouterGroup<SERequestContext>, store: ServerSto
         let response = try saves.upload(userID: auth.user.id, .init(
             gameID: gameID, kind: kind, slot: value("slot") ?? "", parentID: value("parent"),
             coreID: value("core") ?? "", coreVersion: value("coreVersion") ?? "", deviceID: deviceID,
-            expectedSHA256: value("sha256"), keepAsBranch: value("branch") == "1", data: Data(body.readableBytesView)))
+            expectedSHA256: value("sha256"), keepAsBranch: value("branch") == "1",
+            onlyIfHead: value("ifHead") == "1", data: Data(body.readableBytesView)))
         try store.audit(auth, action: "save.upload",
                         detail: "\(gameID) \(kind.rawValue)/\(response.revision.slot) \(response.revision.id)\(response.branched ? " branched" : "")")
         return response

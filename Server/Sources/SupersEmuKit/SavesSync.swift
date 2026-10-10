@@ -247,11 +247,22 @@ public actor SaveSyncEngine {
         do {
             let response = try await client.uploadSave(gameID: item.line.gameID, kind: item.line.kind, slot: item.line.slot,
                                                        parentID: parent, coreID: item.core.id, coreVersion: item.core.version,
-                                                       keepAsBranch: item.detached, data: data)
+                                                       keepAsBranch: item.detached, onlyIfHead: !item.detached, data: data)
             guard response.revision.sha256 == item.sha256 else {
                 return markFailed(item.id, "Server stored different bytes; will retry")
             }
             var line = state.lines[key] ?? LineState()
+            if !item.detached, response.revision.isBranchCopy == true {
+                // Another device moved this line while we were offline: our copy is kept as a branch copy and the
+                // player chooses on next launch. The base stays put, so later saves also land as branch copies.
+                let heads = (try? await client.saves(gameID: item.line.gameID).revisions) ?? []
+                if let head = heads.last(where: { $0.kind == item.line.kind && $0.slot == item.line.slot && $0.isHead }) {
+                    line.conflict = head
+                }
+                state.lines[key] = line
+                remove(item.id)
+                return .done
+            }
             if !item.detached {
                 line.baseRevisionID = response.revision.id
                 line.baseSHA256 = item.sha256
@@ -469,17 +480,15 @@ public enum SaveSyncError: Error, Equatable, CustomStringConvertible {
 }
 
 extension APIClient {
-    /// `uploadSave` plus `branch=1`: the server keeps the copy as a branch that never becomes the line head.
-    /// Additive to the Wave 0 contract (save sync track).
+    /// `uploadSave` plus `branch=1` (keep only as a branch copy, never the head) or `ifHead=1` (become the head
+    /// only if `parentID` still is; otherwise kept as a branch copy). Additive to the Wave 0 contract (save sync track).
     public func uploadSave(gameID: String, kind: SaveKind, slot: String, parentID: String?, coreID: String, coreVersion: String,
-                           keepAsBranch: Bool, data: Data) async throws -> SaveUploadResponse {
-        guard keepAsBranch else {
-            return try await uploadSave(gameID: gameID, kind: kind, slot: slot, parentID: parentID, coreID: coreID,
-                                        coreVersion: coreVersion, data: data)
-        }
+                           keepAsBranch: Bool, onlyIfHead: Bool = false, data: Data) async throws -> SaveUploadResponse {
         var query = URLComponents()
         query.queryItems = [.init(name: "slot", value: slot), .init(name: "core", value: coreID),
-                            .init(name: "coreVersion", value: coreVersion), .init(name: "branch", value: "1")]
+                            .init(name: "coreVersion", value: coreVersion)]
+        if keepAsBranch { query.queryItems?.append(.init(name: "branch", value: "1")) }
+        if onlyIfHead { query.queryItems?.append(.init(name: "ifHead", value: "1")) }
         if let parentID { query.queryItems?.append(.init(name: "parent", value: parentID)) }
         let body = try await raw("PUT", "/v1/saves/\(gameID)/\(kind.rawValue)?\(query.percentEncodedQuery ?? "")", body: data,
                                  contentType: "application/octet-stream")

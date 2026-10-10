@@ -39,7 +39,9 @@ Drive. Revisions, branches and statuses above are unchanged.
   response says `branched=true`. Re-sending the same bytes on the same parent returns the existing revision
   (safe retries). Limit 64 MB (413); optional `sha256` must match (400); `core`/`coreVersion` at most 128
   chars. `native`/`auto` have no slot. `branch=1` keeps the upload only as a branch copy: listed and
-  downloadable, but never the line head.
+  downloadable, but never the line head. `ifHead=1` (what the app sends for normal uploads) does the same
+  when `parent` is no longer the head, so an offline device's stale upload never replaces a newer save
+  from another device; the device asks the player on its next launch.
 - `GET /v1/saves/{game}/revisions/{rev}`: the bytes, re-hashed before serving (corrupt files are a 500,
   never served).
 - Retention: the last 10 `auto` revisions per game are kept; older ones are deleted unless they're a line

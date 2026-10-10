@@ -16,19 +16,26 @@ struct SaveConflictPrompt: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            HStack(spacing: 12) {
-                Button("Keep This Device's") { choose(.keepLocal) }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("save-conflict-keep-local")
-                Button("Use Newer Save") { choose(.useRemote) }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("save-conflict-use-remote")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { buttons }
+                VStack(spacing: 8) { buttons }
             }
         }
         .padding(24)
         .frame(maxWidth: 420)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         .padding(24)
+    }
+
+    @ViewBuilder private var buttons: some View {
+        Button("Keep This Device's") { choose(.keepLocal) }
+            .buttonStyle(.bordered)
+            .fixedSize()
+            .accessibilityIdentifier("save-conflict-keep-local")
+        Button("Use Newer Save") { choose(.useRemote) }
+            .buttonStyle(.borderedProminent)
+            .fixedSize()
+            .accessibilityIdentifier("save-conflict-use-remote")
     }
 
     private var kindName: String {

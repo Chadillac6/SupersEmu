@@ -41,13 +41,17 @@ public struct SaveStore: Sendable {
         public var expectedSHA256: String?
         /// Keep this copy only as a branch: it never becomes the line head.
         public var keepAsBranch: Bool
+        /// Keep this copy as a branch copy if `parentID` is no longer the line head (`ifHead=1`), so a stale upload
+        /// never replaces another device's newer save.
+        public var onlyIfHead: Bool
         public var data: Data
 
         public init(gameID: String, kind: SaveKind, slot: String, parentID: String?, coreID: String, coreVersion: String,
-                    deviceID: String?, expectedSHA256: String? = nil, keepAsBranch: Bool = false, data: Data) {
+                    deviceID: String?, expectedSHA256: String? = nil, keepAsBranch: Bool = false, onlyIfHead: Bool = false,
+                    data: Data) {
             self.gameID = gameID; self.kind = kind; self.slot = slot; self.parentID = parentID; self.coreID = coreID
             self.coreVersion = coreVersion; self.deviceID = deviceID; self.expectedSHA256 = expectedSHA256
-            self.keepAsBranch = keepAsBranch; self.data = data
+            self.keepAsBranch = keepAsBranch; self.onlyIfHead = onlyIfHead; self.data = data
         }
     }
 
@@ -140,30 +144,32 @@ public struct SaveStore: Sendable {
                 let head = try Row.fetchOne(db, sql: "SELECT id, sha256 FROM save_revisions WHERE \(lineSQL) AND detached = 0 ORDER BY rowid DESC LIMIT 1",
                                             arguments: line)
                 let headID: String? = head?["id"]
+                let stale = headID != nil && headID != upload.parentID
+                let detached = upload.keepAsBranch || (upload.onlyIfHead && stale)
 
                 // Retries after a lost response, and unchanged content on top of the head, return the existing revision.
                 if let existingID = try String.fetchOne(db, sql: """
                     SELECT id FROM save_revisions WHERE \(lineSQL) AND sha256 = ? AND parent_id IS ? AND detached = ?
                     ORDER BY rowid DESC LIMIT 1
-                    """, arguments: line + [sha, upload.parentID, upload.keepAsBranch])
-                    ?? (!upload.keepAsBranch && head?["sha256"] == sha && headID == upload.parentID ? headID : nil) {
+                    """, arguments: line + [sha, upload.parentID, detached])
+                    ?? (!detached && head?["sha256"] == sha && headID == upload.parentID ? headID : nil) {
                     let existing = try revision(db, userID: userID, gameID: upload.gameID, id: existingID)
-                    if let deviceID = upload.deviceID, !upload.keepAsBranch,
+                    if let deviceID = upload.deviceID, !detached,
                        let row = try Row.fetchOne(db, sql: "SELECT * FROM save_revisions WHERE id = ?", arguments: [existingID]) {
                         try Self.recordBase(db: db, userID: userID, deviceID: deviceID, row: row)
                     }
                     return (SaveUploadResponse(revision: existing.revision, branched: existing.branched), false, [])
                 }
 
-                let branched = upload.keepAsBranch || (headID != nil && headID != upload.parentID)
+                let branched = upload.keepAsBranch || stale
                 try db.execute(sql: """
                     INSERT INTO save_revisions (id, user_id, game_id, kind, slot, parent_id, sha256, size, core_id, core_version,
                                                 device_id, stored_path, created_at, branched, detached)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, arguments: [revisionID, userID, upload.gameID, upload.kind.rawValue, upload.slot, upload.parentID, sha,
                                      upload.data.count, upload.coreID, upload.coreVersion, upload.deviceID, relativePath, Date(), branched,
-                                     upload.keepAsBranch])
-                if let deviceID = upload.deviceID, !upload.keepAsBranch,
+                                     detached])
+                if let deviceID = upload.deviceID, !detached,
                    let row = try Row.fetchOne(db, sql: "SELECT * FROM save_revisions WHERE id = ?", arguments: [revisionID]) {
                     try Self.recordBase(db: db, userID: userID, deviceID: deviceID, row: row)
                 }
