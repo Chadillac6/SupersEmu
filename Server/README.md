@@ -7,7 +7,7 @@ Phase 1 home server for Chad's Mac mini. See `docs/specs/server.md` and `docs/ad
 | `SupersEmuKit` | Shared API models + `APIClient`. Used by the apps (iOS/macOS), the CLI and the server. No dependencies. |
 | `SupersEmuServerCore` | Hummingbird 2 router, GRDB/SQLite schema, users, device + API tokens, permission checks. |
 | `supersemu-server` | Daemon executable: `run --data-dir --port 8487`, `bootstrap --name Chad`. |
-| `supersemu` | CLI for Chad, scripts and OpenClaw: `server status` (more per track). |
+| `supersemu` | CLI for Chad, scripts and OpenClaw: `login`, `server status`, `users`, `devices`, `tokens` (more per track). See `docs/specs/cli.md` and `docs/openclaw.md`. |
 
 ```sh
 cd Server && swift test
