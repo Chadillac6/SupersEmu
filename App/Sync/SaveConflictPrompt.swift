@@ -17,8 +17,8 @@ struct SaveConflictPrompt: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { buttons }
-                VStack(spacing: 8) { buttons }
+                HStack(spacing: 12) { buttons(fill: false) }
+                VStack(spacing: 8) { buttons(fill: true) }
             }
         }
         .padding(24)
@@ -27,15 +27,22 @@ struct SaveConflictPrompt: View {
         .padding(24)
     }
 
-    @ViewBuilder private var buttons: some View {
-        Button("Keep This Device's") { choose(.keepLocal) }
+    /// Side by side only when both labels fit unwrapped; stacked, full-width buttons may wrap at large text sizes.
+    @ViewBuilder private func buttons(fill: Bool) -> some View {
+        Button { choose(.keepLocal) } label: { label("Keep This Device's", fill: fill) }
             .buttonStyle(.bordered)
-            .fixedSize()
             .accessibilityIdentifier("save-conflict-keep-local")
-        Button("Use Newer Save") { choose(.useRemote) }
+        Button { choose(.useRemote) } label: { label("Use Newer Save", fill: fill) }
             .buttonStyle(.borderedProminent)
-            .fixedSize()
             .accessibilityIdentifier("save-conflict-use-remote")
+    }
+
+    private func label(_ title: String, fill: Bool) -> some View {
+        Text(title)
+            .multilineTextAlignment(.center)
+            .lineLimit(fill ? nil : 1)
+            .fixedSize(horizontal: !fill, vertical: fill)
+            .frame(maxWidth: fill ? .infinity : nil)
     }
 
     private var kindName: String {

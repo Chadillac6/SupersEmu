@@ -33,11 +33,12 @@ final class SaveRoutesTests: XCTestCase {
     }
 
     func upload(_ client: some TestClientProtocol, token: String, kind: SaveKind = .auto, slot: String = "", parent: String? = nil,
-                game: String? = nil, core: String = "Snes9x", coreVersion: String = "1.62", body: String,
+                game: String? = nil, core: String = "Snes9x", coreVersion: String = "1.62", ifHead: Bool = false, body: String,
                 sha256: String? = nil, expect status: HTTPResponse.Status = .ok) async throws -> SaveUploadResponse? {
         var query = "slot=\(slot)&core=\(core)&coreVersion=\(coreVersion)"
         if let parent { query += "&parent=\(parent)" }
         if let sha256 { query += "&sha256=\(sha256)" }
+        if ifHead { query += "&ifHead=1" }
         return try await client.execute(uri: "/v1/saves/\(game ?? self.game)/\(kind.rawValue)?\(query)", method: .put,
                                         headers: bearer(token), body: ByteBuffer(string: body)) { response in
             XCTAssertEqual(response.status, status, String(buffer: response.body))
@@ -256,6 +257,34 @@ final class SaveRoutesTests: XCTestCase {
             _ = try await self.upload(client, token: self.mac.token, parent: head, body: "e")
             listed = try await self.list(client, token: self.iPhone.token)
             XCTAssertFalse(listed.contains { $0.id == a.id })
+        }
+    }
+
+    func testIfHeadKeepsStaleUploadsAsProtectedBranchCopiesAndRetriesStayIdempotent() async throws {
+        try await app(SaveConfiguration(autoRevisionsKept: 2)).test(.router) { client in
+            let a = try await self.upload(client, token: self.iPhone.token, ifHead: true, body: "a")!.revision
+            let b = try await self.upload(client, token: self.iPhone.token, parent: a.id, ifHead: true, body: "b")!.revision
+            XCTAssertTrue(b.isHead)
+            // A retry after a lost response finds the head it created instead of making a branch copy.
+            let retry = try await self.upload(client, token: self.iPhone.token, parent: a.id, ifHead: true, body: "b")!
+            XCTAssertEqual(retry.revision.id, b.id)
+            XCTAssertFalse(retry.revision.isBranchCopy ?? false)
+
+            // The Mac was offline on `a`: its upload is a branch copy, and the iPhone's head is untouched.
+            let stale = try await self.upload(client, token: self.mac.token, parent: a.id, ifHead: true, body: "mac-offline")!
+            XCTAssertTrue(stale.branched)
+            XCTAssertEqual(stale.revision.isBranchCopy, true)
+            var listed = try await self.list(client, token: self.iPhone.token)
+            XCTAssertEqual(listed.filter(\.isHead).map(\.id), [b.id])
+
+            // Unresolved offline progress survives later autosaves from the other device.
+            var head = b.id
+            for body in ["c", "d", "e", "f"] {
+                head = try await self.upload(client, token: self.iPhone.token, parent: head, ifHead: true, body: body)!.revision.id
+            }
+            listed = try await self.list(client, token: self.iPhone.token)
+            XCTAssertTrue(listed.contains { $0.id == stale.revision.id })
+            XCTAssertFalse(listed.contains { $0.id == b.id }, "ordinary old auto states are still pruned")
         }
     }
 

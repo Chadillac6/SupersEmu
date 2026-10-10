@@ -148,14 +148,16 @@ public struct SaveStore: Sendable {
                 let detached = upload.keepAsBranch || (upload.onlyIfHead && stale)
 
                 // Retries after a lost response, and unchanged content on top of the head, return the existing revision.
+                // An `ifHead` retry whose first attempt became the head (so now looks stale) still finds that attached revision.
                 if let existingID = try String.fetchOne(db, sql: """
-                    SELECT id FROM save_revisions WHERE \(lineSQL) AND sha256 = ? AND parent_id IS ? AND detached = ?
-                    ORDER BY rowid DESC LIMIT 1
-                    """, arguments: line + [sha, upload.parentID, detached])
+                    SELECT id FROM save_revisions WHERE \(lineSQL) AND sha256 = ? AND parent_id IS ? AND detached IN (?, ?)
+                    ORDER BY detached ASC, rowid DESC LIMIT 1
+                    """, arguments: line + [sha, upload.parentID, upload.keepAsBranch, detached])
                     ?? (!detached && head?["sha256"] == sha && headID == upload.parentID ? headID : nil) {
                     let existing = try revision(db, userID: userID, gameID: upload.gameID, id: existingID)
-                    if let deviceID = upload.deviceID, !detached,
-                       let row = try Row.fetchOne(db, sql: "SELECT * FROM save_revisions WHERE id = ?", arguments: [existingID]) {
+                    if let deviceID = upload.deviceID,
+                       let row = try Row.fetchOne(db, sql: "SELECT * FROM save_revisions WHERE id = ? AND detached = 0",
+                                                  arguments: [existingID]) {
                         try Self.recordBase(db: db, userID: userID, deviceID: deviceID, row: row)
                     }
                     return (SaveUploadResponse(revision: existing.revision, branched: existing.branched), false, [])
@@ -194,16 +196,20 @@ public struct SaveStore: Sendable {
     }
 
     /// Keeps the newest `autoRevisionsKept` auto states per game. Never removes a line head or a revision a device
-    /// last synced (its base), so ancestry stays provable for devices that were away.
+    /// last synced (its base), so ancestry stays provable for devices that were away, nor a device's newest branch copy
+    /// (offline progress it may not have resolved yet).
     private func pruneAutoRevisions(_ db: Database, userID: String, gameID: String) throws -> [String] {
         let rows = try Row.fetchAll(db, sql: """
             SELECT id, stored_path FROM save_revisions
             WHERE user_id = ? AND game_id = ? AND kind = 'auto'
               AND rowid NOT IN (SELECT MAX(rowid) FROM save_revisions WHERE user_id = ? AND game_id = ? AND kind = 'auto'
                                 AND detached = 0 GROUP BY slot)
+              AND rowid NOT IN (SELECT MAX(rowid) FROM save_revisions WHERE user_id = ? AND game_id = ? AND kind = 'auto'
+                                AND detached = 1 GROUP BY slot, device_id)
               AND id NOT IN (SELECT revision_id FROM save_device_bases WHERE user_id = ? AND game_id = ?)
             ORDER BY rowid DESC LIMIT -1 OFFSET ?
-            """, arguments: [userID, gameID, userID, gameID, userID, gameID, configuration.autoRevisionsKept - 1])
+            """, arguments: [userID, gameID, userID, gameID, userID, gameID, userID, gameID,
+                                configuration.autoRevisionsKept - 1])
         for row in rows {
             // Re-parent children onto the pruned revision's parent so every kept revision still traces back
             // through `parentID` to the bases it descends from.
