@@ -33,6 +33,11 @@ This spec is the Wave 0 contract every Milestone 2 track builds on.
 ## Host
 - `SELibretroHost` honors `retro_system_info.need_fullpath`. When it's true, the host passes only `game.path` and never reads the whole disc into memory.
 - Wave 0 (done): `need_fullpath` handling, and the `BIOSFileInfo` model in `SupersEmuKit/Models.swift`.
+- Sega CD + 32X (Wave 1, built): `segacd` runs on Genesis Plus GX (`.cue`/`.iso`/`.chd`/`.m3u` by path, BIOS
+  `bios_CD_U/E/J.bin` from the system directory; a missing BIOS or unreadable disc fails the load) and `sega32x` on
+  PicoDrive (`.32x`). `CoreRegistry` maps Sega CD by console only, since `.cue`/`.chd`/`.iso` are shared with PS1.
+  Verified with synthetic discs and a homebrew 32X ROM; real Sega CD discs and CHD images are not yet verified
+  (see `core-matrix.md`).
 - Multi-disc track: the host implements `RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE` (and `_EXT`) and exposes `diskCount`, `currentDisk` and `insertDisk(_:)` to Swift.
   The player shows "Swap disc" for games with more than one disc.
 - Save states and SRAM stay per game ID, shared across discs (for PS1, memory card 1 is per game).

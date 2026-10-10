@@ -32,6 +32,10 @@ static const CoreFixture kFixtures[] = {
     // so a ROM that polls the FM chip can diverge by a few bytes after a restore.
     {@"genesis_plus_gx", @"mega-drive-midi-interface.md", @"Genesis Plus GX", 256, 192,
      @"Genesis Plus GX does not save the YM2612 busy timer"},
+    // Restores replay the same frames, but PicoDrive's YM2612 chunk (CHUNK_FMv3) drifts by a few
+    // bytes (eg_cnt/eg_timer and per-channel FM fields) after a restore.
+    {@"picodrive", @"noudar.32x", @"PicoDrive", 320, 224,
+     @"PicoDrive's YM2612 state does not replay byte-identically"},
 };
 
 - (void)setUp {
@@ -90,7 +94,7 @@ static NSString *describeDifference(NSData *a, NSData *b) {
 }
 
 - (void)testAllCoresAreLinked {
-    NSArray *expected = @[SECoreIDSnes9x, SECoreIDGambatte, SECoreIDMGBA, SECoreIDGenesisPlusGX];
+    NSArray *expected = @[SECoreIDSnes9x, SECoreIDGambatte, SECoreIDMGBA, SECoreIDGenesisPlusGX, SECoreIDPicoDrive];
     XCTAssertEqualObjects(SELibretroHost.availableCoreIDs, expected);
 }
 
