@@ -122,17 +122,18 @@ public struct ZipArchive {
     /// Streams one entry to `destination` without holding it in memory, so disc tracks larger than
     /// `maxEntrySize` can come out of a zip. Verifies size and CRC.
     public func extract(_ entry: Entry, to destination: URL) throws {
+        let dataOffset = try validatedDataOffset(entry)
         guard FileManager.default.createFile(atPath: destination.path, contents: nil) else { throw ZipError.corrupt(entry.filename) }
         let out = try FileHandle(forWritingTo: destination)
         defer { try? out.close() }
-        try stream(entry) { try out.write(contentsOf: $0); return true }
+        try stream(entry, from: dataOffset) { try out.write(contentsOf: $0); return true }
     }
 
     /// The first `count` bytes of an entry, decompressing only as far as needed (not CRC-checked).
     public func prefix(of entry: Entry, count: Int) throws -> Data {
         var data = Data()
         guard count > 0 else { return data }
-        try stream(entry) { chunk in
+        try stream(entry, from: try validatedDataOffset(entry)) { chunk in
             data.append(chunk.prefix(count - data.count))
             return data.count < count
         }
@@ -142,12 +143,16 @@ public struct ZipArchive {
     private struct StopStreaming: Error {}
 
     /// Feeds decompressed chunks to `sink` until it returns false. A full read verifies size and CRC.
-    private func stream(_ entry: Entry, _ sink: (Data) throws -> Bool) throws {
+    /// Rejects encrypted, unsupported or corrupt entries before anything is read or written.
+    private func validatedDataOffset(_ entry: Entry) throws -> Int {
         guard !entry.isEncrypted else { throw ZipError.encrypted(entry.filename) }
         guard entry.method == 0 || entry.method == 8 else { throw ZipError.unsupportedMethod(entry.filename, entry.method) }
         let local = [UInt8](try Self.read(handle, offset: entry.localHeaderOffset, count: 30))
         guard local.count == 30, Self.u32(local, 0) == 0x0403_4B50 else { throw ZipError.corrupt(entry.filename) }
-        let dataOffset = entry.localHeaderOffset + 30 + Int(Self.u16(local, 26)) + Int(Self.u16(local, 28))
+        return entry.localHeaderOffset + 30 + Int(Self.u16(local, 26)) + Int(Self.u16(local, 28))
+    }
+
+    private func stream(_ entry: Entry, from dataOffset: Int, _ sink: (Data) throws -> Bool) throws {
         try handle.seek(toOffset: UInt64(dataOffset))
         var crc = CRC32.Running(), written = 0, remaining = entry.compressedSize
         func emit(_ data: Data) throws {

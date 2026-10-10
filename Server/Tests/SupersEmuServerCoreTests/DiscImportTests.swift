@@ -333,6 +333,21 @@ extension LibraryTests {
         XCTAssertEqual(try archive.prefix(of: archive.entries[0], count: 4 << 20), big)
     }
 
+    func testRejectedZipEntryLeavesDestinationUntouched() throws {
+        let zipSource = sources.appendingPathComponent("zipsrc", isDirectory: true)
+        try write(Data(repeating: 7, count: 100), "a.bin", in: zipSource)
+        var bytes = [UInt8](try Data(contentsOf: try zip("odd.zip", in: zipSource, files: ["a.bin"])))
+        let central = try XCTUnwrap((0..<(bytes.count - 4)).first { bytes[$0..<($0 + 4)].elementsEqual([0x50, 0x4B, 0x01, 0x02]) })
+        bytes[central + 10] = 12 // bzip2: unsupported
+        let odd = sources.appendingPathComponent("odd-patched.zip")
+        try Data(bytes).write(to: odd)
+        let existing = sources.appendingPathComponent("saved.bin")
+        try Data("keep".utf8).write(to: existing)
+        let archive = try ZipArchive(url: odd)
+        XCTAssertThrowsError(try archive.extract(archive.entries[0], to: existing))
+        XCTAssertEqual(try Data(contentsOf: existing), Data("keep".utf8))
+    }
+
     func testUnreadableCueInZipChecksTrackHeadersWithoutExtracting() async throws {
         let zipSource = sources.appendingPathComponent("zipsrc", isDirectory: true)
         try write(Data("garbage".utf8), "Game.cue", in: zipSource)
