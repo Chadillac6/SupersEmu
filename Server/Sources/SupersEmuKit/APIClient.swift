@@ -71,10 +71,13 @@ public struct APIClient: Sendable {
         guard let http = response as? HTTPURLResponse else { throw APIClientError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? SupersEmuJSON.decoder().decode(APIErrorBody.self, from: data))?.error
+                ?? (try? SupersEmuJSON.decoder().decode(HummingbirdErrorBody.self, from: data))?.error.message
             throw APIClientError.http(status: http.statusCode, message: message)
         }
         return data
     }
 
     private struct Empty: Encodable {}
+    /// Hummingbird's `HTTPError` body: `{"error":{"message":"..."}}`.
+    private struct HummingbirdErrorBody: Decodable { struct Inner: Decodable { var message: String }; var error: Inner }
 }

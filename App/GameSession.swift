@@ -48,6 +48,7 @@ final class GameSession {
         let host: SELibretroHost
         do {
             host = try SELibretroHost(
+                coreID: CoreRegistry.coreID(for: game.fileURL, console: game.console),
                 romURL: game.fileURL,
                 saveRAMURL: AppPaths.saveRAM(for: game.id),
                 systemDirectory: AppPaths.system)
@@ -58,7 +59,7 @@ final class GameSession {
             return
         }
         self.host = host
-        let core = SaveCore(id: host.coreName, version: host.coreVersion)
+        let core = SaveCore(id: host.coreID, version: host.coreVersion)
         self.core = core
         let pulled = await pull([SaveSync.autoFile(for: game.id, core: core), SaveSync.manualFile(for: game.id, core: core)])
         isSyncing = false
