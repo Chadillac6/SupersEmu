@@ -383,6 +383,114 @@ targets:
           - "$(SRCROOT)/Vendor/cores/picodrive/pico/sound"
           - "$(SRCROOT)/Host/CoreEntry"
 
+  # PlayStation. Software renderer only (no HAVE_HW / OpenGL / Vulkan) and no Lightrec dynarec
+  # (HAVE_LIGHTREC unset): iOS forbids JIT. Source list = upstream Makefile.common for
+  # `make platform=osx HAVE_LIGHTREC=0` (CHD, PBP, threaded CD reads).
+  BeetlePSXCore:
+    type: library.static
+    platform: [iOS, macOS]
+    sources:
+      - path: Host/CoreEntry/SECoreEntry.c
+        compilerFlags: ["-DSE_CORE_ID=beetle_psx", "-DSE_CORE_REVISION=10e4b0c"]
+      - path: Vendor/cores/beetle_psx
+        includes:
+          - "input.c"
+          - "input_compatibility.c"
+          - "libretro-common/compat/compat_posix_string.c"
+          - "libretro-common/compat/compat_strcasestr.c"
+          - "libretro-common/compat/compat_strl.c"
+          - "libretro-common/compat/fopen_utf8.c"
+          - "libretro-common/encodings/encoding_crc32.c"
+          - "libretro-common/encodings/encoding_deflate.c"
+          - "libretro-common/encodings/encoding_huffman.c"
+          - "libretro-common/encodings/encoding_rzstd.c"
+          - "libretro-common/encodings/encoding_utf.c"
+          - "libretro-common/features/features_cpu.c"
+          - "libretro-common/file/file_path.c"
+          - "libretro-common/file/file_path_io.c"
+          - "libretro-common/file/retro_dirent.c"
+          - "libretro-common/formats/7z/r7z_lzma.c"
+          - "libretro-common/formats/chd/rchd.c"
+          - "libretro-common/formats/data_transfer.c"
+          - "libretro-common/formats/flac/rflac.c"
+          - "libretro-common/formats/mp3/rmp3.c"
+          - "libretro-common/formats/mpeg1/rmpeg1_ps.c"
+          - "libretro-common/formats/mpeg1/rmpeg1_video.c"
+          - "libretro-common/formats/vorbis/rvorbis.c"
+          - "libretro-common/hash/lrc_hash.c"
+          - "libretro-common/lists/dir_list.c"
+          - "libretro-common/lists/string_list.c"
+          - "libretro-common/memmap/memalign.c"
+          - "libretro-common/memmap/memmap.c"
+          - "libretro-common/queues/retro_spsc.c"
+          - "libretro-common/queues/retro_waitable_spsc.c"
+          - "libretro-common/rthreads/retro_eventcount.c"
+          - "libretro-common/rthreads/rthreads.c"
+          - "libretro-common/streams/file_stream.c"
+          - "libretro-common/streams/file_stream_transforms.c"
+          - "libretro-common/streams/trans_stream_rzstd.c"
+          - "libretro-common/string/rstrtod.c"
+          - "libretro-common/string/stdstring.c"
+          - "libretro-common/time/rtime.c"
+          - "libretro-common/vfs/vfs_hybrid.c"
+          - "libretro-common/vfs/vfs_implementation.c"
+          - "libretro.c"
+          - "libretro_game_database.c"
+          - "mc_async.c"
+          - "mednafen/cdrom/CDAccess.c"
+          - "mednafen/cdrom/CDAccess_CCD.c"
+          - "mednafen/cdrom/CDAccess_CHD.c"
+          - "mednafen/cdrom/CDAccess_Image.c"
+          - "mednafen/cdrom/CDAccess_PBP.c"
+          - "mednafen/cdrom/CDUtility.c"
+          - "mednafen/cdrom/audioreader.c"
+          - "mednafen/cdrom/cdaccess_track.c"
+          - "mednafen/cdrom/cdromif.c"
+          - "mednafen/cdrom/edc_crc32.c"
+          - "mednafen/cdrom/galois.c"
+          - "mednafen/cdrom/l-ec.c"
+          - "mednafen/cdrom/lec.c"
+          - "mednafen/cdrom/recover-raw.c"
+          - "mednafen/cdstream.c"
+          - "mednafen/error.c"
+          - "mednafen/general.c"
+          - "mednafen/mempatcher.c"
+          - "mednafen/psx/cdc.c"
+          - "mednafen/psx/cpu.c"
+          - "mednafen/psx/dma.c"
+          - "mednafen/psx/frontio.c"
+          - "mednafen/psx/gpu.c"
+          - "mednafen/psx/gpu_polygon_sub.c"
+          - "mednafen/psx/gte.c"
+          - "mednafen/psx/irq.c"
+          - "mednafen/psx/mdec.c"
+          - "mednafen/psx/sio.c"
+          - "mednafen/psx/spu.c"
+          - "mednafen/psx/timer.c"
+          - "mednafen/psx/vcd.c"
+          - "mednafen/settings.c"
+          - "mednafen/state.c"
+          - "mednafen/video/Deinterlacer.c"
+          - "pgxp/pgxp_cpu.c"
+          - "pgxp/pgxp_gpu.c"
+          - "pgxp/pgxp_gte.c"
+          - "pgxp/pgxp_main.c"
+          - "pgxp/pgxp_mem.c"
+          - "pgxp/pgxp_value.c"
+          - "rhi/rhi_defer.c"
+          - "rhi/rhi_intf.c"
+    settings:
+      base:
+        <<: *core_settings
+        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "HAVE_PBP", "WANT_THREADING", "HAVE_THREADS", "NEED_DEINTERLACER", "WANT_32BPP", "NEED_CD", "HAVE_CHD", "HAVE_RCHD", "HAVE_RCHD_DEFLATE", "HAVE_RCHD_LZMA", "HAVE_RCHD_FLAC", "HAVE_RCHD_ZSTD", "HAVE_RFLAC", "HAVE_RZSTD", "MEDNAFEN_VERSION_NUMERIC=9386", "STDC_HEADERS", "__STDC_LIMIT_MACROS", "__STDC_CONSTANT_MACROS", "_LOW_ACCURACY_", "_FILE_OFFSET_BITS=64"]
+        OTHER_CFLAGS: ["-fwrapv", "-fsigned-char"]
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Vendor/cores/beetle_psx"
+          - "$(SRCROOT)/Vendor/cores/beetle_psx/mednafen"
+          - "$(SRCROOT)/Vendor/cores/beetle_psx/mednafen/include"
+          - "$(SRCROOT)/Vendor/cores/beetle_psx/libretro-common/include"
+          - "$(SRCROOT)/Host/CoreEntry"
+
   SupersEmu:
     type: application
     platform: [iOS, macOS]
@@ -396,6 +504,7 @@ targets:
       - target: MGBACore_${platform}
       - target: GenesisPlusGXCore_${platform}
       - target: PicoDriveCore_${platform}
+      - target: BeetlePSXCore_${platform}
       - sdk: libz.tbd
       - package: SupersEmuServer
         product: SupersEmuKit
@@ -447,6 +556,7 @@ targets:
       - target: MGBACore_macOS
       - target: GenesisPlusGXCore_macOS
       - target: PicoDriveCore_macOS
+      - target: BeetlePSXCore_macOS
       - sdk: libz.tbd
       - sdk: AVFoundation.framework
       - sdk: CoreGraphics.framework

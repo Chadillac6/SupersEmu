@@ -79,6 +79,7 @@ const CoreEntry kCores[] = {
     {"gambatte", se_core_gambatte},
     {"mgba", se_core_mgba},
     {"genesis_plus_gx", se_core_genesis_plus_gx},
+    {"beetle_psx", se_core_beetle_psx},
     {"picodrive", se_core_picodrive},
 };
 
@@ -228,6 +229,7 @@ NSString *const SECoreIDSnes9x = @"snes9x";
 NSString *const SECoreIDGambatte = @"gambatte";
 NSString *const SECoreIDMGBA = @"mgba";
 NSString *const SECoreIDGenesisPlusGX = @"genesis_plus_gx";
+NSString *const SECoreIDBeetlePSX = @"beetle_psx";
 NSString *const SECoreIDPicoDrive = @"picodrive";
 
 static __weak SELibretroHost *gActiveHost;
@@ -274,8 +276,16 @@ static __weak SELibretroHost *gActiveHost;
     self = [super init];
     if (!self) return nil;
 
-    NSData *romData = [NSData dataWithContentsOfURL:romURL options:NSDataReadingMappedIfSafe error:error];
-    if (!romData) return nil;
+    // Disc cores (need_fullpath) open the image themselves: don't read or map a multi-GB disc.
+    retro_system_info preflight = {};
+    core->get_system_info(&preflight);
+    NSData *romData = nil;
+    if (preflight.need_fullpath) {
+        if (![romURL checkResourceIsReachableAndReturnError:error]) return nil;
+    } else {
+        romData = [NSData dataWithContentsOfURL:romURL options:NSDataReadingMappedIfSafe error:error];
+        if (!romData) return nil;
+    }
 
     NSURL *saveDirectory = saveRAMURL.URLByDeletingLastPathComponent;
     NSFileManager *fm = NSFileManager.defaultManager;
@@ -311,8 +321,7 @@ static __weak SELibretroHost *gActiveHost;
 
     retro_game_info game = {};
     game.path = romURL.fileSystemRepresentation;
-    // Disc cores (need_fullpath) open the image themselves; don't hand them hundreds of MB in memory.
-    if (!info.need_fullpath) {
+    if (romData) {
         game.data = romData.bytes;
         game.size = romData.length;
     }

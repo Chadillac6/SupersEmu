@@ -15,11 +15,17 @@ enum CoreRegistry {
         Core(id: SECoreIDGambatte, systems: ["gb", "gbc"], extensions: ["gb", "gbc", "dmg"]),
         Core(id: SECoreIDMGBA, systems: ["gba"], extensions: ["gba"]),
         Core(id: SECoreIDGenesisPlusGX, systems: ["genesis"], extensions: ["md", "gen", "smd", "bin", "mdx"]),
+        // Disc games: the host passes the path (need_fullpath); a .cue's tracks sit beside it.
+        Core(id: SECoreIDBeetlePSX, systems: ["psx"], extensions: ["cue", "chd", "m3u", "pbp"]),
         // Sega CD discs: `.cue`/`.chd`/`.iso` aren't claimed by extension (PS1 uses them too), so the
         // console decides. Needs bios_CD_U/E/J.bin in the system directory.
         Core(id: SECoreIDGenesisPlusGX, systems: ["segacd"], extensions: []),
         Core(id: SECoreIDPicoDrive, systems: ["sega32x"], extensions: ["32x"]),
     ]
+
+    /// Sheets that reference other files (tracks, discs). Copying one alone breaks the game, so
+    /// these come in through the server importer, which groups the referenced files.
+    static let multiFileExtensions: Set<String> = ["cue", "m3u"]
 
     /// Every ROM extension some linked core can run (for library import filters).
     static let supportedExtensions: Set<String> = cores.reduce(into: []) { $0.formUnion($1.extensions) }

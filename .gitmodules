@@ -10,6 +10,9 @@
 [submodule "Vendor/cores/genesis_plus_gx"]
 	path = Vendor/cores/genesis_plus_gx
 	url = https://github.com/libretro/Genesis-Plus-GX.git
+[submodule "Vendor/cores/beetle_psx"]
+	path = Vendor/cores/beetle_psx
+	url = https://github.com/libretro/beetle-psx-libretro.git
 [submodule "Vendor/cores/picodrive"]
 	path = Vendor/cores/picodrive
 	url = https://github.com/libretro/picodrive.git
