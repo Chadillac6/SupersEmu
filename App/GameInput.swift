@@ -3,19 +3,28 @@ import GameController
 import AppKit
 #endif
 
-/// Merges on-screen touch controls, MFi/Xbox/PlayStation/8BitDo controllers and the keyboard.
-/// Face buttons map by position (SNES layout: B bottom, A right, Y left, X top).
+/// Merges on-screen touch controls, GameController pads (MFi/Xbox/PlayStation/8BitDo), raw HID pads on macOS
+/// and the keyboard. Everything maps by position through the console layout and the saved remappings.
+/// Player 1 gets touch, keyboard and the first pad; further pads are players 2-4.
+@MainActor
 final class GameInput {
-    var touchButtons: SEJoypadButtons = []
+    var layout = ConsoleLayout.forSystem("snes")
+    var gameID: String?
+    /// On-screen controls; always use the console defaults.
+    var touchState = PadState()
+
+    private let hub = ControllerHub.shared
+    private let store = InputMappingStore.shared
 
     #if os(macOS)
-    /// Keyboard input on macOS, scoped to the owning player window.
-    private static let keyCodeMap: [UInt16: SEJoypadButtons] = [
-        126: .up, 125: .down, 123: .left, 124: .right,
-        6: .b, 7: .a, 0: .y, 1: .x, 12: .l, 13: .r,
+    /// Keyboard input on macOS, scoped to the owning player window. Keys sit on fixed pad positions.
+    static let keyCodeMap: [UInt16: PadInput] = [
+        126: .dpadUp, 125: .dpadDown, 123: .dpadLeft, 124: .dpadRight,
+        6: .south, 7: .east, 0: .west, 1: .north, 12: .l1, 13: .r1, 14: .l2, 15: .r2,
+        34: .rightStickUp, 40: .rightStickDown, 38: .rightStickLeft, 37: .rightStickRight,
         36: .start, 76: .start, 48: .select, 60: .select,
     ]
-    private var appKitButtons: SEJoypadButtons = []
+    private var keyboardPressed: Set<PadInput> = []
     private var keyMonitor: Any?
     private var observers: [NSObjectProtocol] = []
 
@@ -26,79 +35,106 @@ final class GameInput {
             releaseAll()
             observers.removeAll { NotificationCenter.default.removeObserver($0); return true }
             let center = NotificationCenter.default
-            observers.append(center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.releaseAll() })
+            observers.append(center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.releaseAll() }
+            })
             if let window {
-                observers.append(center.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in self?.releaseAll() })
+                observers.append(center.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.releaseAll() }
+                })
             }
         }
     }
 
     init() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
-            guard let self, let window = self.window, event.window === window,
-                  let button = Self.keyCodeMap[event.keyCode] else { return event }
-            let isCommand = event.modifierFlags.contains(.command)
-            switch event.type {
-            case .keyDown:
-                if isCommand { return event }
-                self.appKitButtons.insert(button)
-            case .keyUp:
-                self.appKitButtons.remove(button)
-                if isCommand { return event }
-            case .flagsChanged:
-                if event.modifierFlags.contains(.shift) { self.appKitButtons.insert(button) }
-                else { self.appKitButtons.remove(button) }
-                return event
-            default:
-                return event
+            MainActor.assumeIsolated {
+                guard let self, let window = self.window, event.window === window,
+                      let input = Self.keyCodeMap[event.keyCode] else { return event }
+                let isCommand = event.modifierFlags.contains(.command)
+                switch event.type {
+                case .keyDown:
+                    if isCommand { return event }
+                    self.keyboardPressed.insert(input)
+                case .keyUp:
+                    self.keyboardPressed.remove(input)
+                    if isCommand { return event }
+                case .flagsChanged:
+                    if event.modifierFlags.contains(.shift) { self.keyboardPressed.insert(input) }
+                    else { self.keyboardPressed.remove(input) }
+                    return event
+                default:
+                    return event
+                }
+                return nil
             }
-            return nil
         }
     }
 
     func releaseAll() {
-        appKitButtons = []
+        keyboardPressed = []
     }
 
     deinit {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
+
+    private var keyboardState: PadState { PadState(pressed: keyboardPressed) }
+    #else
+    // On macOS the AppKit monitor handles keyboards; GCKeyboard keeps keys stuck when they're released in another app.
+    private var keyboardState: PadState {
+        var state = PadState()
+        guard let keyboard = GCKeyboard.coalesced?.keyboardInput else { return state }
+        let mapping: [(GCKeyCode, PadInput)] = [
+            (.upArrow, .dpadUp), (.downArrow, .dpadDown), (.leftArrow, .dpadLeft), (.rightArrow, .dpadRight),
+            (.keyZ, .south), (.keyX, .east), (.keyA, .west), (.keyS, .north),
+            (.keyQ, .l1), (.keyW, .r1), (.keyE, .l2), (.keyR, .r2),
+            (.keyI, .rightStickUp), (.keyK, .rightStickDown), (.keyJ, .rightStickLeft), (.keyL, .rightStickRight),
+            (.returnOrEnter, .start), (.rightShift, .select), (.tab, .select),
+        ]
+        for (key, input) in mapping where keyboard.button(forKeyCode: key)?.isPressed == true {
+            state.pressed.insert(input)
+        }
+        return state
+    }
     #endif
 
+    /// What each port's core input should be this frame.
+    func outputs() -> [PadOutput] {
+        var ports = Array(repeating: PadOutput(), count: Int(SEInputPortCount))
+        ports[0] = merge(InputMapper.output(for: touchState, layout: layout, bindings: layout.defaults),
+                         InputMapper.output(for: keyboardState, layout: layout, bindings: bindings(ControllerType.keyboard)))
+        for (port, controller) in hub.controllers.prefix(ports.count).enumerated() {
+            let state = hub.state(of: controller, console: layout.system)
+            ports[port] = merge(ports[port], InputMapper.output(for: state, layout: layout, bindings: bindings(controller.type)))
+        }
+        return ports
+    }
+
+    /// Player 1's RetroPad buttons (disc picker and chords).
     func currentButtons() -> SEJoypadButtons {
-        var buttons = touchButtons
-        #if os(macOS)
-        buttons.formUnion(appKitButtons)
-        #endif
-        if let pad = GCController.current?.extendedGamepad {
-            let stick = pad.leftThumbstick
-            if pad.dpad.up.isPressed || stick.yAxis.value > 0.5 { buttons.insert(.up) }
-            if pad.dpad.down.isPressed || stick.yAxis.value < -0.5 { buttons.insert(.down) }
-            if pad.dpad.left.isPressed || stick.xAxis.value < -0.5 { buttons.insert(.left) }
-            if pad.dpad.right.isPressed || stick.xAxis.value > 0.5 { buttons.insert(.right) }
-            if pad.buttonA.isPressed { buttons.insert(.b) }
-            if pad.buttonB.isPressed { buttons.insert(.a) }
-            if pad.buttonX.isPressed { buttons.insert(.y) }
-            if pad.buttonY.isPressed { buttons.insert(.x) }
-            if pad.leftShoulder.isPressed { buttons.insert(.l) }
-            if pad.rightShoulder.isPressed { buttons.insert(.r) }
-            if pad.buttonMenu.isPressed { buttons.insert(.start) }
-            if pad.buttonOptions?.isPressed == true { buttons.insert(.select) }
+        SEJoypadButtons(rawValue: outputs()[0].buttons)
+    }
+
+    /// Every physical control held right now, by position; drives menus, hotkeys and remapping capture.
+    func physicalState() -> PadState {
+        var state = keyboardState
+        for controller in hub.controllers {
+            state.merge(hub.state(of: controller, console: layout.system))
         }
-        #if !os(macOS)
-        // On macOS the AppKit monitor handles keyboards; GCKeyboard keeps keys stuck when they're released in another app.
-        if let keyboard = GCKeyboard.coalesced?.keyboardInput {
-            let mapping: [(GCKeyCode, SEJoypadButtons)] = [
-                (.upArrow, .up), (.downArrow, .down), (.leftArrow, .left), (.rightArrow, .right),
-                (.keyZ, .b), (.keyX, .a), (.keyA, .y), (.keyS, .x),
-                (.keyQ, .l), (.keyW, .r), (.returnOrEnter, .start), (.rightShift, .select), (.tab, .select),
-            ]
-            for (key, button) in mapping where keyboard.button(forKeyCode: key)?.isPressed == true {
-                buttons.insert(button)
-            }
+        return state
+    }
+
+    private func bindings(_ controllerType: String) -> [String: PadInput] {
+        store.bindings(for: layout, controllerType: controllerType, gameID: gameID)
+    }
+
+    private func merge(_ a: PadOutput, _ b: PadOutput) -> PadOutput {
+        func stronger(_ x: SIMD2<Int16>, _ y: SIMD2<Int16>) -> SIMD2<Int16> {
+            abs(Int(x.x)) + abs(Int(x.y)) >= abs(Int(y.x)) + abs(Int(y.y)) ? x : y
         }
-        #endif
-        return buttons
+        return PadOutput(buttons: a.buttons | b.buttons, leftStick: stronger(a.leftStick, b.leftStick),
+                         rightStick: stronger(a.rightStick, b.rightStick))
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import simd
 import Observation
 
 /// Where a remapping applies. Precedence: console default -> controller type -> game.

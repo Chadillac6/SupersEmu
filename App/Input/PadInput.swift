@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 /// A physical control on a gamepad, named by position (south = bottom face button) rather than the printed label.
 enum PadInput: String, Codable, CaseIterable, Sendable {
@@ -66,14 +67,6 @@ struct PadState: Equatable, Sendable {
         case .unbound: 0
         default: pressed.contains(input) ? 1 : 0
         }
-    }
-
-    /// The control the user is pushing hardest, for "press the input you want" capture.
-    var dominantInput: PadInput? {
-        if let button = PadInput.allCases.first(where: { !$0.isStick && pressed.contains($0) }) { return button }
-        let sticks = PadInput.allCases.filter(\.isStick).map { ($0, value(of: $0)) }
-        guard let (input, amount) = sticks.max(by: { $0.1 < $1.1 }), amount > 0.6 else { return nil }
-        return input
     }
 
     mutating func merge(_ other: PadState) {

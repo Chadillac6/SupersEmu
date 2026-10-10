@@ -21,6 +21,10 @@ struct SupersEmuApp: App {
         }
         #if os(macOS)
         ServerModeScene()
+        Settings {
+            ControlsView()
+                .preferredColorScheme(.dark)
+        }
         #endif
     }
 }
