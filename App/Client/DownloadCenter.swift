@@ -68,6 +68,8 @@ final class DownloadCenter {
             states[gameID] = .failed("Connect to your server to download")
             return
         }
+        // A pending startup scan must not publish the old copy while this replaces it.
+        setDownloaded(gameID, nil)
         let total = session.games.first { $0.id == gameID }?.totalSize ?? 0
         states[gameID] = .downloading(.init(receivedBytes: cache.bytesOnDisk(for: gameID), totalBytes: total))
         let generation = (generations[gameID] ?? 0) + 1
