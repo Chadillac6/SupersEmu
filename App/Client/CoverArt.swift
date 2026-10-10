@@ -102,13 +102,19 @@ enum ArtworkCache {
         "\(path ?? "")|\(server.isOnline)"
     }
 
-    /// The disk copy straight away (works offline), then the server's when it has changed (replaced art keeps its path).
-    @MainActor static func load(_ path: String?, key: String, server: ServerSession, show: (Image) -> Void) async {
-        guard let path else { return }
+    @MainActor private static var revalidated = Set<String>()
+
+    /// The disk copy straight away (works offline), then once per launch the server's, as replaced art keeps its path.
+    @MainActor static func load(_ path: String?, key: String, server: ServerSession, show: (Image?) -> Void) async {
+        guard let path else { return show(nil) }
         let file = AppPaths.covers.appendingPathComponent(key)
         let cached = try? Data(contentsOf: file)
-        if let cached, let image = image(from: cached) { show(image) }
-        guard server.isOnline, let data = try? await server.data(atPath: path), data != cached, let image = image(from: data) else { return }
+        let cachedImage = cached.flatMap(image(from:))
+        show(cachedImage)
+        guard server.isOnline, cachedImage == nil || !revalidated.contains(key) else { return }
+        guard let data = try? await server.data(atPath: path), let image = image(from: data) else { return }
+        revalidated.insert(key)
+        guard data != cached else { return }
         try? FileManager.default.createDirectory(at: AppPaths.covers, withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
         show(image)

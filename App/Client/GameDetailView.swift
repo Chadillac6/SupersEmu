@@ -240,6 +240,8 @@ struct GameDetailView: View {
                             Label("Remove Download", systemImage: "trash")
                         }
                         .accessibilityIdentifier("remove-download")
+                    } else if item.playable != nil {
+                        Label("On this device", systemImage: "internaldrive").foregroundStyle(.secondary)
                     } else if server.isOnline {
                         downloadButton(title: "Download (\(Self.size(item.size)))")
                     } else {
