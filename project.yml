@@ -279,6 +279,8 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_GCSupportsControllerUserInteraction: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: "SupersEmu uses the camera to scan the pairing QR code from your SupersEmu Server."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "SupersEmu connects to your SupersEmu Server on your home network."
         TARGETED_DEVICE_FAMILY: "1,2"
         ENABLE_APP_SANDBOX: NO
 
