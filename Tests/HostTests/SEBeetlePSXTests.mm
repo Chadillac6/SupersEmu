@@ -100,6 +100,16 @@
     XCTAssertNil(SELibretroHost.activeHost);
 }
 
+/// need_fullpath cores never read the image in the host, but a missing file is still an error.
+- (void)testMissingDiscFileIsAnError {
+    NSError *error = nil;
+    SELibretroHost *host = [self hostForGame:[_tempDirectory URLByAppendingPathComponent:@"Nope.cue"]
+                                      system:[self emptySystemDirectory] error:&error];
+    XCTAssertNil(host);
+    XCTAssertNotNil(error);
+    XCTAssertNil(SELibretroHost.activeHost);
+}
+
 - (void)testCueWithMissingTrackFailsCleanly {
     NSURL *cue = [self syntheticDiscNamed:@"Missing Track" sectors:0 writeTrack:NO];
     NSError *error = nil;
