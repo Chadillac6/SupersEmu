@@ -304,6 +304,14 @@ extension NetworkTests {
         XCTAssertNil(followed.value)
     }
 
+    func testTrustOnFirstUseLocksToFirstCertificate() {
+        let delegate = PinnedCertificateDelegate(certificateSHA256: nil, trustOnFirstUse: true, expectedHost: "mini.local")
+        XCTAssertTrue(delegate.acceptFirstUse("aa"))
+        XCTAssertTrue(delegate.acceptFirstUse("aa"))
+        XCTAssertFalse(delegate.acceptFirstUse("bb"))
+        XCTAssertEqual(delegate.observedSHA256, "aa")
+    }
+
     func testTrustOnFirstUseNeedsTypedHostAndNoPin() {
         XCTAssertTrue(PinnedCertificateDelegate(certificateSHA256: nil, trustOnFirstUse: true, expectedHost: "Mini.local").trustOnFirstUse)
         XCTAssertFalse(PinnedCertificateDelegate(certificateSHA256: nil, trustOnFirstUse: true).trustOnFirstUse)

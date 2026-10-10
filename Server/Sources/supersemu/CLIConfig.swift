@@ -90,7 +90,9 @@ struct Connection: ParsableArguments {
                 .trimmingCharacters(in: .whitespacesAndNewlines))
         }
         // The local daemon's certificate is only a sensible default pin for the local daemon.
-        let savedPin = config.flatMap { Self.sameServer($0.server, serverString) ? nonEmpty($0.certificateSHA256) : nil }
+        // The saved pin still applies when server and token are both explicit; a broken config is ignored here.
+        let pinConfig = config ?? (try? CLIConfigFile.load(from: configURL ?? CLIConfigFile.defaultURL(environment: environment))) ?? nil
+        let savedPin = pinConfig.flatMap { Self.sameServer($0.server, serverString) ? nonEmpty($0.certificateSHA256) : nil }
         let pin = nonEmpty(certificateSHA256) ?? nonEmpty(environment["SUPERSEMU_CERT_SHA256"]) ?? savedPin
             ?? (Self.isLocalDefaultServer(url) ? FileManager.default.contents(atPath: Self.localCertificatePath).map(CertificatePin.sha256(ofDER:)) : nil)
         return Resolved(server: url, token: resolvedToken, certificateSHA256: pin)

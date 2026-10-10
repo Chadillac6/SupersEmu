@@ -344,5 +344,6 @@ extension CLIConfigTests {
         XCTAssertEqual(try resolve([]).certificateSHA256, pin)
         XCTAssertNil(try resolve(["--server", "https://other:8487"]).certificateSHA256)
         XCTAssertEqual(try resolve(["--certificate-sha256", "cc"]).certificateSHA256, "cc")
+        XCTAssertEqual(try resolve(["--server", "https://mini:8487", "--token", "sek_x"]).certificateSHA256, pin)
     }
 }

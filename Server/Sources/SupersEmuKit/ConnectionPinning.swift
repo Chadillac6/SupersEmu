@@ -81,12 +81,24 @@ public final class PinnedCertificateDelegate: NSObject, URLSessionTaskDelegate, 
            space.authenticationMethod == NSURLAuthenticationMethodServerTrust, let trust = space.serverTrust,
            let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first {
             let digest = CertificatePin.sha256(ofDER: SecCertificateCopyData(leaf) as Data)
-            lock.withLock { observed = digest }
-            completionHandler(.useCredential, URLCredential(trust: trust))
+            if acceptFirstUse(digest) {
+                completionHandler(.useCredential, URLCredential(trust: trust))
+            } else {
+                completionHandler(.cancelAuthenticationChallenge, nil)
+            }
             return
         }
         let (disposition, credential) = Self.disposition(for: challenge, pin: certificateSHA256)
         completionHandler(disposition, credential)
+    }
+
+    /// The first certificate is recorded; later connections in the same pairing must present the same one.
+    public func acceptFirstUse(_ digest: String) -> Bool {
+        lock.withLock {
+            if let observed { return observed == digest }
+            observed = digest
+            return true
+        }
     }
 
     public func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
