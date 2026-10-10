@@ -5,6 +5,7 @@ struct SupersEmuApp: App {
     @State private var library = GameLibrary()
     @State private var server = ServerSession()
     @State private var downloads = DownloadCenter()
+    @State private var bios = BIOSCenter()
 
     var body: some Scene {
         WindowGroup {
@@ -12,6 +13,7 @@ struct SupersEmuApp: App {
                 .environment(library)
                 .environment(server)
                 .environment(downloads)
+                .environment(bios)
                 .preferredColorScheme(.dark)
                 #if os(macOS)
                 .serverModeLaunchHook()
@@ -27,6 +29,7 @@ struct RootView: View {
     @Environment(GameLibrary.self) private var library
     @Environment(ServerSession.self) private var server
     @Environment(DownloadCenter.self) private var downloads
+    @Environment(BIOSCenter.self) private var bios
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("onboardingSkipped") private var onboardingSkipped = false
     @State private var playing: Game?
@@ -48,7 +51,7 @@ struct RootView: View {
             } else if showsOnboarding {
                 OnboardingView { onboardingSkipped = true }
             } else {
-                LibraryView { playing = $0 }
+                LibraryView { game in Task { await launch(game) } }
             }
         }
         .task {
@@ -62,6 +65,16 @@ struct RootView: View {
         // flushes coalesce inside the engine.
         .onChange(of: server.lastRefreshed) { _, refreshed in
             if refreshed != nil { Task { await SaveSync.shared.engine.flush() } }
+            if refreshed != nil { Task { await bios.sync(using: server) } }
         }
+    }
+
+    /// Disc games need their BIOS in the system directory before the core loads them.
+    private func launch(_ game: Game) async {
+        if let system = downloads.downloaded[game.id]?.detail.game.system, system.requiresBIOS {
+            await bios.sync(using: server)
+            guard !bios.isMissing(system) else { return }
+        }
+        playing = game
     }
 }

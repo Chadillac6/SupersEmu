@@ -65,6 +65,7 @@ Build notes:
   directory (whose `block.h` shadows the SDK's `<Block.h>` on case-insensitive disks) stays off the
   header path. PicoDrive's nested submodules (`libpicofe`, `dr_libs`, `emu2413`) are initialised by
   `scripts/build.sh` / `pin-cores.sh`.
+- The host implements libretro disk control (legacy + EXT, see `disc-games.md`); tested with a stub core. Swapping on a real disc core is unverified.
 - Gambatte is built with `-ftrivial-auto-var-init=zero` so unused save-state fields are
   deterministic.
 
