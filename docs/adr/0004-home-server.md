@@ -31,7 +31,7 @@
   targets in Phase 2.
 
 ## Why
-- Friends set up nothing. They accept an invite, sign in, and see games. No Drive folders, no OAuth
+- Friends (Phase 2) set up nothing. They accept an invite, sign in, and see games. No Drive folders, no OAuth
   "unverified app" screen, no 7-day token expiry, no restricted-scope review.
 - One place to organise games (Chad's Mac mini) instead of each user's own Drive.
 - Running games on the device keeps controls responsive and works offline once a game is

@@ -157,7 +157,7 @@ Built in Phase 1 so Phase 2 is additive, not a rewrite:
 The server only ever holds files Chad imports. Sharing copies of games with friends is Chad's
 responsibility. SupersEmu ships no games or BIOS files.
 
-## Spike before M2 (needs the new Mac mini)
+## Spike at the start of M1 (needs the new Mac mini)
 - Daemon starts at boot with no user logged in. API reachable on LAN and over Tailscale from an iPhone on cellular.
-- Pair an iPhone from an invite QR. Revoke it and confirm the next request fails.
+- Pair an iPhone from a pairing QR. Revoke it and confirm the next request fails.
 - Download a 700 MB file over Tailscale with a resume after interruption.

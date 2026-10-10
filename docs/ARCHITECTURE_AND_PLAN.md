@@ -6,9 +6,9 @@ Legend: **[Verified]** = checked today against a primary source. **[Inference]**
 
 ## v0.2 change: Plex-style home server (ADR 0004, accepted)
 
-- Chad's Mac mini runs **SupersEmu Server**. He imports and organises games once, invites fewer than
-  10 friends, and chooses which games each person sees.
-- Friends sign in with an invite. Games download to their Mac/iPhone/iPad and **run locally**. Saves,
+- Chad's Mac mini runs **SupersEmu Server**. He imports and organises games once. In Phase 2 he
+  invites fewer than 10 friends and chooses which games each person sees.
+- Phase 2 friends sign in with an invite. Games download to their Mac/iPhone/iPad and **run locally**. Saves,
   favourites and history are private per user and sync to the server.
 - LAN and remote (Tailscale) access from Phase 1. Server starts at boot. HTTP API + `supersemu` CLI
   for bots such as OpenClaw.
