@@ -18,13 +18,24 @@ packages:
   SupersEmuServer:
     path: Server
 
+x-core-settings: &core_settings
+  GCC_OPTIMIZATION_LEVEL: "3"
+  GCC_WARN_INHIBIT_ALL_WARNINGS: YES
+  CLANG_ENABLE_OBJC_ARC: NO
+  GENERATE_MASTER_OBJECT_FILE: YES
+  PRELINK_FLAGS: "-exported_symbols_list $(SRCROOT)/Host/CoreEntry/core.exports"
+  SKIP_INSTALL: YES
+
 targets:
-  # Snes9x libretro core, statically linked for the M0 spike.
-  # Production plan: one dynamic framework per core (see docs/adr/0002-core-packaging.md).
+  # libretro cores. Each is a static library prelinked into one object that exports only
+  # se_core_<id>() (Host/CoreEntry), so the cores' identical retro_* symbols never collide.
+  # Pinned commits: scripts/pin-cores.sh. Licences: docs/specs/core-matrix.md.
   Snes9xCore:
     type: library.static
     platform: [iOS, macOS]
     sources:
+      - path: Host/CoreEntry/SECoreEntry.c
+        compilerFlags: ["-DSE_CORE_ID=snes9x", "-DSE_CORE_REVISION=fae2fea"]
       - path: Vendor/cores/snes9x
         includes:
           - "apu/apu.cpp"
@@ -84,7 +95,7 @@ targets:
           - "libretro/libretro-common/file/retro_dirent.c"
     settings:
       base:
-        GCC_OPTIMIZATION_LEVEL: "3"
+        <<: *core_settings
         GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "ALLOW_CPU_OVERCLOCK", "HAVE_STRINGS_H"]
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/Vendor/cores/snes9x"
@@ -92,19 +103,165 @@ targets:
           - "$(SRCROOT)/Vendor/cores/snes9x/libretro/libretro-common/include"
           - "$(SRCROOT)/Vendor/cores/snes9x/apu"
           - "$(SRCROOT)/Vendor/cores/snes9x/apu/bapu"
+          - "$(SRCROOT)/Host/CoreEntry"
         GCC_ENABLE_CPP_RTTI: NO
         GCC_ENABLE_CPP_EXCEPTIONS: NO
-        GCC_WARN_INHIBIT_ALL_WARNINGS: YES
-        CLANG_ENABLE_OBJC_ARC: NO
+
+  GambatteCore:
+    type: library.static
+    platform: [iOS, macOS]
+    sources:
+      - path: Host/CoreEntry/SECoreEntry.c
+        compilerFlags: ["-DSE_CORE_ID=gambatte", "-DSE_CORE_REVISION=d9d6cd0"]
+      - path: Vendor/cores/gambatte/libgambatte
+        includes:
+          - "src/*.cpp"
+          - "src/mem/*.cpp"
+          - "src/sound/*.cpp"
+          - "src/video/*.cpp"
+          - "libretro/gambatte_log.c"
+          - "libretro/blipper.c"
+          - "libretro/cc_resampler.c"
+          - "libretro/libretro.cpp"
+          - "libretro-common/compat/*.c"
+          - "libretro-common/encodings/encoding_utf.c"
+          - "libretro-common/file/file_path.c"
+          - "libretro-common/file/file_path_io.c"
+          - "libretro-common/streams/*.c"
+          - "libretro-common/string/stdstring.c"
+          - "libretro-common/time/rtime.c"
+          - "libretro-common/vfs/vfs_implementation.c"
+    settings:
+      base:
+        <<: *core_settings
+        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "HAVE_STDINT_H", "HAVE_INTTYPES_H", "VIDEO_RGB565"]
+        # GB::saveState serialises a stack SaveState whose unused fields are otherwise
+        # uninitialised, which makes save states differ run to run.
+        OTHER_CFLAGS: ["-ftrivial-auto-var-init=zero"]
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Vendor/cores/gambatte/libgambatte/src"
+          - "$(SRCROOT)/Vendor/cores/gambatte/libgambatte/include"
+          - "$(SRCROOT)/Vendor/cores/gambatte/common"
+          - "$(SRCROOT)/Vendor/cores/gambatte/common/resample"
+          - "$(SRCROOT)/Vendor/cores/gambatte/libgambatte/libretro"
+          - "$(SRCROOT)/Vendor/cores/gambatte/libgambatte/libretro-common/include"
+          - "$(SRCROOT)/Host/CoreEntry"
+
+  MGBACore:
+    type: library.static
+    platform: [iOS, macOS]
+    sources:
+      - path: Host/CoreEntry/SECoreEntry.c
+        compilerFlags: ["-DSE_CORE_ID=mgba", "-DSE_CORE_REVISION=7a12d6d"]
+      - path: Host/CoreEntry/mgba/version.c
+      - path: Vendor/cores/mgba/src
+        includes:
+          - "arm/*.c"
+          - "sm83/*.c"
+          - "core/*.c"
+          - "gb/*.c"
+          - "gb/mbc/*.c"
+          - "gb/renderers/*.c"
+          - "gba/*.c"
+          - "gba/cart/*.c"
+          - "gba/cheats/*.c"
+          - "gba/renderers/*.c"
+          - "gba/sio/gbp.c"
+          - "platform/libretro/*.c"
+          - "third-party/inih/ini.c"
+          - "util/*.c"
+          - "util/image/*.c"
+          - "util/vfs/vfs-dirent.c"
+          - "util/vfs/vfs-fd.c"
+          - "util/vfs/vfs-fifo.c"
+          - "util/vfs/vfs-mem.c"
+        excludes:
+          - "core/scripting.c"
+          - "core/library.c"
+          - "core/mem-search.c"
+          - "core/rewind.c"
+          - "core/input.c"
+          - "util/audio-resampler.c"
+          - "util/interpolator.c"
+          - "**/*-test.c"
+    settings:
+      base:
+        <<: *core_settings
+        GCC_C_LANGUAGE_STANDARD: gnu11
+        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "_GNU_SOURCE", "_DARWIN_C_SOURCE", "COLOR_16_BIT", "COLOR_5_6_5", "DISABLE_THREADING", "MGBA_STANDALONE", "MINIMAL_CORE=2", "M_CORE_GB", "M_CORE_GBA", "ENABLE_VFS", "ENABLE_VFS_FD", "ENABLE_DIRECTORIES", "HAVE_FREELOCALE", "HAVE_FUTIMENS", "HAVE_FUTIMES", "HAVE_LOCALE", "HAVE_LOCALTIME_R", "HAVE_NEWLOCALE", "HAVE_REALPATH", "HAVE_SETLOCALE", "HAVE_SNPRINTF_L", "HAVE_STRDUP", "HAVE_STRLCPY", "HAVE_STRNDUP", "HAVE_STRTOF_L", "HAVE_USELOCALE", "HAVE_VASPRINTF", "HAVE_XLOCALE", "M_PI=3.14159265358979323846"]
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Host/CoreEntry/mgba"
+          - "$(SRCROOT)/Vendor/cores/mgba/src"
+          - "$(SRCROOT)/Vendor/cores/mgba/include"
+          - "$(SRCROOT)/Vendor/cores/mgba/src/platform/libretro"
+          - "$(SRCROOT)/Host/CoreEntry"
+
+  GenesisPlusGXCore:
+    type: library.static
+    platform: [iOS, macOS]
+    sources:
+      - path: Host/CoreEntry/SECoreEntry.c
+        compilerFlags: ["-DSE_CORE_ID=genesis_plus_gx", "-DSE_CORE_REVISION=393f70c"]
+      - path: Vendor/cores/genesis_plus_gx
+        includes:
+          - "core/*.c"
+          - "core/z80/*.c"
+          - "core/m68k/*.c"
+          - "core/ntsc/*.c"
+          - "core/sound/*.c"
+          - "core/input_hw/*.c"
+          - "core/cd_hw/*.c"
+          - "core/cart_hw/*.c"
+          - "core/cart_hw/svp/*.c"
+          - "libretro/libretro.c"
+          - "libretro/libretro-common/streams/file_stream.c"
+          - "libretro/libretro-common/streams/file_stream_transforms.c"
+          - "libretro/libretro-common/compat/fopen_utf8.c"
+          - "libretro/libretro-common/compat/compat_snprintf.c"
+          - "libretro/libretro-common/compat/compat_strl.c"
+          - "libretro/libretro-common/compat/compat_strcasestr.c"
+          - "libretro/libretro-common/compat/compat_posix_string.c"
+          - "libretro/libretro-common/encodings/encoding_utf.c"
+          - "libretro/libretro-common/file/file_path.c"
+          - "libretro/libretro-common/file/retro_dirent.c"
+          - "libretro/libretro-common/lists/string_list.c"
+          - "libretro/libretro-common/lists/dir_list.c"
+          - "libretro/libretro-common/memmap/memalign.c"
+          - "libretro/libretro-common/string/stdstring.c"
+          - "libretro/libretro-common/vfs/vfs_implementation.c"
+    settings:
+      base:
+        <<: *core_settings
+        GCC_PREFIX_HEADER: Host/CoreEntry/genesis_plus_gx/prefix.h
+        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "LSB_FIRST", "BYTE_ORDER=LITTLE_ENDIAN", "HAVE_ZLIB", "USE_16BPP_RENDERING", "FRONTEND_SUPPORTS_RGB565", "USE_LIBRETRO_VFS", "M68K_OVERCLOCK_SHIFT=20", "Z80_OVERCLOCK_SHIFT=20", "HAVE_YM3438_CORE", "HAVE_OPLL_CORE", "USE_PER_SOUND_CHANNELS_CONFIG", "MAXROMSIZE=33554432"]
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/z80"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/m68k"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/ntsc"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/sound"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/sound/minimp3"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/input_hw"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/cd_hw"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/cart_hw"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/cart_hw/svp"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/libretro"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/libretro/libretro-common/include"
+          - "$(SRCROOT)/Host/CoreEntry"
 
   SupersEmu:
     type: application
     platform: [iOS, macOS]
     sources:
       - App
-      - Host
+      - path: Host
+        excludes: ["CoreEntry/**"]
     dependencies:
       - target: Snes9xCore_${platform}
+      - target: GambatteCore_${platform}
+      - target: MGBACore_${platform}
+      - target: GenesisPlusGXCore_${platform}
+      - sdk: libz.tbd
       - package: SupersEmuServer
         product: SupersEmuKit
       - sdk: AVFoundation.framework
@@ -114,7 +271,7 @@ targets:
         PRODUCT_NAME: SupersEmu
         PRODUCT_BUNDLE_IDENTIFIER: com.chadillac6.supersemu
         SWIFT_OBJC_BRIDGING_HEADER: Host/SupersEmu-Bridging-Header.h
-        HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/cores/snes9x/libretro"]
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/cores/snes9x/libretro", "$(SRCROOT)/Host/CoreEntry"]
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: SupersEmu
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.games
@@ -150,11 +307,15 @@ targets:
       - Host/SELibretroHost.mm
     dependencies:
       - target: Snes9xCore_macOS
+      - target: GambatteCore_macOS
+      - target: MGBACore_macOS
+      - target: GenesisPlusGXCore_macOS
+      - sdk: libz.tbd
       - sdk: AVFoundation.framework
       - sdk: CoreGraphics.framework
     settings:
       base:
-        HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/cores/snes9x/libretro", "$(SRCROOT)/Host"]
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/cores/snes9x/libretro", "$(SRCROOT)/Host", "$(SRCROOT)/Host/CoreEntry"]
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:

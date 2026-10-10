@@ -47,6 +47,13 @@ let package = Package(
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
                 .product(name: "X509", package: "swift-certificates"),
             ]),
+        .testTarget(
+            name: "SupersEmuCLITests",
+            dependencies: [
+                "supersemu",
+                "SupersEmuServerCore",
+                .product(name: "HummingbirdTesting", package: "hummingbird"),
+            ]),
     ],
     swiftLanguageModes: [.v5]
 )

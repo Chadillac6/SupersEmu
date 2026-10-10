@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "libretro.h"
+#include "SECoreAPI.h"
 
 namespace {
 
@@ -62,7 +63,27 @@ struct HostState {
     AudioRing audio;
     std::atomic<bool> audioEnabled{false};
     bool active = false;
+    const SECoreAPI *core = nullptr;
 };
+
+struct CoreEntry {
+    const char *identifier;
+    const SECoreAPI *(*api)(void);
+};
+
+const CoreEntry kCores[] = {
+    {"snes9x", se_core_snes9x},
+    {"gambatte", se_core_gambatte},
+    {"mgba", se_core_mgba},
+    {"genesis_plus_gx", se_core_genesis_plus_gx},
+};
+
+const SECoreAPI *coreNamed(NSString *identifier) {
+    for (const CoreEntry &entry : kCores) {
+        if ([identifier isEqualToString:@(entry.identifier)]) return entry.api();
+    }
+    return nullptr;
+}
 
 HostState g;
 
@@ -166,6 +187,11 @@ NSError *hostError(NSInteger code, NSString *message) {
 
 } // namespace
 
+NSString *const SECoreIDSnes9x = @"snes9x";
+NSString *const SECoreIDGambatte = @"gambatte";
+NSString *const SECoreIDMGBA = @"mgba";
+NSString *const SECoreIDGenesisPlusGX = @"genesis_plus_gx";
+
 static __weak SELibretroHost *gActiveHost;
 
 @implementation SELibretroHost {
@@ -179,10 +205,30 @@ static __weak SELibretroHost *gActiveHost;
 
 + (SELibretroHost *)activeHost { return gActiveHost; }
 
++ (NSArray<NSString *> *)availableCoreIDs {
+    NSMutableArray *ids = [NSMutableArray array];
+    for (const CoreEntry &entry : kCores) [ids addObject:@(entry.identifier)];
+    return ids;
+}
+
 - (instancetype)initWithROMURL:(NSURL *)romURL
                     saveRAMURL:(NSURL *)saveRAMURL
                systemDirectory:(NSURL *)systemDirectory
                          error:(NSError **)error {
+    return [self initWithCoreID:SECoreIDSnes9x romURL:romURL saveRAMURL:saveRAMURL
+                systemDirectory:systemDirectory error:error];
+}
+
+- (instancetype)initWithCoreID:(NSString *)coreID
+                        romURL:(NSURL *)romURL
+                    saveRAMURL:(NSURL *)saveRAMURL
+               systemDirectory:(NSURL *)systemDirectory
+                         error:(NSError **)error {
+    const SECoreAPI *core = coreNamed(coreID);
+    if (!core) {
+        if (error) *error = hostError(5, [NSString stringWithFormat:@"No emulator core named \"%@\".", coreID]);
+        return nil;
+    }
     if (g.active) {
         if (error) *error = hostError(1, @"Another game is already running.");
         return nil;
@@ -204,31 +250,38 @@ static __weak SELibretroHost *gActiveHost;
     g.frame.clear();
     g.width = g.height = 0;
     g.buttons = 0;
+    g.core = core;
 
-    retro_set_environment(environmentCallback);
-    retro_set_video_refresh(videoCallback);
-    retro_set_audio_sample(audioSampleCallback);
-    retro_set_audio_sample_batch(audioBatchCallback);
-    retro_set_input_poll(inputPollCallback);
-    retro_set_input_state(inputStateCallback);
-    retro_init();
+    core->set_environment(environmentCallback);
+    core->set_video_refresh(videoCallback);
+    core->set_audio_sample(audioSampleCallback);
+    core->set_audio_sample_batch(audioBatchCallback);
+    core->set_input_poll(inputPollCallback);
+    core->set_input_state(inputStateCallback);
+    core->init();
 
     retro_system_info info = {};
-    retro_get_system_info(&info);
+    core->get_system_info(&info);
+    _coreID = @(core->identifier);
+    _coreRevision = @(core->revision);
     _coreName = [NSString stringWithUTF8String:info.library_name ?: "unknown"];
-    _coreVersion = [NSString stringWithUTF8String:info.library_version ?: "unknown"];
+    NSString *libraryVersion = [[NSString stringWithUTF8String:info.library_version ?: "unknown"]
+                                stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    _coreVersion = [libraryVersion containsString:_coreRevision]
+        ? libraryVersion : [NSString stringWithFormat:@"%@ (%@)", libraryVersion, _coreRevision];
 
     retro_game_info game = {};
     game.path = romURL.fileSystemRepresentation;
     game.data = romData.bytes;
     game.size = romData.length;
-    if (!retro_load_game(&game)) {
-        retro_deinit();
+    if (!core->load_game(&game)) {
+        core->deinit();
+        g.core = nullptr;
         if (error) *error = hostError(2, @"The emulator could not load this game.");
         return nil;
     }
-    retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
-    retro_get_system_av_info(&_avInfo);
+    core->set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+    core->get_system_av_info(&_avInfo);
 
     _romData = romData;
     _saveRAMURL = saveRAMURL;
@@ -250,7 +303,7 @@ static __weak SELibretroHost *gActiveHost;
 - (void)setButtons:(SEJoypadButtons)buttons { g.buttons = buttons; }
 
 - (void)runFrame {
-    if (_loaded) retro_run();
+    if (_loaded) g.core->run();
 }
 
 - (void)runFrames:(NSInteger)count {
@@ -277,14 +330,14 @@ static __weak SELibretroHost *gActiveHost;
 
 - (NSData *)serializeState {
     if (!_loaded) return nil;
-    size_t size = retro_serialize_size();
+    size_t size = g.core->serialize_size();
     if (size == 0) return nil;
     NSMutableData *data = [NSMutableData dataWithLength:size];
-    return retro_serialize(data.mutableBytes, size) ? data : nil;
+    return g.core->serialize(data.mutableBytes, size) ? data : nil;
 }
 
 - (BOOL)unserializeState:(NSData *)state {
-    return _loaded && state.length > 0 && retro_unserialize(state.bytes, state.length);
+    return _loaded && state.length > 0 && g.core->unserialize(state.bytes, state.length);
 }
 
 - (BOOL)saveStateToURL:(NSURL *)url error:(NSError **)error {
@@ -309,16 +362,16 @@ static __weak SELibretroHost *gActiveHost;
 }
 
 - (void)loadSaveRAM {
-    void *memory = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
-    size_t size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    void *memory = g.core->get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    size_t size = g.core->get_memory_size(RETRO_MEMORY_SAVE_RAM);
     NSData *saved = [NSData dataWithContentsOfURL:_saveRAMURL];
     if (memory && size > 0 && saved.length == size) memcpy(memory, saved.bytes, size);
 }
 
 - (void)flushSaveRAM {
     if (!_loaded) return;
-    void *memory = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
-    size_t size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    void *memory = g.core->get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    size_t size = g.core->get_memory_size(RETRO_MEMORY_SAVE_RAM);
     if (!memory || size == 0) return;
     [[NSData dataWithBytes:memory length:size] writeToURL:_saveRAMURL atomically:YES];
 }
@@ -361,8 +414,9 @@ static __weak SELibretroHost *gActiveHost;
     if (!_loaded) return;
     [self flushSaveRAM];
     self.audioEnabled = NO;
-    retro_unload_game();
-    retro_deinit();
+    g.core->unload_game();
+    g.core->deinit();
+    g.core = nullptr;
     _loaded = NO;
     g.active = false;
     g.audioEnabled = false;
