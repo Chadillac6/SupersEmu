@@ -45,7 +45,7 @@ Verified by `(cd Server && swift test)` with generated fixtures (`DiscImportTest
 - Generic cue names (`game.cue`) take their disc number and region/revision tags from the folder name. Every `of M` must equal the number of discs.
 - A user `.m3u` lists discs relative to itself. It overrides inferred grouping and names the game. A missing entry sends it to Review Needed (`Missing disc: <line>`).
 - Re-importing a reordered `.m3u` is a duplicate: the game ID uses sorted disc IDs, so the stored order stays as first imported (delete the game and re-import it to change the order).
-- A `.bin`/`.img` named after an unreadable `.cue` in the same folder is reported with the cue and left in `Incoming`. It isn't guessed as a cartridge.
+- A `.bin`/`.img` named after an unreadable `.cue` in the same folder (`Game.bin`, `Game01.bin`, `Game (Track 1).bin`, but not `Gameplay.bin`) is reported with the cue and left in `Incoming`. The exception is a file whose own header is a cartridge header and not a disc header: that file imports normally.
 - Review Needed entries for discs hold the cue (or .chd/.iso, or the .m3u) under its own SHA-256. They are removed once the complete game imports. `scanIncoming` moves a disc's files out of `Incoming` only after the whole game imports.
 - Detection: PS1 when `Sony Computer Entertainment` appears in the first 16 sectors (2048- or 2352-byte) of the first data track. Sega CD when `SEGADISCSYSTEM`/`SEGA SEGASYSTEM` is at byte 0 (2048) or 16 (raw 2352). A loose `.bin` keeps the Genesis cartridge check; a loose Sega CD `.bin` with no cue goes to review.
 - 32X: `.32x` (or `.md`/`.bin`) is `sega32x` when the Genesis header at 0x100 names `32X` or `MARS` is at 0x3C0. A `.32x` with neither goes to Review Needed.

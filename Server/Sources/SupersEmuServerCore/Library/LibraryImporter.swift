@@ -196,8 +196,7 @@ public final class LibraryImporter: @unchecked Sendable {
 
     // MARK: Processing
 
-    /// `Game.bin`, `Game01.bin`, `Game (Track 1).bin` belong to `Game.cue`; `Gameplay.bin` doesn't.
-    /// A digit suffix is kept with the cue; the file stays in Incoming instead of being split from its disc.
+    /// `Game.bin`, `Game01.bin`, `Game (Track 1).bin` may belong to `Game.cue`; `Gameplay.bin` doesn't.
     static func isTrackName(_ filename: String, of stem: String) -> Bool {
         let name = (filename as NSString).deletingPathExtension.lowercased()
         guard name.hasPrefix(stem) else { return false }
@@ -229,11 +228,16 @@ public final class LibraryImporter: @unchecked Sendable {
             }
             units.append(DiscUnit(primary: cue, cue: sheet, cueData: data, tracks: tracks, missing: missing))
         }
-        // Tracks named after an unreadable cue stay with it (unsettled) instead of being guessed as cartridges.
+        // Files named like a track of an unreadable cue stay with it (unsettled), unless their own header
+        // identifies a cartridge. Disc data tracks are checked for a disc header first.
         for cue in batch.candidates where cue.ext == "cue" && !units.contains(where: { $0.primary.key == cue.key }) {
             let stem = (cue.filename as NSString).deletingPathExtension.lowercased()
             for track in batch.candidates where track.container == cue.container && ["bin", "img"].contains(track.ext)
                 && !consumed.contains(track.key) && Self.isTrackName(track.filename, of: stem) {
+                if let file = try? examineFile(track, role: .disc, batch: batch), SystemDetector.detectDisc(header: file.header) == nil,
+                   case .system = SystemDetector.detect(filename: track.filename, header: file.header, size: file.size) {
+                    continue
+                }
                 consumed.insert(track.key)
                 batch.record(.unsupported("\(track.label): track of unreadable cue sheet \(cue.filename)"), origins: [track.origin])
             }

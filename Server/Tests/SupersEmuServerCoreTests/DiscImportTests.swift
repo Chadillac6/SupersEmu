@@ -251,19 +251,23 @@ extension LibraryTests {
     func testUnreadableCueKeepsItsTracksInIncoming() async throws {
         let incoming = store.paths.incoming
         try write(Data("garbage".utf8), "Game/Game.cue", in: incoming)
-        try write(ROMFixtures.genesis(seed: 77), "Game/Game (Track 1).bin", in: incoming)
+        try write(DiscFixtures.psxTrack(seed: 77), "Game/Game (Track 1).bin", in: incoming)
         try write(ROMFixtures.genesis(seed: 78), "Game/Other Cart.bin", in: incoming)
         try write(ROMFixtures.genesis(seed: 79), "Game/Gameplay.bin", in: incoming)
-        try write(ROMFixtures.genesis(seed: 80), "Game/Game02.bin", in: incoming)
+        try write(ROMFixtures.genesis(seed: 80), "Game/Game2.bin", in: incoming)
+        try write(DiscFixtures.audioTrack(seed: 81), "Game/Game02.bin", in: incoming)
+        try write(DiscFixtures.segaCDTrack(seed: 82), "Game/Game01.bin", in: incoming)
         XCTAssertTrue(LibraryImporter.isTrackName("Game - Track 01.bin", of: "game"))
         XCTAssertTrue(LibraryImporter.isTrackName("GAME.bin", of: "game"))
         XCTAssertTrue(LibraryImporter.isTrackName("Game01.bin", of: "game"))
         XCTAssertFalse(LibraryImporter.isTrackName("Gameplay.bin", of: "game"))
         let report = try await importer.scanIncoming(auth: nil)
-        XCTAssertEqual(Set(report.imported.map(\.title)), ["Other Cart", "Gameplay"])
-        XCTAssertEqual(report.unsupported.count, 3, "\(report.unsupported)")
+        // Game2.bin has its own cartridge header, so it imports; header-less or disc-header tracks stay.
+        XCTAssertEqual(Set(report.imported.map(\.title)), ["Other Cart", "Gameplay", "Game2"])
+        XCTAssertEqual(report.unsupported.count, 4, "\(report.unsupported)")
         XCTAssertTrue(FileManager.default.fileExists(atPath: incoming.appendingPathComponent("Game/Game (Track 1).bin").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: incoming.appendingPathComponent("Game/Game02.bin").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: incoming.appendingPathComponent("Game/Game01.bin").path))
     }
 
     func testUserM3UOverridesInferredGrouping() async throws {
