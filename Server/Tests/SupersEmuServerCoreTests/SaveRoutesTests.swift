@@ -285,6 +285,14 @@ final class SaveRoutesTests: XCTestCase {
             listed = try await self.list(client, token: self.iPhone.token)
             XCTAssertTrue(listed.contains { $0.id == stale.revision.id })
             XCTAssertFalse(listed.contains { $0.id == b.id }, "ordinary old auto states are still pruned")
+
+            // An offline Mac uploading bytes equal to an older iPhone revision still gets a branch copy, not that old revision.
+            let m1 = try await self.upload(client, token: self.iPhone.token, kind: .manual, slot: "1", ifHead: true, body: "m1")!.revision
+            let m2 = try await self.upload(client, token: self.iPhone.token, kind: .manual, slot: "1", parent: m1.id, ifHead: true, body: "m2")!.revision
+            _ = try await self.upload(client, token: self.iPhone.token, kind: .manual, slot: "1", parent: m2.id, ifHead: true, body: "m3")
+            let old = try await self.upload(client, token: self.mac.token, kind: .manual, slot: "1", parent: m1.id, ifHead: true, body: "m2")!
+            XCTAssertEqual(old.revision.isBranchCopy, true)
+            XCTAssertNotEqual(old.revision.id, m2.id)
         }
     }
 

@@ -141,18 +141,21 @@ public struct SaveStore: Sendable {
             outcome = try store.db.write { db in
                 let line: StatementArguments = [userID, upload.gameID, upload.kind.rawValue, upload.slot]
                 let lineSQL = "user_id = ? AND game_id = ? AND kind = ? AND slot = ?"
-                let head = try Row.fetchOne(db, sql: "SELECT id, sha256 FROM save_revisions WHERE \(lineSQL) AND detached = 0 ORDER BY rowid DESC LIMIT 1",
+                let head = try Row.fetchOne(db, sql: "SELECT id, sha256, parent_id, device_id FROM save_revisions WHERE \(lineSQL) AND detached = 0 ORDER BY rowid DESC LIMIT 1",
                                             arguments: line)
                 let headID: String? = head?["id"]
                 let stale = headID != nil && headID != upload.parentID
                 let detached = upload.keepAsBranch || (upload.onlyIfHead && stale)
 
+                // An `ifHead` retry whose first attempt (lost response) became the head now looks stale: return that head.
+                // A historical attached match is not reused, so a stale device still gets a branch copy and the real head.
+                let retryOfHead = upload.onlyIfHead && stale && head?["sha256"] == sha
+                    && (head?["parent_id"] as String?) == upload.parentID && (head?["device_id"] as String?) == upload.deviceID
                 // Retries after a lost response, and unchanged content on top of the head, return the existing revision.
-                // An `ifHead` retry whose first attempt became the head (so now looks stale) still finds that attached revision.
-                if let existingID = try String.fetchOne(db, sql: """
-                    SELECT id FROM save_revisions WHERE \(lineSQL) AND sha256 = ? AND parent_id IS ? AND detached IN (?, ?)
-                    ORDER BY detached ASC, rowid DESC LIMIT 1
-                    """, arguments: line + [sha, upload.parentID, upload.keepAsBranch, detached])
+                if let existingID = try (retryOfHead ? headID : nil) ?? String.fetchOne(db, sql: """
+                    SELECT id FROM save_revisions WHERE \(lineSQL) AND sha256 = ? AND parent_id IS ? AND detached = ?
+                    ORDER BY rowid DESC LIMIT 1
+                    """, arguments: line + [sha, upload.parentID, detached])
                     ?? (!detached && head?["sha256"] == sha && headID == upload.parentID ? headID : nil) {
                     let existing = try revision(db, userID: userID, gameID: upload.gameID, id: existingID)
                     if let deviceID = upload.deviceID,
