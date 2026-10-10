@@ -10,6 +10,7 @@ struct Login: AsyncParsableCommand {
     @Option(help: "Server URL, e.g. https://macmini.tailnet.ts.net:8487.") var server: String
     @Option(help: "Token. Prefer --token-stdin so it stays out of shell history.") var token: String?
     @Flag(help: "Read the token from stdin.") var tokenStdin = false
+    @Option(help: "Server certificate SHA-256 to pin for the check (self-signed server).") var certificateSHA256: String?
     @Flag(help: "Save without checking the token against the server.") var noVerify = false
     @Flag(help: "Print JSON.") var json = false
 
@@ -26,6 +27,7 @@ struct Login: AsyncParsableCommand {
             var connection = Connection()
             connection.server = server
             connection.token = value
+            connection.certificateSHA256 = certificateSHA256
             let resolved = try connection.resolve(environment: [:], configURL: URL(fileURLWithPath: "/dev/null/none"))
             let me = noVerify ? nil : try await APIClient(baseURL: resolved.server, token: value, session: try Connection.session(for: resolved)).me()
             let url = CLIConfigFile.defaultURL()
