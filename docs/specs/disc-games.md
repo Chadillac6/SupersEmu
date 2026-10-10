@@ -36,6 +36,9 @@ This spec is the Wave 0 contract every Milestone 2 track builds on.
 - Multi-disc track: the host implements `RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE` (and `_EXT`) and exposes `diskCount`, `currentDisk` and `insertDisk(_:)` to Swift.
   The player shows "Swap disc" for games with more than one disc.
 - Save states and SRAM stay per game ID, shared across discs (for PS1, memory card 1 is per game).
+- PS1 (Beetle PSX, built): `need_fullpath` is true, so the host passes the `.cue`/`.chd`/`.m3u`/`.pbp` path and the core opens the tracks beside it.
+  The core looks for `scph5500.bin`/`scph5501.bin`/`scph5502.bin` (by disc region) in `AppPaths.system`; with none present it boots its bundled OpenBIOS instead of failing.
+  So "Needs PlayStation BIOS" is a frontend policy, not something the core enforces. Commercial-game compatibility on OpenBIOS is unverified.
 
 ## Track ownership (Wave 1)
 | Track | Owns |

@@ -90,7 +90,8 @@ static NSString *describeDifference(NSData *a, NSData *b) {
 }
 
 - (void)testAllCoresAreLinked {
-    NSArray *expected = @[SECoreIDSnes9x, SECoreIDGambatte, SECoreIDMGBA, SECoreIDGenesisPlusGX];
+    NSArray *expected = @[SECoreIDSnes9x, SECoreIDGambatte, SECoreIDMGBA, SECoreIDGenesisPlusGX,
+                          SECoreIDBeetlePSX];
     XCTAssertEqualObjects(SELibretroHost.availableCoreIDs, expected);
 }
 

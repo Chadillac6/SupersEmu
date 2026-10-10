@@ -14,6 +14,8 @@ enum CoreRegistry {
         Core(id: SECoreIDGambatte, systems: ["gb", "gbc"], extensions: ["gb", "gbc", "dmg"]),
         Core(id: SECoreIDMGBA, systems: ["gba"], extensions: ["gba"]),
         Core(id: SECoreIDGenesisPlusGX, systems: ["genesis"], extensions: ["md", "gen", "smd", "bin", "mdx"]),
+        // Disc games: the host passes the path (need_fullpath); a .cue's tracks sit beside it.
+        Core(id: SECoreIDBeetlePSX, systems: ["psx"], extensions: ["cue", "chd", "m3u", "pbp"]),
     ]
 
     /// Every ROM extension some linked core can run (for library import filters).

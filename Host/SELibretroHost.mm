@@ -76,6 +76,7 @@ const CoreEntry kCores[] = {
     {"gambatte", se_core_gambatte},
     {"mgba", se_core_mgba},
     {"genesis_plus_gx", se_core_genesis_plus_gx},
+    {"beetle_psx", se_core_beetle_psx},
 };
 
 const SECoreAPI *coreNamed(NSString *identifier) {
@@ -191,6 +192,7 @@ NSString *const SECoreIDSnes9x = @"snes9x";
 NSString *const SECoreIDGambatte = @"gambatte";
 NSString *const SECoreIDMGBA = @"mgba";
 NSString *const SECoreIDGenesisPlusGX = @"genesis_plus_gx";
+NSString *const SECoreIDBeetlePSX = @"beetle_psx";
 
 static __weak SELibretroHost *gActiveHost;
 
