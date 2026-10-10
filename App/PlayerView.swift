@@ -1,3 +1,4 @@
+import SupersEmuKit
 import SwiftUI
 
 struct PlayerView: View {
@@ -15,6 +16,14 @@ struct PlayerView: View {
                 #if os(iOS)
                 TouchControls(input: session.input)
                 #endif
+            }
+            if let conflict = session.pendingConflict {
+                SaveConflictPrompt(conflict: conflict) { session.resolveConflict($0) }
+            } else if session.isSyncing {
+                ProgressView("Checking for newer saves…")
+                    .padding(24)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .accessibilityIdentifier("save-sync-progress")
             }
             if let error = session.errorMessage {
                 VStack(spacing: 12) {
@@ -55,7 +64,9 @@ struct PlayerView: View {
             Spacer()
             Text(session.status)
                 .font(.caption)
-                .lineLimit(1)
+                .lineLimit(2)
+                .minimumScaleFactor(0.75)
+                .multilineTextAlignment(.center)
                 .truncationMode(.tail)
                 .foregroundStyle(.white.opacity(0.7))
                 .accessibilityIdentifier("session-status")
@@ -69,7 +80,7 @@ struct PlayerView: View {
                 Label("Load", systemImage: "arrow.counterclockwise")
             }
             .fixedSize()
-            .disabled(!session.hasManualState)
+            .disabled(!session.hasManualState || session.isSyncing)
             .accessibilityIdentifier("load-state")
         }
         .buttonStyle(.borderless)

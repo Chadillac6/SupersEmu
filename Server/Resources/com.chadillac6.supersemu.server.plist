@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Launch daemon for SMAppService.daemon(plistName:). Embedded in SupersEmu.app/Contents/Library/LaunchDaemons
+     by scripts/embed-server-daemon.sh; runs as root at boot with no one logged in. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.chadillac6.supersemu.server</string>
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/supersemu-server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>Contents/MacOS/supersemu-server</string>
+        <string>run</string>
+        <string>--bootstrap</string>
+    </array>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>com.chadillac6.supersemu</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Library/Logs/supersemu-server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Library/Logs/supersemu-server.log</string>
+</dict>
+</plist>

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import SupersEmuKit
 import Observation
 
 struct Game: Identifiable, Hashable {
@@ -18,6 +19,10 @@ enum AppPaths {
     static let saves = root.appendingPathComponent("Saves", isDirectory: true)
     static let states = root.appendingPathComponent("States", isDirectory: true)
     static let system = root.appendingPathComponent("System", isDirectory: true)
+    /// Downloaded server games: Cache/<gameID>/<files> + manifest.json.
+    static let cache = root.appendingPathComponent("Cache", isDirectory: true)
+    static let covers = root.appendingPathComponent("Covers", isDirectory: true)
+    static let serverLibrarySnapshot = root.appendingPathComponent("ServerLibrary.json")
 
     static func autoState(for gameID: String) -> URL {
         states.appendingPathComponent(gameID, isDirectory: true).appendingPathComponent("auto.state")
@@ -32,7 +37,7 @@ enum AppPaths {
     }
 
     static func ensureDirectories() {
-        for url in [library, saves, states, system] {
+        for url in [library, saves, states, system, cache] {
             try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
     }
@@ -53,7 +58,15 @@ enum TitleNormalizer {
 @MainActor
 @Observable
 final class GameLibrary {
-    static let supportedExtensions: Set<String> = ["sfc", "smc"]
+    static let supportedExtensions = CoreRegistry.supportedExtensions
+
+    /// Console for a local ROM, from the core that handles its extension ("gbc" stays GBC, "dmg" -> GB).
+    static func system(for fileURL: URL) -> SystemID? {
+        let ext = fileURL.pathExtension.lowercased()
+        guard let core = CoreRegistry.core(forExtension: ext) else { return nil }
+        if let system = SystemID(rawValue: ext), core.systems.contains(system.rawValue) { return system }
+        return core.systems.first.flatMap(SystemID.init(rawValue:))
+    }
 
     private(set) var games: [Game] = []
     var importMessage: String?
@@ -79,7 +92,7 @@ final class GameLibrary {
                     id: id,
                     title: TitleNormalizer.title(fromFilename: url.lastPathComponent),
                     fileURL: url,
-                    console: "Super Nintendo",
+                    console: Self.system(for: url)?.displayName ?? "Unknown console",
                     hasResumePoint: FileManager.default.fileExists(atPath: AppPaths.autoState(for: id).path))
             }
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }

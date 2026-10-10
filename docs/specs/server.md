@@ -114,7 +114,8 @@ GET  /v1/library                    games this user may see (+ ETag for cheap re
 GET  /v1/games/{id}                 metadata, discs, artwork
 GET  /v1/games/{id}/files/{file}    download (HTTP Range for resume)
 GET  /v1/saves/{game}               this user's save heads + history
-PUT  /v1/saves/{game}/{rev}         upload immutable revision (parent rev required)
+PUT  /v1/saves/{game}/{kind}?slot&parent&core&coreVersion  upload immutable revision (stale parent = branch)
+GET  /v1/saves/{game}/revisions/{rev}  download one revision
 GET  /v1/events                     server-sent events: library.updated, save.synced, …
 admin: /v1/admin/users, /invites, /permissions, /library/import, /library/publish, /tokens
 ```
