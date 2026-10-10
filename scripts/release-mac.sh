@@ -66,6 +66,10 @@ xcodebuild -exportArchive -archivePath "$archive" -exportPath "$out/export" \
 app="$out/export/SupersEmu.app"
 
 codesign --verify --deep --strict "$app"
+app_archs="$(lipo -archs "$app/Contents/MacOS/SupersEmu")"
+server_archs="$(lipo -archs "$app/Contents/MacOS/supersemu-server")"
+[ "$app_archs" = "$server_archs" ] ||
+  { echo "error: app is '$app_archs' but supersemu-server is '$server_archs'" >&2; exit 1; }
 for bin in "$app/Contents/MacOS/SupersEmu" "$app/Contents/MacOS/supersemu-server"; do
   codesign -dv --verbose=4 "$bin" 2>&1 | grep -q 'flags=.*runtime' ||
     { echo "error: $bin is not signed with the hardened runtime" >&2; exit 1; }
