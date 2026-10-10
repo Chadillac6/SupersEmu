@@ -269,3 +269,25 @@ extension NetworkTests {
         XCTAssertLessThan(Date().timeIntervalSince(start), 5)
     }
 }
+
+extension NetworkTests {
+    func testTrustedResolveSkipsPlainHTTP() async throws {
+        let http = URL(string: "http://mini.local:8487")!, https = URL(string: "https://mini.local:8488")!
+        let connection = ServerConnection(profile: ServerProfile(serverName: "Mini", urls: [http, https],
+                                                                 certificateSHA256: String(repeating: "a", count: 64)),
+                                          tokenStore: InMemoryTokenStore())
+        let resolved = try await connection.resolveURL(trustedOnly: true, probe: { _ in })
+        XCTAssertEqual(resolved, https)
+        let lastGood = await connection.profile.lastGoodURL
+        XCTAssertEqual(lastGood, https)
+    }
+
+    func testLegacyProfileDecodes() throws {
+        let json = #"{"serverName":"Mini","urls":["https://mini.local:8487"],"certificateSHA256":"AB:CD"}"#
+        let profile = try SupersEmuJSON.decoder().decode(ServerProfile.self, from: Data(json.utf8))
+        XCTAssertEqual(profile.tokenAccount, "abcd")
+        XCTAssertFalse(profile.allowsInsecureTransport)
+        let roundTrip = try SupersEmuJSON.decoder().decode(ServerProfile.self, from: SupersEmuJSON.encoder().encode(profile))
+        XCTAssertEqual(roundTrip, profile)
+    }
+}

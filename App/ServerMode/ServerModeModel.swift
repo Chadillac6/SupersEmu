@@ -105,6 +105,8 @@ final class ServerModeModel {
         do {
             devices = try await client(authenticated: true).devices()
             devicesError = nil
+        } catch APIClientError.http(status: 404, _) {
+            devicesError = "This server doesn't provide the device list (/v1/admin/devices) yet."
         } catch {
             devicesError = "Couldn't load devices: \(error)"
         }
@@ -210,8 +212,18 @@ struct ServerModeError: Error, CustomStringConvertible {
 }
 
 /// Opens Server mode at launch with `--server-mode` or the "Open at launch" toggle.
+@MainActor
 enum ServerModeLaunch {
     static let defaultsKey = "openServerModeAtLaunch"
+    private static var handled = false
+
+    /// True once per launch when Server mode was requested.
+    static func consumeRequest() -> Bool {
+        guard !handled else { return false }
+        handled = true
+        return requested
+    }
+
     static var requested: Bool {
         CommandLine.arguments.contains("--server-mode") || UserDefaults.standard.bool(forKey: defaultsKey)
     }

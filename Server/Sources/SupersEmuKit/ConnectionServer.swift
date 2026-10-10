@@ -34,6 +34,21 @@ public struct ServerProfile: Codable, Sendable, Equatable {
     }
 }
 
+extension ServerProfile {
+    /// Tolerates profiles saved before `tokenAccount` / `allowsInsecureTransport` existed.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let serverName = try c.decode(String.self, forKey: .serverName)
+        let pin = try c.decodeIfPresent(String.self, forKey: .certificateSHA256)
+        self.init(serverName: serverName, urls: try c.decode([URL].self, forKey: .urls), certificateSHA256: pin,
+                  lastGoodURL: try c.decodeIfPresent(URL.self, forKey: .lastGoodURL),
+                  userID: try c.decodeIfPresent(String.self, forKey: .userID),
+                  deviceID: try c.decodeIfPresent(String.self, forKey: .deviceID),
+                  tokenAccount: try c.decodeIfPresent(String.self, forKey: .tokenAccount) ?? pin.map(CertificatePin.normalize) ?? serverName,
+                  allowsInsecureTransport: try c.decodeIfPresent(Bool.self, forKey: .allowsInsecureTransport) ?? false)
+    }
+}
+
 public enum ServerConnectionError: Error, Equatable, CustomStringConvertible {
     case noURLs
     case unreachable([String])
@@ -76,9 +91,11 @@ public actor ServerConnection {
 
     /// Tries each candidate in order with `probe` and remembers the first that succeeds.
     @discardableResult
-    public func resolveURL(probe: (@Sendable (URL) async throws -> Void)? = nil) async throws -> URL {
-        let candidates = candidates
+    /// With `trustedOnly`, skips URLs that `isTrustedTransport` rejects (anything that will carry the token).
+    public func resolveURL(trustedOnly: Bool = false, probe: (@Sendable (URL) async throws -> Void)? = nil) async throws -> URL {
         guard !candidates.isEmpty else { throw ServerConnectionError.noURLs }
+        let candidates = trustedOnly ? candidates.filter(profile.isTrustedTransport) : candidates
+        guard !candidates.isEmpty else { throw ServerConnectionError.insecureTransport }
         let session = session
         let probe = probe ?? { url in _ = try await APIClient(baseURL: url, token: nil, session: session).health() }
         var errors: [String] = []
@@ -100,15 +117,13 @@ public actor ServerConnection {
     /// An authenticated client on the first reachable URL.
     public func client() async throws -> APIClient {
         guard let token = try tokenStore.token(for: profile.tokenAccount) else { throw ServerConnectionError.notPaired }
-        let url = try await resolveURL()
-        guard profile.isTrustedTransport(url) else { throw ServerConnectionError.insecureTransport }
+        let url = try await resolveURL(trustedOnly: true)
         return APIClient(baseURL: url, token: token, session: session)
     }
 
     /// Redeems the pairing code, stores the device token and records who we are.
     public func pair(code: String, deviceName: String, platform: String) async throws -> PairResponse {
-        let url = try await resolveURL()
-        guard profile.isTrustedTransport(url) else { throw ServerConnectionError.insecureTransport }
+        let url = try await resolveURL(trustedOnly: true)
         let response = try await APIClient(baseURL: url, token: nil, session: session)
             .pair(PairRequest(code: code, deviceName: deviceName, platform: platform))
         try tokenStore.setToken(response.token, for: profile.tokenAccount)

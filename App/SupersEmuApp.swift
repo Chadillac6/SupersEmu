@@ -9,6 +9,9 @@ struct SupersEmuApp: App {
             RootView()
                 .environment(library)
                 .preferredColorScheme(.dark)
+                #if os(macOS)
+                .serverModeLaunchHook()
+                #endif
         }
         #if os(macOS)
         ServerModeScene()

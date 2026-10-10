@@ -20,11 +20,18 @@ struct SupersEmuCLI: AsyncParsableCommand {
 
         func client() throws -> APIClient {
             guard let url = URL(string: server) else { throw ValidationError("Invalid --server URL") }
-            let pin = certificateSHA256 ?? ProcessInfo.processInfo.environment["SUPERSEMU_CERT_SHA256"]
-                ?? FileManager.default.contents(atPath: "/Library/Application Support/SupersEmu Server/tls/server.cer").map(CertificatePin.sha256(ofDER:))
+            let isLocal = ["127.0.0.1", "localhost", "::1", "[::1]"].contains(url.host?.lowercased() ?? "")
+            // The local daemon's certificate is only a sensible default pin for the local daemon.
+            let localPin = isLocal
+                ? FileManager.default.contents(atPath: "/Library/Application Support/SupersEmu Server/tls/server.cer").map(CertificatePin.sha256(ofDER:))
+                : nil
+            let pin = certificateSHA256 ?? ProcessInfo.processInfo.environment["SUPERSEMU_CERT_SHA256"] ?? localPin
             let session = url.scheme == "https" ? PinnedCertificateDelegate.session(certificateSHA256: pin) : URLSession.shared
             let resolved = token ?? ProcessInfo.processInfo.environment["SUPERSEMU_TOKEN"]
-                ?? (try? String(contentsOfFile: "/Library/Application Support/SupersEmu Server/admin.token", encoding: .utf8))
+                ?? (isLocal ? try? String(contentsOfFile: "/Library/Application Support/SupersEmu Server/admin.token", encoding: .utf8) : nil)
+            if url.scheme != "https", !isLocal, resolved != nil {
+                throw ValidationError("Refusing to send a token over plain HTTP to \(url.host ?? server); use https://")
+            }
             return APIClient(baseURL: url, token: resolved?.trimmingCharacters(in: .whitespacesAndNewlines), session: session)
         }
     }

@@ -12,9 +12,23 @@ struct ServerModeScene: Scene {
             ServerModeView()
         }
         .defaultSize(width: 760, height: 860)
-        .defaultLaunchBehavior(ServerModeLaunch.requested ? .presented : .automatic)
         .commands { ServerModeCommands() }
     }
+}
+
+/// Applied to the main window: opens Server mode at launch when requested (`--server-mode` or the toggle).
+struct ServerModeLaunchHook: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+
+    func body(content: Content) -> some View {
+        content.task {
+            if ServerModeLaunch.consumeRequest() { openWindow(id: ServerModeScene.windowID) }
+        }
+    }
+}
+
+extension View {
+    func serverModeLaunchHook() -> some View { modifier(ServerModeLaunchHook()) }
 }
 
 struct ServerModeCommands: Commands {
