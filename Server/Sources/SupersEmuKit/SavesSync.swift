@@ -134,6 +134,8 @@ public actor SaveSyncEngine {
     private var uploadingID: UUID?
     private var isFlushing = false
     private var flushAgain = false
+    /// Bumped by `reset`; work that awaited across a reset must not write the old account's state back.
+    private var epoch = 0
 
     private var stateURL: URL { directory.appendingPathComponent("sync-state.json") }
     private var blobs: URL { directory.appendingPathComponent("pending", isDirectory: true) }
@@ -152,6 +154,7 @@ public actor SaveSyncEngine {
     /// Forgets queued uploads and per-line sync state, e.g. when this device disconnects from an account.
     public func reset() {
         for item in state.queue { try? FileManager.default.removeItem(at: blobURL(item.id)) }
+        epoch += 1
         state = PersistedState()
         persist()
     }
@@ -234,13 +237,16 @@ public actor SaveSyncEngine {
                 case .offline(let message):
                     offline = message
                     index = state.queue.count
+                case .stale:
+                    flushAgain = true
+                    index = state.queue.count
                 }
             }
         } while flushAgain && offline == nil
         return SaveFlushReport(uploaded: uploaded, remaining: state.queue.count, offlineError: offline)
     }
 
-    private enum UploadResult { case done, retryLater(String), offline(String) }
+    private enum UploadResult { case done, retryLater(String), offline(String), stale }
 
     private func upload(_ item: PendingUpload, client: APIClient) async -> UploadResult {
         let key = item.line.key
@@ -249,12 +255,14 @@ public actor SaveSyncEngine {
             return .retryLater("Queued copy missing")
         }
         let parent = item.detached ? item.detachedParentID : state.lines[key]?.baseRevisionID
+        let epoch = self.epoch
         uploadingID = item.id
         defer { uploadingID = nil }
         do {
             let response = try await client.uploadSave(gameID: item.line.gameID, kind: item.line.kind, slot: item.line.slot,
                                                        parentID: parent, coreID: item.core.id, coreVersion: item.core.version,
                                                        keepAsBranch: item.detached, onlyIfHead: !item.detached, data: data)
+            guard epoch == self.epoch else { return .stale }
             guard response.revision.sha256 == item.sha256 else {
                 return markFailed(item.id, "Server stored different bytes; will retry")
             }
@@ -263,6 +271,7 @@ public actor SaveSyncEngine {
                 // Another device moved this line while we were offline: our copy is kept as a branch copy and the
                 // player chooses on next launch. The base stays put, so later saves also land as branch copies.
                 let heads = (try? await client.saves(gameID: item.line.gameID).revisions) ?? []
+                guard epoch == self.epoch else { return .stale }
                 if let head = heads.last(where: { $0.kind == item.line.kind && $0.slot == item.line.slot && $0.isHead }) {
                     line.conflict = head
                 }
@@ -280,6 +289,7 @@ public actor SaveSyncEngine {
                 let lineHistory = ((try? await client.saves(gameID: item.line.gameID).revisions) ?? []).filter {
                     $0.kind == item.line.kind && $0.slot == item.line.slot && $0.isBranchCopy != true
                 }
+                guard epoch == self.epoch else { return .stale }
                 if let index = lineHistory.firstIndex(where: { $0.id == response.revision.id }), index > 0 {
                     line.conflict = lineHistory[index - 1]
                 }
@@ -288,8 +298,10 @@ public actor SaveSyncEngine {
             remove(item.id)
             return .done
         } catch let error as APIClientError {
+            guard epoch == self.epoch else { return .stale }
             return markFailed(item.id, error.description)
         } catch {
+            guard epoch == self.epoch else { return .stale }
             if let index = state.queue.firstIndex(where: { $0.id == item.id }) {
                 state.queue[index].attempts += 1
                 state.queue[index].lastError = error.localizedDescription
@@ -325,13 +337,15 @@ public actor SaveSyncEngine {
             for file in files { outcomes[file.line.key] = .localOnly }
             return outcomes
         }
+        let epoch = self.epoch
         var listings: [String: Result<[SaveRevision], Error>] = [:]
         for gameID in Set(files.map(\.line.gameID)) {
             do { listings[gameID] = .success(try await client.saves(gameID: gameID).revisions) } catch { listings[gameID] = .failure(error) }
         }
         for file in files {
+            guard epoch == self.epoch else { outcomes[file.line.key] = .failed("Disconnected from the server"); continue }
             switch listings[file.line.gameID] {
-            case .success(let revisions): outcomes[file.line.key] = await prepare(file, revisions: revisions, client: client)
+            case .success(let revisions): outcomes[file.line.key] = await prepare(file, revisions: revisions, client: client, epoch: epoch)
             case .failure(let error): outcomes[file.line.key] = .failed(Self.describe(error))
             case nil: outcomes[file.line.key] = .failed("No listing")
             }
@@ -340,11 +354,11 @@ public actor SaveSyncEngine {
         return outcomes
     }
 
-    private func prepare(_ file: LocalSaveFile, revisions: [SaveRevision], client: APIClient) async -> SavePullOutcome {
+    private func prepare(_ file: LocalSaveFile, revisions: [SaveRevision], client: APIClient, epoch: Int) async -> SavePullOutcome {
         let key = file.line.key
         var line = state.lines[key] ?? LineState()
         if let core = file.core { line.lastCore = core }
-        defer { state.lines[key] = line; persist() }
+        defer { commitLine(line, key: key, epoch: epoch) }
 
         let lineRevisions = revisions.filter { $0.kind == file.line.kind && $0.slot == file.line.slot }
         let localSHA = (try? Data(contentsOf: file.url)).map(Self.sha256)
@@ -416,12 +430,19 @@ public actor SaveSyncEngine {
         return .conflict(SaveConflict(line: file.line, remote: head))
     }
 
+    private func commitLine(_ line: LineState, key: String, epoch: Int) {
+        guard epoch == self.epoch else { return }
+        state.lines[key] = line
+        persist()
+    }
+
     /// Applies the user's choice for a conflict reported by `prepare`.
     public func resolve(_ conflict: SaveConflict, choice: SaveConflictChoice, file: LocalSaveFile) async throws {
         let key = conflict.line.key
         switch choice {
         case .useRemote:
             guard file.canLoad(conflict.remote) else { throw SaveSyncError.incompatibleCore }
+            let epoch = self.epoch
             guard let client = await provider.currentClient() else { throw SaveSyncError.noServer }
             // Preserve this device's copy as a branch before replacing it locally.
             if let localSHA = (try? Data(contentsOf: file.url)).map(Self.sha256), localSHA != state.lines[key]?.baseSHA256 || hasPending(key) {
@@ -430,6 +451,7 @@ public actor SaveSyncEngine {
                 enqueue(file, detachedFrom: .some(base))
             }
             try await download(conflict.remote, to: file.url, client: client)
+            guard epoch == self.epoch else { throw SaveSyncError.noServer }
             var line = state.lines[key] ?? LineState()
             line.baseRevisionID = conflict.remote.id
             line.baseSHA256 = conflict.remote.sha256
