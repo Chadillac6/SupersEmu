@@ -61,6 +61,9 @@ final class GameSession {
     func pause() {
         timer?.invalidate()
         timer = nil
+        #if os(macOS)
+        input.releaseAll()
+        #endif
     }
 
     private func tick() {
