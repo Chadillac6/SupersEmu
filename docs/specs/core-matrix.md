@@ -89,6 +89,10 @@ Build notes:
   - Builds verified: macOS arm64/x86_64, iOS device arm64 (`-sdk iphoneos`, target only), and the
     iOS Simulator app (arm64/x86_64) via `scripts/build.sh`.
 
+## Server import for disc systems (M2 import track)
+The server importer groups `.cue`+tracks, `.chd`, `.iso` and `.m3u` into disc games for PS1 (`psx`) and Sega CD (`segacd`), and detects 32X carts (`sega32x`). It files BIOS files by hash (`KnownBIOS`) and serves them at `/v1/bios`. Details and the verification status are in [disc-games.md](disc-games.md#import-track-built-and-verified-server).
+Verified with synthetic fixtures only. Core playback of these games belongs to the PS1 and Sega CD tracks.
+
 ## Tests and fixtures
 
 `Tests/HostTests/SECoreMatrixTests.mm` runs per core: loads + reports id/version/timing, renders

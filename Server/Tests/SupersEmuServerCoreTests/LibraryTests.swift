@@ -75,9 +75,20 @@ final class SystemDetectorTests: XCTestCase {
         guard case .needsReview = detect("Bad.gb", Data(count: 0x8000)) else { return XCTFail("gb without logo") }
         guard case .needsReview = detect("Bad.gba", Data(count: 0x400)) else { return XCTFail("gba without fixed byte") }
         guard case .needsReview = detect("Tiny.sfc", Data(count: 100)) else { return XCTFail("tiny snes") }
-        guard case .needsReview = detect("Knux.md", ROMFixtures.genesis(name: "SEGA 32X        ")) else { return XCTFail("32X") }
+        XCTAssertEqual(detect("Knux.md", ROMFixtures.genesis(name: "SEGA 32X        ")), .system(.sega32x))
+        XCTAssertEqual(detect("Knux.32x", ROMFixtures.genesis(name: "SEGA 32X        ")), .system(.sega32x))
+        var mars = [UInt8](ROMFixtures.genesis(name: "SEGA GENESIS    "))
+        mars.replaceSubrange(0x3C0..<0x3CF, with: Array("MARS CHECK MODE".utf8))
+        XCTAssertEqual(detect("Doom.32X", Data(mars)), .system(.sega32x))
+        XCTAssertEqual(detect("Doom.bin", Data(mars)), .system(.sega32x))
+        XCTAssertEqual(detect("Doom.smd", ROMFixtures.smd(from: Data(mars))), .system(.sega32x))
+        XCTAssertEqual(detect("Sonic.smd", ROMFixtures.smd(from: ROMFixtures.genesis())), .system(.genesis))
+        guard case .needsReview = detect("Plain.32x", ROMFixtures.genesis(name: "SEGA GENESIS    ")) else { return XCTFail("ambiguous 32x") }
+        guard case .needsReview = detect("Blank.32x", Data(count: 0x4000)) else { return XCTFail("blank 32x") }
         guard case .needsReview = detect("game.xyz", Data(count: 10)) else { return XCTFail("unknown ext") }
-        guard case .unsupported = detect("readme.txt", Data(count: 10)) else { return XCTFail("txt") }
+        XCTAssertEqual(detect("readme.txt", Data(count: 10)), .ignored)
+        XCTAssertEqual(detect("Box Art.PNG", Data(count: 10)), .ignored)
+        guard case .unsupported = detect("fix.ips", Data(count: 10)) else { return XCTFail("ips") }
         guard case .unsupported = detect("set.7z", Data(count: 10)) else { return XCTFail("7z") }
         XCTAssertEqual(detect(".DS_Store", Data(count: 10)), .ignored)
     }
@@ -188,8 +199,8 @@ final class LibraryTests: XCTestCase {
         let report = try await importer.importPaths([sources.path, "relative/path.sfc", "/does/not/exist.sfc"], auth: nil)
         XCTAssertEqual(Set(report.imported.map(\.system)), [.gb, .gba, .genesis])
         XCTAssertEqual(Set(report.imported.map(\.title)), ["Tetris", "Advance Game", "Sonic The Hedgehog"])
-        XCTAssertEqual(report.unsupported.count, 3, "\(report.unsupported)")
-        XCTAssertTrue(report.unsupported.contains { $0.contains("readme.txt") })
+        XCTAssertEqual(report.unsupported.count, 2, "\(report.unsupported)")
+        XCTAssertFalse(report.unsupported.contains { $0.contains("readme.txt") }, "notes are skipped silently")
         XCTAssertTrue(report.unsupported.contains { $0.contains("must be absolute") })
         XCTAssertTrue(report.unsupported.contains { $0.contains("not found") })
     }
@@ -237,8 +248,7 @@ final class LibraryTests: XCTestCase {
         let report = try await importer.importPaths([deflated.path, stored.path], auth: nil)
         XCTAssertEqual(Set(report.imported.map(\.title)), ["Alpha Game", "Beta", "Gamma"])
         XCTAssertEqual(report.needsReview.map(\.filename), ["odd.xyz"])
-        XCTAssertEqual(report.unsupported.count, 1)
-        XCTAssertTrue(report.unsupported[0].hasPrefix("set.zip/Roms/info.nfo"))
+        XCTAssertEqual(report.unsupported, [], "info.nfo is skipped silently")
         XCTAssertEqual(try Data(contentsOf: deflated), zipBytes, "zip must not be modified")
 
         let alpha = try XCTUnwrap(report.imported.first { $0.title == "Alpha Game" })
@@ -280,7 +290,7 @@ final class LibraryTests: XCTestCase {
             }
             XCTAssertEqual(Set(report.imported.map(\.title)), ["Good", "Sonic"])
             XCTAssertEqual(report.needsReview.map(\.filename), ["Mystery.bin"])
-            XCTAssertEqual(report.unsupported.count, 1)
+            XCTAssertEqual(report.unsupported, [])
         }
 
         let fm = FileManager.default

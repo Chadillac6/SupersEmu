@@ -14,14 +14,19 @@ public enum SystemDetector {
         case ignored
     }
 
-    /// Bytes of the file header that `detect` needs.
-    public static let headerLength = 512 + 0x4000  // room for one de-interleaved .smd block
+    /// Bytes of the file header that `detect` and `detectDisc` need: one de-interleaved .smd block, or a
+    /// disc's 16-sector system area in raw 2352-byte sectors.
+    public static let headerLength = max(512 + 0x4000, 16 * 2352)
 
     static let archiveExtensions: Set<String> = ["7z", "rar", "tar", "gz", "tgz", "bz2", "xz"]
-    static let nonGameExtensions: Set<String> = [
+    /// Notes, checksums, scans and disc sidecars that come with ROM sets. Skipped without reporting.
+    static let junkExtensions: Set<String> = [
         "txt", "nfo", "diz", "md5", "sfv", "sha1", "crc", "dat", "xml", "json", "ini", "cfg", "log", "url", "htm", "html",
-        "pdf", "doc", "docx", "rtf", "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "ips", "bps", "ups",
+        "pdf", "doc", "docx", "rtf", "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "tif", "tiff", "db", "sub", "sbi",
     ]
+    static let patchExtensions: Set<String> = ["ips", "bps", "ups", "xdelta"]
+    /// Disc formats the importer groups itself (`LibraryImporter`), never passed to `detect`.
+    public static let discExtensions: Set<String> = ["cue", "m3u", "chd", "iso"]
 
     static let nintendoLogo: [UInt8] = [
         0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
@@ -31,6 +36,19 @@ public enum SystemDetector {
 
     public static func isIgnorable(_ filename: String) -> Bool {
         filename == ".DS_Store" || filename.hasPrefix("._") || filename == "Thumbs.db" || filename == "desktop.ini"
+            || junkExtensions.contains((filename as NSString).pathExtension.lowercased())
+    }
+
+    /// Disc system from the first data track's first 16 sectors (2048-byte or raw 2352-byte sectors):
+    /// Sega CD's `SEGADISCSYSTEM` / `SEGA SEGASYSTEM` at sector 0, or the PS1 licence string in the system area.
+    public static func detectDisc(header: Data) -> SystemID? {
+        let bytes = [UInt8](header.prefix(headerLength))
+        for offset in [0, 16] where bytes.count >= offset + 16 {
+            let name = String(decoding: bytes[offset..<offset + 16], as: UTF8.self)
+            if name.hasPrefix("SEGADISCSYSTEM") || name.hasPrefix("SEGA SEGASYSTEM") { return .segacd }
+        }
+        if Data(bytes).range(of: Data("Sony Computer Entertainment".utf8)) != nil { return .psx }
+        return nil
     }
 
     /// - Parameters:
@@ -61,28 +79,40 @@ public enum SystemDetector {
             return .system(.gba)
         case "md", "gen", "bin", "smd":
             return detectGenesis(ext: ext, bytes: bytes, size: size)
+        case "32x":
+            if let header = segaHeader(bytes, at: 0x100), is32X(header: header, bytes: bytes) { return .system(.sega32x) }
+            return .needsReview("No Sega 32X header (\"32X\" at 0x100 or \"MARS\" at 0x3C0 missing)")
         case "zip":
             return .unsupported("Archive inside an archive")
         case _ where archiveExtensions.contains(ext):
             return .unsupported("Archive format .\(ext) is not supported (use .zip)")
-        case _ where nonGameExtensions.contains(ext):
-            return .unsupported("Not a game file (.\(ext))")
+        case _ where patchExtensions.contains(ext):
+            return .unsupported("Patch files are not applied (.\(ext))")
         default:
             return .needsReview(ext.isEmpty ? "Unknown file type (no extension)" : "Unknown file type .\(ext)")
         }
     }
 
     static func detectGenesis(ext: String, bytes: [UInt8], size: Int64) -> Result {
-        if let header = segaHeader(bytes, at: 0x100) ?? (size % 0x4000 == 512 ? smdHeader(bytes) : nil) {
-            if header.contains("32X") { return .needsReview("Sega 32X ROM (not supported yet)") }
-            return .system(.genesis)
+        if let header = segaHeader(bytes, at: 0x100) {
+            return .system(is32X(header: header, bytes: bytes) ? .sega32x : .genesis)
+        }
+        if size % 0x4000 == 512, let block = smdBlock(bytes), let header = segaHeader(block, at: 0x100) {
+            return .system(is32X(header: header, bytes: block) ? .sega32x : .genesis)
         }
         if bytes.count >= 0x20, String(decoding: bytes[0..<0x20], as: UTF8.self).contains("SEGADISCSYSTEM") {
-            return .needsReview("Sega CD disc image (not supported yet)")
+            return .needsReview("Sega CD disc image without a .cue sheet")
         }
         return .needsReview(ext == "bin"
             ? "Ambiguous .bin: no SEGA header at 0x100"
             : "No SEGA header at 0x100")
+    }
+
+    /// 32X carts have a Genesis header naming "SEGA 32X", and/or the "MARS CHECK MODE" security string at 0x3C0.
+    static func is32X(header: String, bytes: [UInt8]) -> Bool {
+        if header.contains("32X") { return true }
+        guard bytes.count >= 0x3C4 else { return false }
+        return bytes[0x3C0..<0x3C4].elementsEqual("MARS".utf8)
     }
 
     /// The 16-byte system name at `offset` if it contains "SEGA" (e.g. "SEGA GENESIS", " SEGA MEGA DRIVE").
@@ -93,13 +123,13 @@ public enum SystemDetector {
     }
 
     /// Super Magic Drive dumps: 512-byte header, then 16 KB blocks with odd bytes in the first half, even in the second.
-    static func smdHeader(_ bytes: [UInt8]) -> String? {
+    static func smdBlock(_ bytes: [UInt8]) -> [UInt8]? {
         guard bytes.count >= 512 + 0x4000 else { return nil }
         var block = [UInt8](repeating: 0, count: 0x4000)
         for i in 0..<0x2000 {
             block[i * 2 + 1] = bytes[512 + i]
             block[i * 2] = bytes[512 + 0x2000 + i]
         }
-        return segaHeader(block, at: 0x100)
+        return block
     }
 }

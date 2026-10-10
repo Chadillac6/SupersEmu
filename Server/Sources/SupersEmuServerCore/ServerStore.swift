@@ -8,6 +8,7 @@ public struct ServerPaths: Sendable {
     public var database: URL { root.appendingPathComponent("library.sqlite") }
     public var games: URL { root.appendingPathComponent("games", isDirectory: true) }
     public var artwork: URL { root.appendingPathComponent("artwork", isDirectory: true) }
+    public var bios: URL { root.appendingPathComponent("bios", isDirectory: true) }
     public var users: URL { root.appendingPathComponent("users", isDirectory: true) }
     public var incoming: URL { root.appendingPathComponent("Incoming", isDirectory: true) }
     public var adminToken: URL { root.appendingPathComponent("admin.token") }
