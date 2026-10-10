@@ -4,6 +4,7 @@ import SwiftUI
 struct GameDetailView: View {
     @Environment(ServerSession.self) private var server
     @Environment(DownloadCenter.self) private var downloads
+    @Environment(BIOSCenter.self) private var bios
     @Environment(\.dismiss) private var dismiss
     let item: LibraryItem
     let onPlay: (Game) -> Void
@@ -20,11 +21,29 @@ struct GameDetailView: View {
                         AvailabilityBadge(item: item, state: downloads.states[item.id])
                     }
                 }
+                if let system = item.system, bios.isMissing(system) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(system.missingBIOSMessage).font(.headline)
+                            Text("Add the BIOS file to \(server.serverName) and it will sync to this device automatically.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("needs-bios")
+                }
                 actions
+                if let detail = gameDetail, detail.discCount > 1 {
+                    Label("\(detail.discCount) discs · \(Self.size(detail.totalFileSize)) total", systemImage: "opticaldisc")
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("disc-count")
+                }
                 if let summary = detail?.summary, !summary.isEmpty {
                     Text(summary).foregroundStyle(.secondary)
                 }
-                if let files = detail?.files, files.count > 1 {
+                if let files = gameDetail?.files, files.count > 1 {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Files").font(.headline)
                         ForEach(files) { file in
@@ -40,6 +59,7 @@ struct GameDetailView: View {
             ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() }.accessibilityIdentifier("detail-done") }
         }
         .task(id: item.id) {
+            if item.system?.requiresBIOS == true { await bios.sync(using: server) }
             guard item.source == .server, server.isOnline else { return }
             detail = try? await server.detail(for: item.id)
         }
@@ -64,6 +84,7 @@ struct GameDetailView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .disabled(bios.isMissing(item.system) || bios.isSyncing && item.system?.requiresBIOS == true)
                 .accessibilityIdentifier("detail-play")
             }
             if item.source == .server {
@@ -101,6 +122,9 @@ struct GameDetailView: View {
             }
         }
     }
+
+    /// The server's detail, or the downloaded copy's when offline.
+    private var gameDetail: GameDetail? { detail ?? downloads.downloaded[item.id]?.detail }
 
     private var playableGame: Game? {
         item.source == .server ? downloads.playableGame(item.id) : item.playable

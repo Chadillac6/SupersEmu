@@ -75,6 +75,16 @@ FOUNDATION_EXPORT NSString *const SECoreIDPicoDrive;
 - (BOOL)saveStateToURL:(NSURL *)url error:(NSError **)error;
 - (BOOL)loadStateFromURL:(NSURL *)url error:(NSError **)error;
 
+/// Discs the core exposes via RETRO_ENVIRONMENT_SET_DISK_CONTROL_(EXT_)INTERFACE
+/// (an .m3u lists them); 0 when the core has no disk control.
+@property (nonatomic, readonly) NSInteger diskCount;
+/// Zero-based index of the inserted disc; >= diskCount when the tray is empty.
+@property (nonatomic, readonly) NSInteger currentDisk;
+/// The core's label for a disc (EXT interface only), else nil.
+- (nullable NSString *)labelForDisk:(NSInteger)index;
+/// Swaps to the zero-based disc `index`: opens the tray, selects the image, closes the tray.
+- (BOOL)insertDisk:(NSInteger)index error:(NSError **)error NS_SWIFT_NAME(insertDisk(_:));
+
 /// Writes battery-backed SRAM (if the game has any) to saveRAMURL.
 - (void)flushSaveRAM;
 /// Flushes SRAM and unloads the core. Safe to call more than once.

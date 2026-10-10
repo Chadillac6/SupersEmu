@@ -28,6 +28,11 @@ This spec is the Wave 0 contract every Milestone 2 track builds on.
   `GET /v1/bios/{sha256}` serves the bytes with Range/ETag, the same way as game files.
 - The client keeps `AppPaths.system` in sync with `/v1/bios`, writing each file under the canonical name the core expects, before launching a disc game.
   If a required BIOS is missing, the detail view shows "Needs <system> BIOS" and the Play button is disabled.
+- Client (multi-disc track, built): `BIOSStore` (`SupersEmuKit/BIOSSync.swift`) and `BIOSCenter` (`App/Client/BIOSCenter.swift`).
+  Sync runs after every library refresh, when a PS1/Sega CD detail opens, and before a disc game launches. Each file's SHA-256 is checked before it is written (atomically) under its exact canonical name; names that need sanitizing are rejected.
+  Synced files are tracked in `System/.supersemu-bios.json`, so only files the app wrote are replaced or removed; user-placed files are left alone. Offline, files already on disk that still match their hash count as installed.
+  A system counts as satisfied when any verified BIOS for it is installed. Matching a BIOS region to a game's region is **not implemented**.
+  Verified by `BIOSStoreTests` with synthetic bytes. **Unverified:** an end-to-end sync against the real `/v1/bios` routes, which the import track adds in parallel. The client calls `GET /v1/bios` and `GET /v1/bios/{sha256}` through the generic `APIClient.get`/`raw`, so no `APIClient` change is needed.
 - BIOS checker: `supersemu bios status` and the Server mode UI list each system's BIOS as present, missing or wrong-hash.
 
 ## Host
@@ -40,6 +45,14 @@ This spec is the Wave 0 contract every Milestone 2 track builds on.
   (see `core-matrix.md`).
 - Multi-disc track: the host implements `RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE` (and `_EXT`) and exposes `diskCount`, `currentDisk` and `insertDisk(_:)` to Swift.
   The player shows "Swap disc" for games with more than one disc.
+  Built: the host stores the legacy or EXT callbacks (a NULL interface clears them; they are reset on load and shutdown) and reports interface version 1.
+  `insertDisk(_:error:)` opens the tray (unless it is already open), sets the index, and always closes the tray again, so a failed swap leaves the previous disc running. Labels come from `get_image_label` (EXT only).
+  Verified by `Tests/HostTests/SEDiskControlTests.mm` against a stub three-disc core (`SELibretroHostRegisterCore` in `Host/SELibretroHost+Testing.h`).
+  **Unverified:** swapping with a real disc core (PS1/Sega CD cores land in parallel tracks).
+- Player: the "Swap disc" button (Command-D, or L + R + Select on a controller) pauses the game and opens a "Disc N of M" picker.
+  In the picker, up/down or the d-pad moves, Return / Start / the bottom face button inserts, and Esc / Select / the right face button cancels. Number keys 1-9 pick a disc directly.
+  `SUPERSEMU_DEBUG_DISC_COUNT=N` (Debug builds only) fakes an N-disc game so the UI can be captured without a disc core.
+- Library: a multi-disc game is one tile (one `GameSummary`). Its detail view shows "N discs · total size". The file-list downloader fetches and verifies every file; `ClientCacheTests.testDownloadsEveryFileOfSyntheticMultiDiscGame` (m3u + 2 discs) launches from the `.m3u`.
 - Save states and SRAM stay per game ID, shared across discs (for PS1, memory card 1 is per game).
 - PS1 (Beetle PSX, built): `need_fullpath` is true, so the host passes the `.cue`/`.chd`/`.m3u`/`.pbp` path and the core opens the tracks beside it.
   The core looks for `scph5500.bin`/`scph5501.bin`/`scph5502.bin` (by disc region) in `AppPaths.system`; with none present it boots its bundled OpenBIOS instead of failing.
