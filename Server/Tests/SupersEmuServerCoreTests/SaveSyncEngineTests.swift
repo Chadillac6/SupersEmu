@@ -328,4 +328,37 @@ final class SaveSyncEngineTests: XCTestCase {
             XCTAssertEqual(phone.read(self.auto), "y")
         }
     }
+
+    func testMissingLocalSaveIsRestoredFromServer() async throws {
+        try await withServer { server in
+            let phone = try self.device("Chad's iPhone", server: server)
+            try phone.write(self.auto, "level-5")
+            await phone.engine.enqueueUpload(phone.file(self.auto))
+            await phone.engine.flush()
+            try FileManager.default.removeItem(at: phone.file(self.auto).url)
+            let outcomes = await phone.engine.prepare([phone.file(self.auto)])
+            guard case .downloaded = outcomes[self.auto.key] else { return XCTFail("\(outcomes)") }
+            XCTAssertEqual(phone.read(self.auto), "level-5")
+        }
+    }
+
+    func testResetDropsQueuedUploads() async throws {
+        try await withServer { server in
+            let phone = try self.device("Chad's iPhone", server: server)
+            let online = await phone.provider.currentClient()
+            phone.provider.set(APIClient(baseURL: URL(string: "http://127.0.0.1:9")!, token: online!.token))
+            try phone.write(self.auto, "account-a")
+            await phone.engine.enqueueUpload(phone.file(self.auto))
+            await phone.engine.flush()
+            await phone.engine.reset()
+            let pending = await phone.engine.pendingCount
+            XCTAssertEqual(pending, 0)
+            let relaunched = SaveSyncEngine(directory: phone.engine.directory, provider: TestProvider(online))
+            let report = await relaunched.flush()
+            XCTAssertEqual(report.uploaded, 0)
+            let revisions = try await online!.saves(gameID: self.game).revisions
+            XCTAssertTrue(revisions.isEmpty)
+        }
+    }
+
 }

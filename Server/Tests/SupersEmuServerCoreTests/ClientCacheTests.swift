@@ -250,6 +250,20 @@ final class ClientCacheTests: XCTestCase {
         let library = try SupersEmuJSON.decoder().decode(LibraryResponse.self, from: Data(json.utf8))
         XCTAssertNil(library.games[0].addedAt)
     }
+
+    func testSameSizeCorruptionIsNotPlayable() async throws {
+        let detail = try insertGame(title: "Golf", bytes: Self.randomBytes(10_000))
+        try await withClient(app()) { client in
+            try await GameDownloader(client: client, cache: self.cache).download(gameID: detail.game.id)
+        }
+        let cached = try XCTUnwrap(cache.cachedGame(detail.game.id))
+        let url = try XCTUnwrap(cache.launchFileURL(for: cached))
+        var bytes = try Data(contentsOf: url)
+        bytes[0] ^= 0xFF
+        try bytes.write(to: url)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+        XCTAssertNil(cache.cachedGame(detail.game.id), "a same-size modified ROM must fail verification")
+    }
 }
 
 final class RequestLog: @unchecked Sendable {
@@ -282,4 +296,5 @@ struct RangeObservingResponder<Inner: HTTPResponder>: HTTPResponder where Inner.
         head.headerFields[.range] = nil
         return try await inner.respond(to: Request(head: head, body: request.body), context: context)
     }
+
 }

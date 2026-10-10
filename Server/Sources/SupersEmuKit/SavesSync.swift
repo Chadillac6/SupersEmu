@@ -149,6 +149,13 @@ public actor SaveSyncEngine {
 
     public func setProvider(_ provider: any SaveSyncServerProvider) { self.provider = provider }
 
+    /// Forgets queued uploads and per-line sync state, e.g. when this device disconnects from an account.
+    public func reset() {
+        for item in state.queue { try? FileManager.default.removeItem(at: blobURL(item.id)) }
+        state = PersistedState()
+        persist()
+    }
+
     public var pendingCount: Int { state.queue.count }
 
     public func status(of line: SaveLine) -> SaveSyncStatus {
@@ -349,6 +356,17 @@ public actor SaveSyncEngine {
         }
         if head.id == line.baseRevisionID {
             if let conflict = line.conflict { return .conflict(SaveConflict(line: file.line, remote: conflict)) }
+            if localSHA == nil, !hasPending {
+                // The local copy went missing but the server still has it: restore instead of starting fresh.
+                guard file.canLoad(head) else { return .incompatible(head) }
+                do {
+                    try await download(head, to: file.url, client: client)
+                } catch {
+                    return .failed(Self.describe(error))
+                }
+                line.baseSHA256 = head.sha256
+                return .downloaded(head)
+            }
             if let localSHA, localSHA != line.baseSHA256, !hasPending { state.lines[key] = line; enqueue(file, detachedFrom: nil) }
             return .upToDate
         }

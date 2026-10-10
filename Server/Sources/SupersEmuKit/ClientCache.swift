@@ -37,10 +37,39 @@ public struct GameCache: Sendable {
         guard Self.isSafeID(gameID), let data = try? Data(contentsOf: manifestURL(for: gameID)),
               let cached = try? SupersEmuJSON.decoder().decode(CachedGame.self, from: data) else { return nil }
         let complete = cached.detail.files.allSatisfy { file in
-            let size = (try? FileManager.default.attributesOfItem(atPath: fileURL(gameID: gameID, file: file).path)[.size] as? NSNumber)?.int64Value
-            return size == file.size
+            let url = fileURL(gameID: gameID, file: file)
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  (attributes[.size] as? NSNumber)?.int64Value == file.size else { return false }
+            return Self.verifiedSHA256(of: url, size: file.size, modified: attributes[.modificationDate] as? Date) == file.id.lowercased()
         }
         return complete ? cached : nil
+    }
+
+    /// Hashes each cached file once per (size, mtime) so launches re-verify bytes without rehashing every refresh.
+    static func verifiedSHA256(of url: URL, size: Int64, modified: Date?) -> String? {
+        if let hit = hashMemo.lookup(url.path, size: size, modified: modified) { return hit }
+        guard let sha = try? GameDownloader.sha256(of: url) else { return nil }
+        hashMemo.store(url.path, size: size, modified: modified, sha256: sha)
+        return sha
+    }
+
+    private static let hashMemo = HashMemo()
+
+    private final class HashMemo: @unchecked Sendable {
+        private struct Entry { var size: Int64; var modified: Date?; var sha256: String }
+        private let lock = NSLock()
+        private var entries: [String: Entry] = [:]
+
+        func lookup(_ path: String, size: Int64, modified: Date?) -> String? {
+            lock.withLock {
+                guard let entry = entries[path], entry.size == size, entry.modified == modified else { return nil }
+                return entry.sha256
+            }
+        }
+
+        func store(_ path: String, size: Int64, modified: Date?, sha256: String) {
+            lock.withLock { entries[path] = Entry(size: size, modified: modified, sha256: sha256) }
+        }
     }
 
     public func cachedGames() -> [CachedGame] {

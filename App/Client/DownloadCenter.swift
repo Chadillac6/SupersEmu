@@ -18,6 +18,8 @@ final class DownloadCenter {
     private(set) var states: [String: State] = [:]
     private(set) var downloaded: [String: CachedGame] = [:]
     @ObservationIgnored private var tasks: [String: Task<Void, Never>] = [:]
+    /// Bumped on start/remove so a task that finishes after Remove can't resurrect the game.
+    @ObservationIgnored private var generations: [String: Int] = [:]
 
     init(cache: GameCache = GameCache(root: AppPaths.cache)) {
         self.cache = cache
@@ -47,18 +49,20 @@ final class DownloadCenter {
         }
         let total = session.games.first { $0.id == gameID }?.totalSize ?? 0
         states[gameID] = .downloading(.init(receivedBytes: cache.bytesOnDisk(for: gameID), totalBytes: total))
+        let generation = (generations[gameID] ?? 0) + 1
+        generations[gameID] = generation
         tasks[gameID] = Task { [weak self] in
             do {
                 let cached = try await downloader.download(gameID: gameID) { progress in
                     Task { @MainActor [weak self] in self?.report(progress, for: gameID) }
                 }
-                self?.finish(gameID, cached: cached)
+                self?.finish(gameID, cached: cached, generation: generation)
             } catch is CancellationError {
-                self?.finish(gameID, error: nil)
+                self?.finish(gameID, error: nil, generation: generation)
             } catch let error as URLError where error.code == .cancelled {
-                self?.finish(gameID, error: nil)
+                self?.finish(gameID, error: nil, generation: generation)
             } catch {
-                self?.finish(gameID, error: error)
+                self?.finish(gameID, error: error, generation: generation)
             }
         }
     }
@@ -69,6 +73,8 @@ final class DownloadCenter {
 
     func remove(_ gameID: String) {
         cancel(gameID)
+        tasks[gameID] = nil
+        generations[gameID, default: 0] += 1
         try? cache.remove(gameID)
         states[gameID] = nil
         reload()
@@ -77,6 +83,7 @@ final class DownloadCenter {
     /// Downloads belong to the account that made them; called when this device disconnects.
     func removeAll() {
         for task in tasks.values { task.cancel() }
+        for id in tasks.keys { generations[id, default: 0] += 1 }
         tasks = [:]
         states = [:]
         for id in downloaded.keys { try? cache.remove(id) }
@@ -93,13 +100,19 @@ final class DownloadCenter {
         states[gameID] = .downloading(progress)
     }
 
-    private func finish(_ gameID: String, cached: CachedGame) {
+    private func finish(_ gameID: String, cached: CachedGame, generation: Int) {
+        guard generations[gameID] == generation else {
+            // Removed while finishing: drop what the stale task wrote unless a new download owns the folder.
+            if tasks[gameID] == nil { try? cache.remove(gameID) }
+            return
+        }
         tasks[gameID] = nil
         states[gameID] = nil
         downloaded[gameID] = cached
     }
 
-    private func finish(_ gameID: String, error: Error?) {
+    private func finish(_ gameID: String, error: Error?, generation: Int) {
+        guard generations[gameID] == generation else { return }
         tasks[gameID] = nil
         if let error {
             states[gameID] = .failed((error as? DownloadError)?.description ?? error.localizedDescription)

@@ -59,8 +59,11 @@ final class ServerSession {
 
     func pair(_ payload: PairingPayload) async throws {
         let request = PairRequest(code: payload.code, deviceName: Self.deviceName, platform: Self.platform)
+        // Device tokens are bearer secrets: only pair over HTTPS (plain HTTP is allowed for loopback dev servers).
+        let urls = payload.urls.filter { $0.scheme == "https" || Self.isLoopback($0) }
+        guard !urls.isEmpty else { throw PairingError.insecureAddress }
         var lastError: Error = APIClientError.invalidResponse
-        for url in payload.urls {
+        for url in urls {
             let trust = PinnedCertificateDelegate(certificateSHA256: payload.certificateSHA256, trustOnFirstUse: true, expectedHost: url.host)
             let pairingSession = URLSession(configuration: Self.configuration, delegate: trust, delegateQueue: nil)
             defer { pairingSession.finishTasksAndInvalidate() }
@@ -69,7 +72,7 @@ final class ServerSession {
                 let response = try await client.pair(request)
                 let pin = payload.certificateSHA256 ?? (url.scheme == "https" ? trust.observedSHA256 : nil)
                 let credential = ServerCredential(
-                    serverName: response.serverName, urls: payload.urls, certificateSHA256: pin,
+                    serverName: response.serverName, urls: urls, certificateSHA256: pin,
                     token: response.token, deviceID: response.deviceID, user: response.user)
                 try store.save(credential)
                 generation += 1
@@ -128,7 +131,13 @@ final class ServerSession {
         status = .offline(failure)
     }
 
+    static func isLoopback(_ url: URL) -> Bool {
+        ["127.0.0.1", "localhost", "::1"].contains(url.host?.lowercased() ?? "")
+    }
+
     func signOut() {
+        // Queued saves belong to this account; never let the next pairing upload them.
+        Task { await SaveSync.shared.engine.reset() }
         generation += 1
         refreshTask?.cancel()
         refreshTask = nil
@@ -211,5 +220,15 @@ final class ServerSession {
         #else
         "macos"
         #endif
+    }
+}
+
+enum PairingError: LocalizedError {
+    case insecureAddress
+
+    var errorDescription: String? {
+        switch self {
+        case .insecureAddress: return "Use an https:// server address to pair."
+        }
     }
 }
