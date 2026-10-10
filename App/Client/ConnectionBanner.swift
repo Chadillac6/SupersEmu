@@ -6,7 +6,7 @@ import SupersEmuKit
 struct ConnectionBanner: View {
     @Environment(ServerSession.self) private var server
     @Environment(DownloadCenter.self) private var downloads
-    @State private var recovered = false
+    @State private var dismissedRecovery: Date?
     @State private var retrying = false
 
     var body: some View {
@@ -16,23 +16,24 @@ struct ConnectionBanner: View {
             } else if server.connection == .connecting, server.games.isEmpty {
                 ProgressView("Connecting to \(server.serverName)…")
                     .padding(.horizontal, 20)
-            } else if recovered {
+            } else if showsRecovery {
                 pill("Back online. Saves made offline are syncing.", symbol: "checkmark.icloud", id: "connection-recovered")
             } else if server.connection == .connected(.tailscale) {
                 pill("Connected to \(server.serverName) via Tailscale", symbol: "network.badge.shield.half.filled", id: "connection-tailscale")
             }
         }
         .animation(.default, value: server.connection)
-        .animation(.default, value: recovered)
-        .onChange(of: server.connection) { old, new in
-            guard new.isConnected, !old.isConnected, old != .connecting else { return }
-            recovered = true
+        .animation(.default, value: showsRecovery)
+        .task(id: server.recoveredAt) {
+            guard let recoveredAt = server.recoveredAt else { return }
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            dismissedRecovery = recoveredAt
         }
-        .task(id: recovered) {
-            guard recovered else { return }
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            recovered = false
-        }
+    }
+
+    private var showsRecovery: Bool {
+        guard let recoveredAt = server.recoveredAt, recoveredAt != dismissedRecovery, server.isOnline else { return false }
+        return Date().timeIntervalSince(recoveredAt) < 6
     }
 
     private var unavailableCount: Int {

@@ -25,6 +25,8 @@ final class ServerSession {
     private(set) var firstSeen: [String: Date] = [:]
     private(set) var activeURL: URL?
     private(set) var lastRefreshed: Date?
+    /// When the server came back after being unreachable (or presenting the wrong certificate).
+    private(set) var recoveredAt: Date?
 
     @ObservationIgnored private let store: CredentialStore
     @ObservationIgnored private let snapshotURL: URL
@@ -34,6 +36,7 @@ final class ServerSession {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var monitor: ConnectionMonitor
     @ObservationIgnored private var retryTask: Task<Void, Never>?
+    @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
     @ObservationIgnored private var trust: PinnedCertificateDelegate?
     @ObservationIgnored private var pathMonitor: NWPathMonitor?
     @ObservationIgnored private var lastPath: String?
@@ -149,8 +152,10 @@ final class ServerSession {
                 activeURL = url
                 apply(library.games)
                 lastRefreshed = Date()
+                if connection == .unreachable || connection == .certificateMismatch { recoveredAt = Date() }
                 monitor.succeeded(via: url)
                 publish()
+                startHeartbeat()
                 retryTask?.cancel()
                 retryTask = nil
                 return
@@ -172,6 +177,24 @@ final class ServerSession {
         monitor.failed(failure)
         publish()
         scheduleRetry()
+    }
+
+    /// Notices the server going away while connected (e.g. the Mac mini shut down) without waiting for a refresh.
+    private func startHeartbeat() {
+        guard heartbeatTask == nil else { return }
+        heartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                await self.heartbeat()
+            }
+        }
+    }
+
+    private func heartbeat() async {
+        guard connection.isConnected, refreshTask == nil, let credential, let url = activeURL else { return }
+        let client = APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
+        if (try? await client.health()) == nil { await refresh() }
     }
 
     private func publish() {
@@ -229,6 +252,8 @@ final class ServerSession {
         refreshTask = nil
         retryTask?.cancel()
         retryTask = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
         store.delete()
         urlSession = nil
         trust = nil
