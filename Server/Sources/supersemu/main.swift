@@ -7,7 +7,7 @@ struct SupersEmuCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "supersemu",
         abstract: "Control a SupersEmu Server from scripts and bots (OpenClaw).",
-        subcommands: [Server.self])
+        subcommands: [Server.self, Library.self])
 
     struct Connection: ParsableArguments {
         @Option(help: "Server URL. Env: SUPERSEMU_SERVER.")

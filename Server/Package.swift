@@ -36,7 +36,9 @@ let package = Package(
             dependencies: [
                 "SupersEmuKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            ]),
+            ],
+            // main.swift uses @main; needed once the target has more than one source file.
+            swiftSettings: [.unsafeFlags(["-parse-as-library"])]),
         .testTarget(
             name: "SupersEmuServerCoreTests",
             dependencies: [
