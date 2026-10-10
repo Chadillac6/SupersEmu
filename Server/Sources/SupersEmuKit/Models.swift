@@ -137,3 +137,23 @@ public struct APIErrorBody: Codable, Sendable, Equatable {
         self.error = error
     }
 }
+
+/// A BIOS/firmware file the server holds for disc systems (see docs/specs/disc-games.md).
+public struct BIOSFileInfo: Codable, Sendable, Equatable, Identifiable {
+    /// SHA-256 of the file contents.
+    public var id: String
+    /// Canonical filename the core looks for in the system directory.
+    public var filename: String
+    public var system: SystemID
+    public var region: String?
+    public var required: Bool
+
+    public init(id: String, filename: String, system: SystemID, region: String?, required: Bool) {
+        self.id = id
+        self.filename = filename
+        self.system = system
+        self.region = region
+        self.required = required
+    }
+}
+

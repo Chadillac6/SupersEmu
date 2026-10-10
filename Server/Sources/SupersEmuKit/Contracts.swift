@@ -73,8 +73,11 @@ public struct ImportReport: Codable, Sendable, Equatable {
     public var duplicates: Int
     public var needsReview: [ReviewItem]
     public var unsupported: [String]
-    public init(imported: [GameSummary], duplicates: Int, needsReview: [ReviewItem], unsupported: [String]) {
+    /// BIOS files filed by this import (M2 import track). Optional so older servers still decode.
+    public var bios: [BIOSFileInfo]?
+    public init(imported: [GameSummary], duplicates: Int, needsReview: [ReviewItem], unsupported: [String], bios: [BIOSFileInfo]? = nil) {
         self.imported = imported; self.duplicates = duplicates; self.needsReview = needsReview; self.unsupported = unsupported
+        self.bios = bios
     }
 }
 

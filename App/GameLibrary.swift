@@ -65,7 +65,18 @@ final class GameLibrary {
         let ext = fileURL.pathExtension.lowercased()
         guard let core = CoreRegistry.core(forExtension: ext) else { return nil }
         if let system = SystemID(rawValue: ext), core.systems.contains(system.rawValue) { return system }
-        return core.systems.first.flatMap(SystemID.init(rawValue:))
+        let system = core.systems.first.flatMap(SystemID.init(rawValue:))
+        return system == .genesis && is32X(fileURL) ? .sega32x : system
+    }
+
+    /// Same check as the server's `SystemDetector`: "SEGA ... 32X" system name at 0x100, or "MARS" at 0x3C0.
+    static func is32X(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let bytes = try? handle.read(upToCount: 0x3C4), bytes.count >= 0x110 else { return false }
+        let header = String(decoding: bytes[0x100..<0x110], as: UTF8.self)
+        guard header.contains("SEGA") else { return false }
+        return header.contains("32X") || (bytes.count >= 0x3C4 && bytes[0x3C0..<0x3C4].elementsEqual("MARS".utf8))
     }
 
     private(set) var games: [Game] = []
@@ -99,11 +110,15 @@ final class GameLibrary {
     }
 
     func importFiles(_ urls: [URL]) {
-        var imported = 0, duplicates = 0, unsupported = 0
+        var imported = 0, duplicates = 0, unsupported = 0, multiFile = 0
         var knownIDs = Set(games.map(\.id))
         for url in urls {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            if CoreRegistry.multiFileExtensions.contains(url.pathExtension.lowercased()) {
+                multiFile += 1
+                continue
+            }
             guard Self.supportedExtensions.contains(url.pathExtension.lowercased()),
                   let id = try? Self.sha256(of: url) else {
                 unsupported += 1
@@ -129,6 +144,7 @@ final class GameLibrary {
         var parts = ["Imported \(imported) game\(imported == 1 ? "" : "s")"]
         if duplicates > 0 { parts.append("skipped \(duplicates) already in your library") }
         if unsupported > 0 { parts.append("\(unsupported) not recognised") }
+        if multiFile > 0 { parts.append("\(multiFile) .cue/.m3u disc set\(multiFile == 1 ? "" : "s") need the home server import") }
         importMessage = parts.joined(separator: ", ")
         refresh()
     }

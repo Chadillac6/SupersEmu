@@ -201,7 +201,8 @@ targets:
     platform: [iOS, macOS]
     sources:
       - path: Host/CoreEntry/SECoreEntry.c
-        compilerFlags: ["-DSE_CORE_ID=genesis_plus_gx", "-DSE_CORE_REVISION=393f70c"]
+        compilerFlags: ["-DSE_CORE_ID=genesis_plus_gx", "-DSE_CORE_REVISION=393f70c", "-DSE_CORE_LOAD_GAME=se_gpgx_load_game"]
+      - path: Host/CoreEntry/genesis_plus_gx/se_load_game.c
       - path: Vendor/cores/genesis_plus_gx
         includes:
           - "core/*.c"
@@ -229,11 +230,33 @@ targets:
           - "libretro/libretro-common/memmap/memalign.c"
           - "libretro/libretro-common/string/stdstring.c"
           - "libretro/libretro-common/vfs/vfs_implementation.c"
+          # Sega CD: CHD images (libchdr) and OGG audio tracks (Tremor), as upstream Makefile.libretro.
+          - "core/sound/tremor/*.c"
+          - "libretro/deps/libchdr/src/*.c"
+          - "libretro/deps/lzma-19.00/src/Alloc.c"
+          - "libretro/deps/lzma-19.00/src/Bra86.c"
+          - "libretro/deps/lzma-19.00/src/BraIA64.c"
+          - "libretro/deps/lzma-19.00/src/CpuArch.c"
+          - "libretro/deps/lzma-19.00/src/Delta.c"
+          - "libretro/deps/lzma-19.00/src/LzFind.c"
+          - "libretro/deps/lzma-19.00/src/Lzma86Dec.c"
+          - "libretro/deps/lzma-19.00/src/LzmaDec.c"
+          - "libretro/deps/lzma-19.00/src/LzmaEnc.c"
+          - "libretro/deps/lzma-19.00/src/Sort.c"
+          - "libretro/deps/zstd/lib/common/entropy_common.c"
+          - "libretro/deps/zstd/lib/common/error_private.c"
+          - "libretro/deps/zstd/lib/common/fse_decompress.c"
+          - "libretro/deps/zstd/lib/common/zstd_common.c"
+          - "libretro/deps/zstd/lib/common/xxhash.c"
+          - "libretro/deps/zstd/lib/decompress/huf_decompress.c"
+          - "libretro/deps/zstd/lib/decompress/zstd_ddict.c"
+          - "libretro/deps/zstd/lib/decompress/zstd_decompress.c"
+          - "libretro/deps/zstd/lib/decompress/zstd_decompress_block.c"
     settings:
       base:
         <<: *core_settings
         GCC_PREFIX_HEADER: Host/CoreEntry/genesis_plus_gx/prefix.h
-        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "LSB_FIRST", "BYTE_ORDER=LITTLE_ENDIAN", "HAVE_ZLIB", "USE_16BPP_RENDERING", "FRONTEND_SUPPORTS_RGB565", "USE_LIBRETRO_VFS", "M68K_OVERCLOCK_SHIFT=20", "Z80_OVERCLOCK_SHIFT=20", "HAVE_YM3438_CORE", "HAVE_OPLL_CORE", "USE_PER_SOUND_CHANNELS_CONFIG", "MAXROMSIZE=33554432"]
+        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "LSB_FIRST", "BYTE_ORDER=LITTLE_ENDIAN", "HAVE_ZLIB", "USE_16BPP_RENDERING", "FRONTEND_SUPPORTS_RGB565", "USE_LIBRETRO_VFS", "M68K_OVERCLOCK_SHIFT=20", "Z80_OVERCLOCK_SHIFT=20", "HAVE_YM3438_CORE", "HAVE_OPLL_CORE", "USE_PER_SOUND_CHANNELS_CONFIG", "MAXROMSIZE=33554432", "USE_LIBCHDR", "USE_LIBTREMOR", "_7ZIP_ST", "ZSTD_DISABLE_ASM"]
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core"
           - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/z80"
@@ -247,6 +270,225 @@ targets:
           - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/core/cart_hw/svp"
           - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/libretro"
           - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/libretro/libretro-common/include"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/libretro/deps/libchdr/include"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/libretro/deps/lzma-19.00/include"
+          - "$(SRCROOT)/Vendor/cores/genesis_plus_gx/libretro/deps/zstd/lib"
+          - "$(SRCROOT)/Host/CoreEntry"
+
+  # 32X (also runs Genesis/Sega CD, but SupersEmu uses it for 32X only). C interpreters only:
+  # FAME 68k, CZ80, MAME SH-2; no Cyclone/DrZ80 ARM asm and no SH-2/SVP dynarec (iOS forbids JIT).
+  PicoDriveCore:
+    type: library.static
+    platform: [iOS, macOS]
+    sources:
+      - path: Host/CoreEntry/SECoreEntry.c
+        compilerFlags: ["-DSE_CORE_ID=picodrive", "-DSE_CORE_REVISION=1890c29"]
+      - path: Vendor/cores/picodrive
+        includes:
+          - "pico/pico.c"
+          - "pico/cart.c"
+          - "pico/memory.c"
+          - "pico/state.c"
+          - "pico/sek.c"
+          - "pico/z80if.c"
+          - "pico/videoport.c"
+          - "pico/draw2.c"
+          - "pico/draw.c"
+          - "pico/mode4.c"
+          - "pico/misc.c"
+          - "pico/eeprom.c"
+          - "pico/patch.c"
+          - "pico/debug.c"
+          - "pico/media.c"
+          - "pico/sms.c"
+          - "pico/cd/mcd.c"
+          - "pico/cd/memory.c"
+          - "pico/cd/sek.c"
+          - "pico/cd/cdc.c"
+          - "pico/cd/cdd.c"
+          - "pico/cd/cd_image.c"
+          - "pico/cd/cd_parse.c"
+          - "pico/cd/gfx.c"
+          - "pico/cd/gfx_dma.c"
+          - "pico/cd/misc.c"
+          - "pico/cd/pcm.c"
+          - "pico/cd/megasd.c"
+          - "pico/32x/32x.c"
+          - "pico/32x/memory.c"
+          - "pico/32x/draw.c"
+          - "pico/32x/sh2soc.c"
+          - "pico/32x/pwm.c"
+          - "pico/pico/pico.c"
+          - "pico/pico/memory.c"
+          - "pico/pico/xpcm.c"
+          - "pico/carthw/carthw.c"
+          - "pico/carthw/eeprom_spi.c"
+          - "pico/carthw/svp/svp.c"
+          - "pico/carthw/svp/memory.c"
+          - "pico/carthw/svp/ssp16.c"
+          - "pico/sound/sound.c"
+          - "pico/sound/resampler.c"
+          - "pico/sound/sn76496.c"
+          - "pico/sound/ym2612.c"
+          - "pico/sound/ym2413.c"
+          - "pico/sound/vgm.c"
+          - "pico/sound/mix.c"
+          - "cpu/fame/famec.c"
+          - "cpu/cz80/cz80.c"
+          - "cpu/sh2/sh2.c"
+          - "cpu/sh2/mame/sh2pico.c"
+          - "platform/common/mp3.c"
+          - "platform/common/mp3_sync.c"
+          - "platform/common/mp3_drmp3.c"
+          - "platform/common/ogg.c"
+          - "platform/common/tremor/*.c"
+          - "unzip/unzip.c"
+          - "platform/libretro/libretro.c"
+          - "platform/libretro/libretro-common/compat/compat_strcasestr.c"
+          - "platform/libretro/libretro-common/compat/compat_strl.c"
+          - "platform/libretro/libretro-common/compat/compat_posix_string.c"
+          - "platform/libretro/libretro-common/compat/fopen_utf8.c"
+          - "platform/libretro/libretro-common/encodings/encoding_utf.c"
+          - "platform/libretro/libretro-common/file/file_path.c"
+          - "platform/libretro/libretro-common/file/file_path_io.c"
+          - "platform/libretro/libretro-common/formats/png/rpng.c"
+          - "platform/libretro/libretro-common/memmap/memmap.c"
+          - "platform/libretro/libretro-common/streams/file_stream.c"
+          - "platform/libretro/libretro-common/streams/file_stream_transforms.c"
+          - "platform/libretro/libretro-common/streams/trans_stream.c"
+          - "platform/libretro/libretro-common/streams/trans_stream_pipe.c"
+          - "platform/libretro/libretro-common/streams/trans_stream_zlib.c"
+          - "platform/libretro/libretro-common/string/stdstring.c"
+          - "platform/libretro/libretro-common/time/rtime.c"
+          - "platform/libretro/libretro-common/vfs/vfs_implementation.c"
+    settings:
+      base:
+        <<: *core_settings
+        GCC_PREFIX_HEADER: Host/CoreEntry/picodrive/prefix.h
+        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "USE_LIBRETRO_VFS", "HAVE_ZLIB", "EMU_F68K", "_USE_CZ80", "USE_TREMOR", "UINT8=uint8_t", "UINT16=uint16_t", "UINT32=uint32_t", "INT8=int8_t", "INT16=int16_t", "INT32=int32_t"]
+        OTHER_CFLAGS: ["-fno-strict-aliasing"]
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Vendor/cores/picodrive"
+          - "$(SRCROOT)/Vendor/cores/picodrive/platform/libretro/libretro-common/include"
+          - "$(SRCROOT)/Vendor/cores/picodrive/platform/libretro/libretro-common/include/compat"
+          - "$(SRCROOT)/Vendor/cores/picodrive/platform/libretro/libretro-common/include/encodings"
+          - "$(SRCROOT)/Vendor/cores/picodrive/platform/libretro/libretro-common/include/formats"
+          - "$(SRCROOT)/Vendor/cores/picodrive/platform/libretro/libretro-common/include/streams"
+          - "$(SRCROOT)/Vendor/cores/picodrive/platform/libretro/libretro-common/include/string"
+          - "$(SRCROOT)/Vendor/cores/picodrive/platform/libretro/libretro-common/include/vfs"
+          - "$(SRCROOT)/Vendor/cores/picodrive/platform/common"
+          # Tremor's <ogg/ogg.h> without putting tremor/ itself on the path: its block.h shadows the
+          # SDK's <Block.h> on case-insensitive filesystems.
+          - "$(SRCROOT)/Host/CoreEntry/picodrive/include"
+          - "$(SRCROOT)/Vendor/cores/picodrive/pico/sound"
+          - "$(SRCROOT)/Host/CoreEntry"
+
+  # PlayStation. Software renderer only (no HAVE_HW / OpenGL / Vulkan) and no Lightrec dynarec
+  # (HAVE_LIGHTREC unset): iOS forbids JIT. Source list = upstream Makefile.common for
+  # `make platform=osx HAVE_LIGHTREC=0` (CHD, PBP, threaded CD reads).
+  BeetlePSXCore:
+    type: library.static
+    platform: [iOS, macOS]
+    sources:
+      - path: Host/CoreEntry/SECoreEntry.c
+        compilerFlags: ["-DSE_CORE_ID=beetle_psx", "-DSE_CORE_REVISION=10e4b0c"]
+      - path: Vendor/cores/beetle_psx
+        includes:
+          - "input.c"
+          - "input_compatibility.c"
+          - "libretro-common/compat/compat_posix_string.c"
+          - "libretro-common/compat/compat_strcasestr.c"
+          - "libretro-common/compat/compat_strl.c"
+          - "libretro-common/compat/fopen_utf8.c"
+          - "libretro-common/encodings/encoding_crc32.c"
+          - "libretro-common/encodings/encoding_deflate.c"
+          - "libretro-common/encodings/encoding_huffman.c"
+          - "libretro-common/encodings/encoding_rzstd.c"
+          - "libretro-common/encodings/encoding_utf.c"
+          - "libretro-common/features/features_cpu.c"
+          - "libretro-common/file/file_path.c"
+          - "libretro-common/file/file_path_io.c"
+          - "libretro-common/file/retro_dirent.c"
+          - "libretro-common/formats/7z/r7z_lzma.c"
+          - "libretro-common/formats/chd/rchd.c"
+          - "libretro-common/formats/data_transfer.c"
+          - "libretro-common/formats/flac/rflac.c"
+          - "libretro-common/formats/mp3/rmp3.c"
+          - "libretro-common/formats/mpeg1/rmpeg1_ps.c"
+          - "libretro-common/formats/mpeg1/rmpeg1_video.c"
+          - "libretro-common/formats/vorbis/rvorbis.c"
+          - "libretro-common/hash/lrc_hash.c"
+          - "libretro-common/lists/dir_list.c"
+          - "libretro-common/lists/string_list.c"
+          - "libretro-common/memmap/memalign.c"
+          - "libretro-common/memmap/memmap.c"
+          - "libretro-common/queues/retro_spsc.c"
+          - "libretro-common/queues/retro_waitable_spsc.c"
+          - "libretro-common/rthreads/retro_eventcount.c"
+          - "libretro-common/rthreads/rthreads.c"
+          - "libretro-common/streams/file_stream.c"
+          - "libretro-common/streams/file_stream_transforms.c"
+          - "libretro-common/streams/trans_stream_rzstd.c"
+          - "libretro-common/string/rstrtod.c"
+          - "libretro-common/string/stdstring.c"
+          - "libretro-common/time/rtime.c"
+          - "libretro-common/vfs/vfs_hybrid.c"
+          - "libretro-common/vfs/vfs_implementation.c"
+          - "libretro.c"
+          - "libretro_game_database.c"
+          - "mc_async.c"
+          - "mednafen/cdrom/CDAccess.c"
+          - "mednafen/cdrom/CDAccess_CCD.c"
+          - "mednafen/cdrom/CDAccess_CHD.c"
+          - "mednafen/cdrom/CDAccess_Image.c"
+          - "mednafen/cdrom/CDAccess_PBP.c"
+          - "mednafen/cdrom/CDUtility.c"
+          - "mednafen/cdrom/audioreader.c"
+          - "mednafen/cdrom/cdaccess_track.c"
+          - "mednafen/cdrom/cdromif.c"
+          - "mednafen/cdrom/edc_crc32.c"
+          - "mednafen/cdrom/galois.c"
+          - "mednafen/cdrom/l-ec.c"
+          - "mednafen/cdrom/lec.c"
+          - "mednafen/cdrom/recover-raw.c"
+          - "mednafen/cdstream.c"
+          - "mednafen/error.c"
+          - "mednafen/general.c"
+          - "mednafen/mempatcher.c"
+          - "mednafen/psx/cdc.c"
+          - "mednafen/psx/cpu.c"
+          - "mednafen/psx/dma.c"
+          - "mednafen/psx/frontio.c"
+          - "mednafen/psx/gpu.c"
+          - "mednafen/psx/gpu_polygon_sub.c"
+          - "mednafen/psx/gte.c"
+          - "mednafen/psx/irq.c"
+          - "mednafen/psx/mdec.c"
+          - "mednafen/psx/sio.c"
+          - "mednafen/psx/spu.c"
+          - "mednafen/psx/timer.c"
+          - "mednafen/psx/vcd.c"
+          - "mednafen/settings.c"
+          - "mednafen/state.c"
+          - "mednafen/video/Deinterlacer.c"
+          - "pgxp/pgxp_cpu.c"
+          - "pgxp/pgxp_gpu.c"
+          - "pgxp/pgxp_gte.c"
+          - "pgxp/pgxp_main.c"
+          - "pgxp/pgxp_mem.c"
+          - "pgxp/pgxp_value.c"
+          - "rhi/rhi_defer.c"
+          - "rhi/rhi_intf.c"
+    settings:
+      base:
+        <<: *core_settings
+        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "HAVE_PBP", "WANT_THREADING", "HAVE_THREADS", "NEED_DEINTERLACER", "WANT_32BPP", "NEED_CD", "HAVE_CHD", "HAVE_RCHD", "HAVE_RCHD_DEFLATE", "HAVE_RCHD_LZMA", "HAVE_RCHD_FLAC", "HAVE_RCHD_ZSTD", "HAVE_RFLAC", "HAVE_RZSTD", "MEDNAFEN_VERSION_NUMERIC=9386", "STDC_HEADERS", "__STDC_LIMIT_MACROS", "__STDC_CONSTANT_MACROS", "_LOW_ACCURACY_", "_FILE_OFFSET_BITS=64"]
+        OTHER_CFLAGS: ["-fwrapv", "-fsigned-char"]
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Vendor/cores/beetle_psx"
+          - "$(SRCROOT)/Vendor/cores/beetle_psx/mednafen"
+          - "$(SRCROOT)/Vendor/cores/beetle_psx/mednafen/include"
+          - "$(SRCROOT)/Vendor/cores/beetle_psx/libretro-common/include"
           - "$(SRCROOT)/Host/CoreEntry"
 
   SupersEmu:
@@ -261,6 +503,8 @@ targets:
       - target: GambatteCore_${platform}
       - target: MGBACore_${platform}
       - target: GenesisPlusGXCore_${platform}
+      - target: PicoDriveCore_${platform}
+      - target: BeetlePSXCore_${platform}
       - sdk: libz.tbd
       - package: SupersEmuServer
         product: SupersEmuKit
@@ -311,6 +555,8 @@ targets:
       - target: GambatteCore_macOS
       - target: MGBACore_macOS
       - target: GenesisPlusGXCore_macOS
+      - target: PicoDriveCore_macOS
+      - target: BeetlePSXCore_macOS
       - sdk: libz.tbd
       - sdk: AVFoundation.framework
       - sdk: CoreGraphics.framework

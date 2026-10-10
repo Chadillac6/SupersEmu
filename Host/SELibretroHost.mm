@@ -9,6 +9,7 @@
 #include <vector>
 #include "libretro.h"
 #include "SECoreAPI.h"
+#include "SELibretroHost+Testing.h"
 
 namespace {
 
@@ -64,6 +65,8 @@ struct HostState {
     std::atomic<bool> audioEnabled{false};
     bool active = false;
     const SECoreAPI *core = nullptr;
+    /// Fields of the legacy interface are a prefix of the EXT one; unset callbacks stay null.
+    retro_disk_control_ext_callback disk = {};
 };
 
 struct CoreEntry {
@@ -76,10 +79,20 @@ const CoreEntry kCores[] = {
     {"gambatte", se_core_gambatte},
     {"mgba", se_core_mgba},
     {"genesis_plus_gx", se_core_genesis_plus_gx},
+    {"beetle_psx", se_core_beetle_psx},
+    {"picodrive", se_core_picodrive},
 };
+
+std::vector<CoreEntry> &registeredCores() {
+    static std::vector<CoreEntry> cores;
+    return cores;
+}
 
 const SECoreAPI *coreNamed(NSString *identifier) {
     for (const CoreEntry &entry : kCores) {
+        if ([identifier isEqualToString:@(entry.identifier)]) return entry.api();
+    }
+    for (const CoreEntry &entry : registeredCores()) {
         if ([identifier isEqualToString:@(entry.identifier)]) return entry.api();
     }
     return nullptr;
@@ -120,6 +133,27 @@ bool environmentCallback(unsigned cmd, void *data) {
             return true;
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
             *static_cast<bool *>(data) = false;
+            return true;
+        case RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION:
+            *static_cast<unsigned *>(data) = 1;
+            return true;
+        case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE: {
+            // Cores may pass NULL to withdraw the interface (Genesis Plus GX does for cartridges).
+            g.disk = {};
+            if (auto cb = static_cast<const retro_disk_control_callback *>(data)) {
+                g.disk.set_eject_state = cb->set_eject_state;
+                g.disk.get_eject_state = cb->get_eject_state;
+                g.disk.get_image_index = cb->get_image_index;
+                g.disk.set_image_index = cb->set_image_index;
+                g.disk.get_num_images = cb->get_num_images;
+                g.disk.replace_image_index = cb->replace_image_index;
+                g.disk.add_image_index = cb->add_image_index;
+            }
+            return true;
+        }
+        case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
+            g.disk = {};
+            if (data) g.disk = *static_cast<const retro_disk_control_ext_callback *>(data);
             return true;
         default:
             return false;
@@ -187,10 +221,16 @@ NSError *hostError(NSInteger code, NSString *message) {
 
 } // namespace
 
+void SELibretroHostRegisterCore(const char *identifier, const SECoreAPI *(*api)(void)) {
+    registeredCores().push_back({identifier, api});
+}
+
 NSString *const SECoreIDSnes9x = @"snes9x";
 NSString *const SECoreIDGambatte = @"gambatte";
 NSString *const SECoreIDMGBA = @"mgba";
 NSString *const SECoreIDGenesisPlusGX = @"genesis_plus_gx";
+NSString *const SECoreIDBeetlePSX = @"beetle_psx";
+NSString *const SECoreIDPicoDrive = @"picodrive";
 
 static __weak SELibretroHost *gActiveHost;
 
@@ -236,8 +276,16 @@ static __weak SELibretroHost *gActiveHost;
     self = [super init];
     if (!self) return nil;
 
-    NSData *romData = [NSData dataWithContentsOfURL:romURL options:NSDataReadingMappedIfSafe error:error];
-    if (!romData) return nil;
+    // Disc cores (need_fullpath) open the image themselves: don't read or map a multi-GB disc.
+    retro_system_info preflight = {};
+    core->get_system_info(&preflight);
+    NSData *romData = nil;
+    if (preflight.need_fullpath) {
+        if (![romURL checkResourceIsReachableAndReturnError:error]) return nil;
+    } else {
+        romData = [NSData dataWithContentsOfURL:romURL options:NSDataReadingMappedIfSafe error:error];
+        if (!romData) return nil;
+    }
 
     NSURL *saveDirectory = saveRAMURL.URLByDeletingLastPathComponent;
     NSFileManager *fm = NSFileManager.defaultManager;
@@ -251,6 +299,7 @@ static __weak SELibretroHost *gActiveHost;
     g.width = g.height = 0;
     g.buttons = 0;
     g.core = core;
+    g.disk = {};
 
     core->set_environment(environmentCallback);
     core->set_video_refresh(videoCallback);
@@ -272,11 +321,14 @@ static __weak SELibretroHost *gActiveHost;
 
     retro_game_info game = {};
     game.path = romURL.fileSystemRepresentation;
-    game.data = romData.bytes;
-    game.size = romData.length;
+    if (romData) {
+        game.data = romData.bytes;
+        game.size = romData.length;
+    }
     if (!core->load_game(&game)) {
         core->deinit();
         g.core = nullptr;
+        g.disk = {};
         if (error) *error = hostError(2, @"The emulator could not load this game.");
         return nil;
     }
@@ -308,6 +360,48 @@ static __weak SELibretroHost *gActiveHost;
 
 - (void)runFrames:(NSInteger)count {
     for (NSInteger i = 0; i < count; i++) [self runFrame];
+}
+
+- (NSInteger)diskCount {
+    return _loaded && g.disk.get_num_images ? NSInteger(g.disk.get_num_images()) : 0;
+}
+
+- (NSInteger)currentDisk {
+    return _loaded && g.disk.get_image_index ? NSInteger(g.disk.get_image_index()) : 0;
+}
+
+- (NSString *)labelForDisk:(NSInteger)index {
+    if (!_loaded || !g.disk.get_image_label || index < 0 || index >= self.diskCount) return nil;
+    char label[256] = {};
+    if (!g.disk.get_image_label(unsigned(index), label, sizeof label) || label[0] == 0) return nil;
+    return [NSString stringWithUTF8String:label];
+}
+
+- (BOOL)insertDisk:(NSInteger)index error:(NSError **)error {
+    const retro_disk_control_ext_callback &disk = g.disk;
+    NSInteger count = self.diskCount;
+    if (!disk.set_eject_state || !disk.set_image_index || count < 1) {
+        if (error) *error = hostError(6, @"This game can't change discs.");
+        return NO;
+    }
+    if (index < 0 || index >= count) {
+        if (error) *error = hostError(7, [NSString stringWithFormat:@"There is no disc %ld.", long(index + 1)]);
+        return NO;
+    }
+    // Cores only accept a new image while the tray is open: eject, set the index, close.
+    BOOL wasOpen = disk.get_eject_state && disk.get_eject_state();
+    if (!wasOpen && !disk.set_eject_state(true)) {
+        if (error) *error = hostError(8, @"The emulator couldn't open the disc tray.");
+        return NO;
+    }
+    bool inserted = disk.set_image_index(unsigned(index));
+    // Close the tray even if the swap failed so the previous disc keeps running.
+    bool closed = disk.set_eject_state(false);
+    if (!inserted || !closed) {
+        if (error) *error = hostError(8, [NSString stringWithFormat:@"The emulator couldn't insert disc %ld.", long(index + 1)]);
+        return NO;
+    }
+    return YES;
 }
 
 - (CGImageRef)copyFrameImage {
@@ -417,6 +511,7 @@ static __weak SELibretroHost *gActiveHost;
     g.core->unload_game();
     g.core->deinit();
     g.core = nullptr;
+    g.disk = {};
     _loaded = NO;
     g.active = false;
     g.audioEnabled = false;
