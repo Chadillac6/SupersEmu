@@ -13,6 +13,14 @@ final class GameSession {
     /// A newer save from another device; the game waits until the player picks which copy to continue.
     private(set) var pendingConflict: SaveConflict?
     private(set) var isSyncing = false
+    /// Discs the core can swap between (from the game's .m3u); the player offers "Swap disc" when > 1.
+    private(set) var diskCount = 0
+    /// Zero-based index of the inserted disc.
+    private(set) var currentDisk = 0
+    /// The disc picker is open; the game stays paused until it closes.
+    private(set) var isChoosingDisc = false
+    /// Highlighted row in the disc picker (zero-based).
+    var discSelection = 0
 
     @ObservationIgnored let input = GameInput()
     @ObservationIgnored weak var displayLayer: CALayer?
@@ -24,6 +32,8 @@ final class GameSession {
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var core: SaveCore?
+    @ObservationIgnored private var pickerTimer: Timer?
+    @ObservationIgnored private var pickerButtons: SEJoypadButtons = []
 
     private static let autosaveInterval = Duration.seconds(30)
 
@@ -59,6 +69,11 @@ final class GameSession {
             return
         }
         self.host = host
+        diskCount = host.diskCount
+        currentDisk = host.currentDisk
+        #if DEBUG
+        if diskCount < 2, let stub = Self.debugDiscCount { diskCount = stub }
+        #endif
         let core = SaveCore(id: host.coreID, version: host.coreVersion)
         self.core = core
         let pulled = await pull([SaveSync.autoFile(for: game.id, core: core), SaveSync.manualFile(for: game.id, core: core)])
@@ -129,7 +144,7 @@ final class GameSession {
 
     func resume() {
         // Never run frames while saves are still syncing or a conflict is waiting for an answer.
-        guard let host, hasStarted, timer == nil else { return }
+        guard let host, hasStarted, timer == nil, !isChoosingDisc else { return }
         let timer = Timer(timeInterval: 1.0 / max(host.framesPerSecond, 1), repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -147,7 +162,13 @@ final class GameSession {
 
     private func tick() {
         guard let host else { return }
-        host.buttons = input.currentButtons()
+        let buttons = input.currentButtons()
+        if diskCount > 1, buttons.isSuperset(of: Self.discPickerChord) {
+            host.buttons = []
+            openDiscPicker()
+            return
+        }
+        host.buttons = buttons
         host.runFrame()
         if let image = host.copyFrameImage() {
             displayLayer?.contents = image
@@ -222,6 +243,80 @@ final class GameSession {
         }
     }
 
+    func discLabel(_ index: Int) -> String? { host?.label(forDisk: index) }
+
+    /// L + R + Select opens the disc picker from a controller (keyboard: Command-D).
+    private static let discPickerChord: SEJoypadButtons = [.l, .r, .select]
+
+    func openDiscPicker() {
+        guard hasStarted, diskCount > 1, pendingConflict == nil, !isChoosingDisc else { return }
+        pause()
+        isChoosingDisc = true
+        discSelection = currentDisk
+        // Buttons still held from the chord must be released before they count as picker input.
+        pickerButtons = input.currentButtons()
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollDiscPicker() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        pickerTimer = timer
+    }
+
+    /// Controller/keyboard navigation of the open picker: up/down to move, bottom face button or Start
+    /// to insert, right face button or Select to cancel.
+    private func pollDiscPicker() {
+        let buttons = input.currentButtons()
+        let pressed = buttons.subtracting(pickerButtons)
+        pickerButtons = buttons
+        if pressed.contains(.up) { discSelection = max(discSelection - 1, 0) }
+        if pressed.contains(.down) { discSelection = min(discSelection + 1, diskCount - 1) }
+        if !pressed.isDisjoint(with: [.b, .start]) {
+            closeDiscPicker(inserting: discSelection)
+        } else if !pressed.isDisjoint(with: [.a, .select]) {
+            closeDiscPicker(inserting: nil)
+        }
+    }
+
+    /// Closes the picker, swapping to `disc` (zero-based) if given, and resumes the game.
+    func closeDiscPicker(inserting disc: Int?) {
+        guard isChoosingDisc else { return }
+        pickerTimer?.invalidate()
+        pickerTimer = nil
+        isChoosingDisc = false
+        if let disc, disc != currentDisk {
+            insert(disc)
+        }
+        #if os(macOS)
+        input.releaseAll()
+        #endif
+        resume()
+    }
+
+    private func insert(_ disc: Int) {
+        #if DEBUG
+        if host?.diskCount ?? 0 < 2, Self.debugDiscCount != nil {
+            currentDisk = disc
+            status = "Inserted disc \(disc + 1)"
+            return
+        }
+        #endif
+        guard let host else { return }
+        do {
+            try host.insertDisk(disc)
+            status = "Inserted disc \(disc + 1)"
+        } catch {
+            status = error.localizedDescription
+        }
+        currentDisk = host.currentDisk
+    }
+
+    #if DEBUG
+    /// UI-only stub for screenshots without a disc core: SUPERSEMU_DEBUG_DISC_COUNT=3 fakes a 3-disc game.
+    private static var debugDiscCount: Int? {
+        ProcessInfo.processInfo.environment["SUPERSEMU_DEBUG_DISC_COUNT"].flatMap(Int.init)
+    }
+    #endif
+
     func stop() {
         startTask?.cancel()
         startTask = nil
@@ -230,6 +325,9 @@ final class GameSession {
         autosave()
         hasStarted = false
         isSyncing = false
+        pickerTimer?.invalidate()
+        pickerTimer = nil
+        isChoosingDisc = false
         host?.shutdown()
         host = nil
     }

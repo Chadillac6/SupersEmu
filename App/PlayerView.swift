@@ -17,6 +17,9 @@ struct PlayerView: View {
                 TouchControls(input: session.input)
                 #endif
             }
+            if session.isChoosingDisc {
+                DiscPicker(session: session)
+            }
             if let conflict = session.pendingConflict {
                 SaveConflictPrompt(conflict: conflict) { session.resolveConflict($0) }
             } else if session.isSyncing {
@@ -82,12 +85,82 @@ struct PlayerView: View {
             .fixedSize()
             .disabled(!session.hasManualState || session.isSyncing)
             .accessibilityIdentifier("load-state")
+            if session.diskCount > 1 {
+                Button { session.openDiscPicker() } label: {
+                    Label("Swap disc", systemImage: "opticaldisc")
+                }
+                .fixedSize()
+                .keyboardShortcut("d", modifiers: .command)
+                .disabled(session.isSyncing || session.pendingConflict != nil)
+                .help("Swap disc (Command-D, or L + R + Select on a controller)")
+                .accessibilityValue("Disc \(session.currentDisk + 1) of \(session.diskCount)")
+                .accessibilityIdentifier("swap-disc")
+            }
         }
         .buttonStyle(.borderless)
         .lineLimit(1)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.black)
+    }
+}
+
+/// "Swap disc" sheet over the paused game. Arrow keys / d-pad move, Return / A inserts, Esc / B cancels;
+/// number keys pick a disc directly.
+struct DiscPicker: View {
+    @Bindable var session: GameSession
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Swap disc").font(.title3.bold())
+            Text("Disc \(session.currentDisk + 1) of \(session.diskCount) is in the tray.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            VStack(spacing: 6) {
+                ForEach(0..<session.diskCount, id: \.self) { index in
+                    row(index)
+                }
+            }
+            HStack {
+                Text("↑↓ choose · Return/A insert · Esc/B cancel")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel") { session.closeDiscPicker(inserting: nil) }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("swap-disc-cancel")
+            }
+        }
+        .padding(22)
+        .frame(width: 340)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Swap disc")
+        .accessibilityIdentifier("swap-disc-picker")
+    }
+
+    private func row(_ index: Int) -> some View {
+        let isSelected = index == session.discSelection
+        let inTray = index == session.currentDisk
+        return Button { session.closeDiscPicker(inserting: index) } label: {
+            HStack {
+                Image(systemName: inTray ? "opticaldisc.fill" : "opticaldisc")
+                Text(session.discLabel(index) ?? "Disc \(index + 1) of \(session.diskCount)")
+                Spacer()
+                if inTray { Text("In tray").font(.caption).foregroundStyle(.secondary) }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(isSelected ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(index < 9 ? KeyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: []) : nil)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityHint(inTray ? "Already in the tray" : "Inserts this disc")
+        .accessibilityIdentifier("swap-disc-\(index + 1)")
     }
 }
 

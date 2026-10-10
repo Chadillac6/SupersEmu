@@ -48,6 +48,7 @@ Build notes:
 - mGBA's CMake-generated `flags.h` / `version.c` are replaced by `Host/CoreEntry/mgba/`
   (GB + GBA, `MINIMAL_CORE=2`, no threads, no scripting/debugger/SQLite/PNG/zip).
 - Genesis Plus GX is built without CHD / Sega CD image support (no libchdr); uses the SDK zlib.
+- The host implements libretro disk control (legacy + EXT, see `disc-games.md`); tested with a stub core only until a disc core is linked.
 - Gambatte is built with `-ftrivial-auto-var-init=zero` so unused save-state fields are
   deterministic.
 
