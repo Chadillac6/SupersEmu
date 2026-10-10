@@ -25,3 +25,7 @@ ask the user which to continue.
 ## Implemented in M0 spike
 Local auto state (30 s, exit, background), resume on launch, one manual slot, SRAM flush.
 No cloud sync yet.
+
+## Sync target (ADR 0004)
+Saves sync to the user's own area on the SupersEmu Server (`docs/specs/server.md`), not to Google
+Drive. Revisions, branches and statuses above are unchanged.
