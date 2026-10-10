@@ -411,4 +411,33 @@ let pass6 = await service(catalog).enrichPending()
         XCTAssertEqual(summary.title, "kirby")
         XCTAssertNil(summary.coverPath)
     }
+
+    func testWithdrawnThumbnailIsRemovedWithoutTouchingOtherProviders() async throws {
+        let rom = ROMFixtures.gba(seed: 12)
+        let name = "Golden Sun (USA, Europe)"
+        let dats: [SystemID: (name: String, source: String, files: [String: String])] = [.gba: ("Nintendo - Game Boy Advance", "no-intro", [
+            "source": DatFixtures.entry(name, rom: rom, romName: "\(name).gba"),
+        ])]
+        let first = catalog(dats)
+        fetcher.set(first.thumbnailURL(first.systems[.gba]!, kind: "Named_Boxarts", name: name), DatFixtures.png)
+        let id = try await importROM(rom, "gs.gba")
+        await service(first).enrichPending()
+        let other = try ArtworkStore(store: store).setProviderArtwork(.cover, provider: "libretro-extra", gameID: id,
+                                                                     data: DatFixtures.png + Data([5]), fileExtension: "png")
+
+        // The new pin has no box art: libretro's cover goes, the other provider's file stays and takes over.
+        let withdrawn = catalog(dats, thumbnails: "thumbs2")
+        await service(withdrawn).enrichPending()
+        let providers = try await store.db.read {
+            try String.fetchAll($0, sql: "SELECT provider FROM game_artwork WHERE game_id = ? AND kind = 'cover'", arguments: [id])
+        }
+        XCTAssertEqual(providers, ["libretro-extra"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/games/\(id)/artwork/cover", method: .get, headers: self.auth()) {
+                XCTAssertEqual($0.status, .ok)
+                XCTAssertEqual(Data(buffer: $0.body), DatFixtures.png + Data([5]))
+            }
+        }
+    }
 }

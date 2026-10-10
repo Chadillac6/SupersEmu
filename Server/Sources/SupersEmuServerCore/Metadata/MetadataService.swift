@@ -137,6 +137,7 @@ public actor MetadataService {
         }
         guard let record else { return }
         for candidate in provider.artwork(for: record, system: system) {
+            var found = false
             for url in candidate.urls {
                 let data: Data?
                 do {
@@ -149,7 +150,11 @@ public actor MetadataService {
                 guard let ext = Self.imageExtension(data) else { break }
                 try artwork.setProviderArtwork(candidate.kind, position: candidate.position, provider: provider.id, gameID: gameID,
                                                data: data, fileExtension: ext, sourceURL: url.absoluteString)
+                found = true
                 break
+            }
+            if !found {
+                try artwork.removeProviderArtwork(provider: provider.id, gameID: gameID, kind: candidate.kind, position: candidate.position)
             }
         }
         try await store.db.write { db in

@@ -76,16 +76,28 @@ public struct ArtworkStore: Sendable {
         return url
     }
 
-    /// Drops every image a provider stored for a game (its match changed or went away). The manual cover is untouched.
-    public func removeProviderArtwork(provider: String, gameID: String) throws {
+    /// Drops images a provider stored for a game (every slot, or one), deleting only the files its rows recorded and
+    /// nothing still referenced elsewhere. The manual cover is untouched.
+    public func removeProviderArtwork(provider: String, gameID: String, kind: ArtworkKind? = nil, position: Int = 0) throws {
         guard Self.isSafeComponent(gameID), Self.isSafeComponent(provider) else { throw ArtworkError.invalidGameID }
-        let directory = store.paths.artwork.appendingPathComponent(gameID, isDirectory: true)
         try Self.writeLock.withLock {
-            try store.db.write { db in
-                try db.execute(sql: "DELETE FROM game_artwork WHERE game_id = ? AND provider = ?", arguments: [gameID, provider])
+            let orphans = try store.db.write { db -> [String] in
+                let filter = kind == nil ? "" : " AND kind = ? AND position = ?"
+                var arguments: StatementArguments = [gameID, provider]
+                if let kind { arguments += [kind.rawValue, position] }
+                let paths = try String.fetchAll(db, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND provider = ?\(filter)",
+                                                arguments: arguments)
+                try db.execute(sql: "DELETE FROM game_artwork WHERE game_id = ? AND provider = ?\(filter)", arguments: arguments)
+                return try paths.filter { path in
+                    try Bool.fetchOne(db, sql: """
+                        SELECT EXISTS(SELECT 1 FROM game_artwork WHERE path = ?) OR EXISTS(SELECT 1 FROM games WHERE cover_artwork = ?)
+                        """, arguments: [path, path]) != true
+                }
             }
-            for file in (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [] where file.hasPrefix("\(provider)-") {
-                try? FileManager.default.removeItem(at: directory.appendingPathComponent(file))
+            let root = store.paths.artwork.standardizedFileURL.path + "/"
+            for path in orphans {
+                let url = store.paths.root.appendingPathComponent(path).standardizedFileURL
+                if url.path.hasPrefix(root) { try? FileManager.default.removeItem(at: url) }
             }
         }
     }
