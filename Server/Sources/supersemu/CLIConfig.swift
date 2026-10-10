@@ -6,6 +6,8 @@ import SupersEmuKit
 struct CLIConfigFile: Codable, Equatable {
     var server: String
     var token: String
+    /// Pin for a self-signed server, verified at login.
+    var certificateSHA256: String? = nil
 
     static func defaultURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         if let path = environment["SUPERSEMU_CONFIG"], !path.isEmpty { return URL(fileURLWithPath: path) }
@@ -48,19 +50,23 @@ struct CLIConfigFile: Codable, Equatable {
 /// Precedence: flags, then SUPERSEMU_SERVER / SUPERSEMU_TOKEN, then the config file, then (on the
 /// Mac mini only) the server's local `admin.token`.
 struct Connection: ParsableArguments {
-    static let defaultServer = "http://127.0.0.1:8487"
+    static let defaultServer = "https://127.0.0.1:8487"
     static let localAdminTokenPath = "/Library/Application Support/SupersEmu Server/admin.token"
+    static let localCertificatePath = "/Library/Application Support/SupersEmu Server/tls/server.cer"
 
     @Option(help: "Server URL. Env: SUPERSEMU_SERVER. Default: config file, else \(Connection.defaultServer).")
     var server: String?
     @Option(help: "API or device token. Env: SUPERSEMU_TOKEN. Default: config file, else the local admin.token on the Mac mini.")
     var token: String?
+    @Option(help: "Server certificate SHA-256 to pin (self-signed). Env: SUPERSEMU_CERT_SHA256. Default: the local server's tls/server.cer on the Mac mini.")
+    var certificateSHA256: String?
     @Flag(help: "Print JSON (stdout) and JSON errors (stderr).")
     var json = false
 
     struct Resolved: Equatable {
         var server: URL
         var token: String?
+        var certificateSHA256: String? = nil
     }
 
     func resolve(environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -83,12 +89,32 @@ struct Connection: ParsableArguments {
             resolvedToken = nonEmpty((try? String(contentsOfFile: localAdminTokenPath, encoding: .utf8))?
                 .trimmingCharacters(in: .whitespacesAndNewlines))
         }
-        return Resolved(server: url, token: resolvedToken)
+        // The local daemon's certificate is only a sensible default pin for the local daemon.
+        // The saved pin still applies when server and token are both explicit; a broken config is ignored here.
+        let pinConfig = config ?? (try? CLIConfigFile.load(from: configURL ?? CLIConfigFile.defaultURL(environment: environment))) ?? nil
+        let savedPin = pinConfig.flatMap { Self.sameServer($0.server, serverString) ? nonEmpty($0.certificateSHA256) : nil }
+        let pin = nonEmpty(certificateSHA256) ?? nonEmpty(environment["SUPERSEMU_CERT_SHA256"]) ?? savedPin
+            ?? (Self.isLocalDefaultServer(url) ? FileManager.default.contents(atPath: Self.localCertificatePath).map(CertificatePin.sha256(ofDER:)) : nil)
+        return Resolved(server: url, token: resolvedToken, certificateSHA256: pin)
     }
 
     func client() throws -> APIClient {
         let resolved = try resolve()
-        return APIClient(baseURL: resolved.server, token: resolved.token)
+        return APIClient(baseURL: resolved.server, token: resolved.token, session: try Self.session(for: resolved))
+    }
+
+    /// Pins the server's self-signed certificate when a fingerprint is known, and refuses to send a
+    /// token over plain HTTP anywhere but loopback (`--insecure-http` test servers).
+    static func session(for resolved: Resolved) throws -> URLSession {
+        if resolved.server.scheme == "http", resolved.token != nil, !isLoopback(resolved.server) {
+            throw CLIError.usage("Refusing to send a token over plain HTTP to \(resolved.server.absoluteString); use https://")
+        }
+        // Always the pinning delegate: it also refuses redirects, so the bearer token can't be bounced to HTTP.
+        return PinnedCertificateDelegate.session(certificateSHA256: resolved.certificateSHA256, timeout: 120)
+    }
+
+    static func isLoopback(_ url: URL) -> Bool {
+        ["127.0.0.1", "localhost", "::1", "[::1]"].contains(url.host?.lowercased() ?? "")
     }
 
     /// Same scheme, host and port (case-insensitive) and the exact same path, ignoring a trailing slash.
@@ -100,7 +126,7 @@ struct Connection: ParsableArguments {
     /// The Mac mini's own server: a loopback host on the default port. Only then is `admin.token` used.
     static func isLocalDefaultServer(_ url: URL) -> Bool {
         guard let origin = Origin(url.absoluteString), let defaultOrigin = Origin(defaultServer) else { return false }
-        return ["127.0.0.1", "localhost", "::1"].contains(origin.host) && origin.scheme == defaultOrigin.scheme
+        return ["127.0.0.1", "localhost", "::1"].contains(origin.host) && ["http", "https"].contains(origin.scheme)
             && origin.port == defaultOrigin.port && origin.path.isEmpty
     }
 

@@ -1,5 +1,4 @@
 import Foundation
-import Security
 import SupersEmuKit
 
 /// What this device needs to talk to its server after pairing.
@@ -13,48 +12,30 @@ struct ServerCredential: Codable, Equatable, Sendable {
     var user: UserInfo
 }
 
-/// App-side credential storage, behind a protocol so it can be swapped for SupersEmuKit's
-/// ServerConnection/Keychain helpers once the pairing track lands.
+/// App-side credential storage. The Keychain item is written through SupersEmuKit's `KeychainTokenStore`.
 protocol CredentialStore: Sendable {
     func load() -> ServerCredential?
     func save(_ credential: ServerCredential) throws
     func delete()
 }
 
-struct KeychainError: Error, LocalizedError {
-    let status: OSStatus
-    var errorDescription: String? { "Keychain error \(status)" }
-}
-
 struct KeychainCredentialStore: CredentialStore {
     var service = "com.chadillac6.supersemu.server"
     var account = "default"
 
-    private var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-    }
+    private var keychain: KeychainTokenStore { KeychainTokenStore(service: service) }
 
     func load() -> ServerCredential? {
-        var query = query
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
-        return try? SupersEmuJSON.decoder().decode(ServerCredential.self, from: data)
+        guard let json = try? keychain.token(for: account) else { return nil }
+        return try? SupersEmuJSON.decoder().decode(ServerCredential.self, from: Data(json.utf8))
     }
 
     func save(_ credential: ServerCredential) throws {
-        let data = try SupersEmuJSON.encoder().encode(credential)
-        SecItemDelete(query as CFDictionary)
-        var item = query
-        item[kSecValueData as String] = data
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(item as CFDictionary, nil)
-        guard status == errSecSuccess else { throw KeychainError(status: status) }
+        try keychain.setToken(String(decoding: try SupersEmuJSON.encoder().encode(credential), as: UTF8.self), for: account)
     }
 
     func delete() {
-        SecItemDelete(query as CFDictionary)
+        try? keychain.removeToken(for: account)
     }
 }
 

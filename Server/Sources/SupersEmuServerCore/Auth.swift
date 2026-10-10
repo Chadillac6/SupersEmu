@@ -47,10 +47,13 @@ public struct AuthContext: Sendable, Equatable {
 public struct SERequestContext: RequestContext {
     public var coreContext: CoreRequestContextStorage
     public var auth: AuthContext?
+    /// Peer IP address, e.g. for per-client rate limits.
+    public var remoteAddress: String?
 
     public init(source: ApplicationRequestContextSource) {
         coreContext = .init(source: source)
         auth = nil
+        remoteAddress = source.channel.remoteAddress?.ipAddress
     }
 
     public var requestDecoder: JSONDecoder { SupersEmuJSON.decoder() }
