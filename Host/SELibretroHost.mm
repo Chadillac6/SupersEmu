@@ -94,7 +94,9 @@ struct HostState {
     retro_pixel_format pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
     std::vector<uint32_t> frame;
     unsigned width = 0, height = 0;
-    std::atomic<uint32_t> buttons{0};
+    std::atomic<uint32_t> buttons[4] = {};
+    /// [port][stick]: x in the low 16 bits, y in the high 16 bits.
+    std::atomic<uint32_t> analog[4][2] = {};
     std::string systemDirectory, saveDirectory;
     AudioRing audio;
     std::atomic<bool> audioEnabled{false};
@@ -511,11 +513,33 @@ size_t audioBatchCallback(const int16_t *data, size_t frames) {
 
 void inputPollCallback() {}
 
-int16_t inputStateCallback(unsigned port, unsigned device, unsigned, unsigned id) {
-    if (port != 0 || device != RETRO_DEVICE_JOYPAD) return 0;
-    uint32_t buttons = g.buttons.load();
-    if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return int16_t(buttons & 0xFFFF);
-    return (buttons >> id) & 1;
+constexpr unsigned kPortCount = 4;
+
+void resetInput() {
+    for (unsigned port = 0; port < kPortCount; port++) {
+        g.buttons[port] = 0;
+        g.analog[port][0] = 0;
+        g.analog[port][1] = 0;
+    }
+}
+
+int16_t inputStateCallback(unsigned port, unsigned device, unsigned index, unsigned id) {
+    if (port >= kPortCount) return 0;
+    uint32_t buttons = g.buttons[port].load();
+    switch (device & RETRO_DEVICE_MASK) {
+    case RETRO_DEVICE_JOYPAD:
+        if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return int16_t(buttons & 0xFFFF);
+        return id < 16 ? (buttons >> id) & 1 : 0;
+    case RETRO_DEVICE_ANALOG:
+        if (index == RETRO_DEVICE_INDEX_ANALOG_BUTTON) return id < 16 && ((buttons >> id) & 1) ? 0x7FFF : 0;
+        if (index > RETRO_DEVICE_INDEX_ANALOG_RIGHT || id > RETRO_DEVICE_ID_ANALOG_Y) return 0;
+        {
+            uint32_t packed = g.analog[port][index].load();
+            return int16_t(uint16_t(id == RETRO_DEVICE_ID_ANALOG_X ? packed & 0xFFFF : packed >> 16));
+        }
+    default:
+        return 0;
+    }
 }
 
 NSError *hostError(NSInteger code, NSString *message) {
@@ -528,6 +552,8 @@ NSError *hostError(NSInteger code, NSString *message) {
 void SELibretroHostRegisterCore(const char *identifier, const SECoreAPI *(*api)(void)) {
     registeredCores().push_back({identifier, api});
 }
+
+const NSInteger SEInputPortCount = kPortCount;
 
 NSString *const SECoreIDSnes9x = @"snes9x";
 NSString *const SECoreIDGambatte = @"gambatte";
@@ -602,7 +628,7 @@ static __weak SELibretroHost *gActiveHost;
     g.pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
     g.frame.clear();
     g.width = g.height = 0;
-    g.buttons = 0;
+    resetInput();
     g.core = core;
     g.disk = {};
     g.optionDefaults.clear();
@@ -661,8 +687,21 @@ static __weak SELibretroHost *gActiveHost;
 - (double)sampleRate { return _avInfo.timing.sample_rate; }
 - (NSInteger)frameWidth { return g.width; }
 - (NSInteger)frameHeight { return g.height; }
-- (SEJoypadButtons)buttons { return g.buttons.load(); }
-- (void)setButtons:(SEJoypadButtons)buttons { g.buttons = buttons; }
+- (SEJoypadButtons)buttons { return g.buttons[0].load(); }
+- (void)setButtons:(SEJoypadButtons)buttons { g.buttons[0] = buttons; }
+
+- (SEJoypadButtons)buttonsForPort:(NSInteger)port {
+    return port >= 0 && port < SEInputPortCount ? g.buttons[port].load() : 0;
+}
+
+- (void)setButtons:(SEJoypadButtons)buttons forPort:(NSInteger)port {
+    if (port >= 0 && port < SEInputPortCount) g.buttons[port] = buttons;
+}
+
+- (void)setAnalogStick:(SEAnalogStick)stick x:(int16_t)x y:(int16_t)y forPort:(NSInteger)port {
+    if (port < 0 || port >= SEInputPortCount || (stick != SEAnalogStickLeft && stick != SEAnalogStickRight)) return;
+    g.analog[port][stick] = uint32_t(uint16_t(x)) | (uint32_t(uint16_t(y)) << 16);
+}
 
 - (void)runFrame {
     if (!_loaded) return;

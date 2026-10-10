@@ -4,20 +4,26 @@ import Hummingbird
 import SupersEmuKit
 
 // Track: server library. /v1/admin/library/import, scan, publish/permissions, review queue.
-func registerAdminLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: ServerStore) {
+func registerAdminLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: ServerStore, metadata: MetadataService? = nil) {
     let importer = LibraryImporter(store: store)
 
     group.post("admin/library/import") { request, context -> Response in
         let auth = try requireLibraryAdmin(context)
+        try requireLibraryAvailable(store)
         let body = try await request.decode(as: ImportRequest.self, context: context)
         guard !body.paths.isEmpty else { throw HTTPError(.badRequest, message: "paths is empty") }
-        return try LibraryHTTP.json(try await importer.importPaths(body.paths, auth: auth))
+        let report = try await importer.importPaths(body.paths, auth: auth)
+        metadata?.enqueue()
+        return try LibraryHTTP.json(report)
     }
 
     // Body (an empty ImportRequest) is ignored: scan always reads the server's Incoming folder.
     group.post("admin/library/scan") { _, context -> Response in
         let auth = try requireLibraryAdmin(context)
-        return try LibraryHTTP.json(try await importer.scanIncoming(auth: auth))
+        try requireLibraryAvailable(store)
+        let report = try await importer.scanIncoming(auth: auth)
+        metadata?.enqueue()
+        return try LibraryHTTP.json(report)
     }
 
     group.get("admin/library/review") { _, context -> Response in
@@ -56,7 +62,7 @@ func registerAdminLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: S
 }
 
 @Sendable
-private func requireLibraryAdmin(_ context: SERequestContext) throws -> AuthContext {
+func requireLibraryAdmin(_ context: SERequestContext) throws -> AuthContext {
     let auth = try context.caller()
     try auth.requireAdmin()
     try auth.require(.libraryWrite)

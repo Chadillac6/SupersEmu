@@ -5,3 +5,6 @@ DerivedData/
 xcuserdata/
 # Test ROMs are fetched locally and never committed (see scripts/fetch-test-roms.sh)
 Tests/Fixtures/local/
+# Local signing team (see Config/Signing.xcconfig) and App Store Connect keys
+Config/Signing.local.xcconfig
+*.p8

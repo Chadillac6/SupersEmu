@@ -64,10 +64,20 @@ final class DownloadCenter {
                     hasResumePoint: FileManager.default.fileExists(atPath: AppPaths.autoState(for: game.id).path))
     }
 
+    static func describe(_ error: Error) -> String {
+        guard let error = error as? URLError else { return error.localizedDescription }
+        switch error.code {
+        case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+            return "Lost the connection to your server. Try again when it's back."
+        default:
+            return error.localizedDescription
+        }
+    }
+
     func start(_ gameID: String, session: ServerSession) {
         guard tasks[gameID] == nil, !isDownloaded(gameID) else { return }
-        guard let downloader = session.downloader(cache: cache) else {
-            states[gameID] = .failed("Connect to your server to download")
+        guard session.isReachable, let downloader = session.downloader(cache: cache) else {
+            states[gameID] = .failed("Unavailable offline. Connect to \(session.serverName) to download it.")
             return
         }
         // A pending startup scan must not publish the old copy while this replaces it.
@@ -176,7 +186,7 @@ final class DownloadCenter {
         tasks[gameID] = nil
         restoreIfIntact(gameID, generation: generation)
         if let error {
-            states[gameID] = .failed((error as? DownloadError)?.description ?? error.localizedDescription)
+            states[gameID] = .failed((error as? DownloadError)?.description ?? Self.describe(error))
         } else {
             states[gameID] = nil
         }

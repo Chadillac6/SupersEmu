@@ -5,14 +5,15 @@ options:
     iOS: "18.0"
     macOS: "15.0"
   createIntermediateGroups: true
+# Signing (team from SUPERSEMU_TEAM_ID; unsigned when unset): see docs/specs/distribution.md.
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
 settings:
   base:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.0.1"
     CURRENT_PROJECT_VERSION: "1"
-    CODE_SIGN_IDENTITY: "-"
-    CODE_SIGN_STYLE: Manual
-    DEVELOPMENT_TEAM: ""
     CLANG_CXX_LANGUAGE_STANDARD: gnu++17
 packages:
   SupersEmuServer:
@@ -823,6 +824,9 @@ targets:
         INFOPLIST_KEY_GCSupportsControllerUserInteraction: YES
         INFOPLIST_KEY_NSCameraUsageDescription: "SupersEmu uses the camera to scan the pairing QR code from your SupersEmu Server."
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: "SupersEmu finds and connects to your SupersEmu Server on your home network."
+        # iOS only uses Apple's TLS (URLSession) and hashing: exempt. See docs/specs/distribution.md.
+        "INFOPLIST_KEY_ITSAppUsesNonExemptEncryption[sdk=iphone*]": NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
         ENABLE_APP_SANDBOX: NO
         ENABLE_USER_SCRIPT_SANDBOXING: NO
@@ -830,6 +834,8 @@ targets:
     info:
       path: Config/SupersEmu-Info.plist
       properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSBonjourServices: ["_supersemu._tcp"]
         CFBundleURLTypes:
           - CFBundleURLName: com.chadillac6.supersemu.pair
@@ -865,16 +871,31 @@ targets:
         HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/cores/snes9x/libretro", "$(SRCROOT)/Host", "$(SRCROOT)/Host/CoreEntry"]
         GENERATE_INFOPLIST_FILE: YES
 
+  SupersEmuInputTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/InputTests
+      - App/Input/PadInput.swift
+      - App/Input/ConsoleLayout.swift
+      - App/Input/InputMapping.swift
+      - App/Input/HIDReport.swift
+      - App/Input/HIDPresets.swift
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   SupersEmu-macOS:
     build:
       targets:
         SupersEmu_macOS: all
         SupersEmuHostTests: [test]
+        SupersEmuInputTests: [test]
     run:
       config: Debug
     test:
-      targets: [SupersEmuHostTests]
+      targets: [SupersEmuHostTests, SupersEmuInputTests]
   SupersEmu-iOS:
     build:
       targets:

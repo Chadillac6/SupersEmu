@@ -57,8 +57,13 @@ Drive. Revisions, branches and statuses above are unchanged.
   development, `SUPERSEMU_SERVER_URL` + `SUPERSEMU_SERVER_TOKEN` (a device token) override it.
 - After SRAM, the auto state or slot 1 is written locally, a copy is queued on disk
   (`Application Support/SupersEmu/Sync/pending`) and uploaded. Offline uploads stay queued across
-  relaunches and retry on the next save, launch or app start. Newer copies of a line supersede queued
-  older ones.
+  relaunches and retry on the next save, launch or app start, and after every successful refresh (so
+  automatic reconnects after a network change flush the queue). Newer copies of a line supersede queued
+  older ones. Offline is not a failure: queued saves read "waiting to upload" / "will sync later".
+- When `ServerSession` already knows the server is unreachable (`provider.isReachable()` is false),
+  saves are still queued but launches skip the pull (no network timeouts before a downloaded game
+  starts) and flushes don't try the network. Playing offline on a stale base is safe: the later
+  upload's parent isn't the head, so it lands as a branch copy and the player chooses next launch.
 - Before a game starts the app fetches the server's heads: SRAM before the core loads, states after
   (they need the core version). A newer compatible revision is downloaded when this device has nothing
   newer. States from another core id/version are never downloaded or loaded (same rule as local

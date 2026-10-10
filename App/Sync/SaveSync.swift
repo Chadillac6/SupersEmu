@@ -7,6 +7,7 @@ final class CurrentServerProvider: SaveSyncServerProvider, @unchecked Sendable {
     private let lock = NSLock()
     private var client: APIClient?
     private var resolver: (@MainActor @Sendable () -> APIClient?)?
+    private var reachable: (@MainActor @Sendable () -> Bool)?
 
     init(client: APIClient? = nil) { self.client = client }
 
@@ -18,7 +19,18 @@ final class CurrentServerProvider: SaveSyncServerProvider, @unchecked Sendable {
 
     func set(_ client: APIClient?) { lock.withLock { self.client = client } }
     /// Asks `resolver` for the current client at each sync, so pairing, sign-out and LAN/Tailscale switches apply.
-    func use(_ resolver: @escaping @MainActor @Sendable () -> APIClient?) { lock.withLock { self.resolver = resolver } }
+    func use(_ resolver: @escaping @MainActor @Sendable () -> APIClient?, reachable: (@MainActor @Sendable () -> Bool)? = nil) {
+        lock.withLock {
+            self.resolver = resolver
+            self.reachable = reachable
+        }
+    }
+
+    func isReachable() async -> Bool {
+        let (client, reachable) = lock.withLock { (self.client, self.reachable) }
+        guard client == nil, let reachable else { return true }
+        return await reachable()
+    }
 
     func currentClient() async -> APIClient? {
         let (client, resolver) = lock.withLock { (self.client, self.resolver) }

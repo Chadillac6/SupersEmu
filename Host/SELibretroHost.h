@@ -17,7 +17,20 @@ typedef NS_OPTIONS(uint32_t, SEJoypadButtons) {
     SEJoypadButtonX      NS_SWIFT_NAME(x)      = 1u << 9,
     SEJoypadButtonL      NS_SWIFT_NAME(l)      = 1u << 10,
     SEJoypadButtonR      NS_SWIFT_NAME(r)      = 1u << 11,
+    SEJoypadButtonL2     NS_SWIFT_NAME(l2)     = 1u << 12,
+    SEJoypadButtonR2     NS_SWIFT_NAME(r2)     = 1u << 13,
+    SEJoypadButtonL3     NS_SWIFT_NAME(l3)     = 1u << 14,
+    SEJoypadButtonR3     NS_SWIFT_NAME(r3)     = 1u << 15,
 };
+
+/// RETRO_DEVICE_INDEX_ANALOG_LEFT / _RIGHT.
+typedef NS_ENUM(NSInteger, SEAnalogStick) {
+    SEAnalogStickLeft = 0,
+    SEAnalogStickRight = 1,
+};
+
+/// Controller ports the host feeds (players 1-4).
+FOUNDATION_EXPORT const NSInteger SEInputPortCount;
 
 /// Identifiers of the statically linked libretro cores (stable; used in save metadata).
 FOUNDATION_EXPORT NSString *const SECoreIDSnes9x;
@@ -61,6 +74,12 @@ FOUNDATION_EXPORT NSString *const SECoreIDMupen64PlusNext;
 
 /// Player 1 joypad state, read by the core during the next frame.
 @property (atomic) SEJoypadButtons buttons;
+/// Joypad state for `port` (0 to SEInputPortCount - 1); other ports are ignored.
+- (void)setButtons:(SEJoypadButtons)buttons forPort:(NSInteger)port NS_SWIFT_NAME(setButtons(_:port:));
+- (SEJoypadButtons)buttonsForPort:(NSInteger)port NS_SWIFT_NAME(buttons(port:));
+/// Analog stick for `port` (RETRO_DEVICE_ANALOG). Axes use libretro's range and direction:
+/// -32768...32767, +x right, +y down.
+- (void)setAnalogStick:(SEAnalogStick)stick x:(int16_t)x y:(int16_t)y forPort:(NSInteger)port NS_SWIFT_NAME(setAnalog(_:x:y:port:));
 /// Starts/stops AVAudioEngine output. Off by default (tests run silent).
 @property (nonatomic) BOOL audioEnabled;
 

@@ -65,6 +65,7 @@ final class NetworkTests: XCTestCase {
         options.hostname = "127.0.0.1"
         options.port = 0
         options.bonjour = false
+        options.metadata = false
         let (portStream, portContinuation) = AsyncStream.makeStream(of: Int.self)
         let (application, environment) = try ServerLauncher.makeApplication(store: store, options: options) { channel in
             portContinuation.yield(channel.localAddress?.port ?? 0)

@@ -5,6 +5,13 @@ import Foundation
 /// The sign-in/client track owns where the URL and token come from.
 public protocol SaveSyncServerProvider: Sendable {
     func currentClient() async -> APIClient?
+    /// False when the app already knows the server is unreachable: uploads stay queued and launches don't wait on
+    /// network timeouts. Saves are still queued while unreachable, as long as there's a client.
+    func isReachable() async -> Bool
+}
+
+extension SaveSyncServerProvider {
+    public func isReachable() async -> Bool { true }
 }
 
 /// One (game, kind, slot) line of revisions, e.g. the auto state of a game.
@@ -226,6 +233,10 @@ public actor SaveSyncEngine {
         repeat {
             flushAgain = false
             guard let client = await provider.currentClient() else { break }
+            guard await provider.isReachable() else {
+                offline = "Server unreachable"
+                break
+            }
             var index = 0
             while index < state.queue.count {
                 let item = state.queue[index]
@@ -302,9 +313,9 @@ public actor SaveSyncEngine {
             return markFailed(item.id, error.description)
         } catch {
             guard epoch == self.epoch else { return .stale }
+            // Offline isn't a failure of this save: it stays "waiting to upload".
             if let index = state.queue.firstIndex(where: { $0.id == item.id }) {
                 state.queue[index].attempts += 1
-                state.queue[index].lastError = error.localizedDescription
                 persist()
             }
             return .offline(error.localizedDescription)
@@ -333,7 +344,7 @@ public actor SaveSyncEngine {
     /// queues this device's copy so it is kept on the server as a branch.
     public func prepare(_ files: [LocalSaveFile]) async -> [String: SavePullOutcome] {
         var outcomes: [String: SavePullOutcome] = [:]
-        guard let client = await provider.currentClient() else {
+        guard let client = await provider.currentClient(), await provider.isReachable() else {
             for file in files { outcomes[file.line.key] = .localOnly }
             return outcomes
         }

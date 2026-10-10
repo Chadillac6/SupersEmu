@@ -26,5 +26,18 @@ enum LibraryMigrations {
                 );
                 """)
         }
+        MetadataMigrations.register(&migrator)
+        // M3: what the last Incoming scan couldn't settle, so Review Needed can explain and fix files left in Incoming.
+        migrator.registerMigration("v3_library_issues") { db in
+            try db.execute(sql: """
+                CREATE TABLE import_issues (
+                    id TEXT PRIMARY KEY,
+                    path TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    review_id TEXT,
+                    created_at DATETIME NOT NULL
+                );
+                """)
+        }
     }
 }

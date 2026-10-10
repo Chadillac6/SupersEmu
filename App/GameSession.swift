@@ -21,6 +21,15 @@ final class GameSession {
     private(set) var isChoosingDisc = false
     /// Highlighted row in the disc picker (zero-based).
     var discSelection = 0
+    /// The in-game menu (Select+Start held 1 s, long-press Home/Guide, or the Menu button) is open; the game is paused.
+    private(set) var isMenuOpen = false
+    var menuSelection = 0
+    var isShowingControls = false
+    /// Set when the player picks "Exit to Library" from the in-game menu.
+    private(set) var wantsExit = false
+    /// A player's controller went away mid-game; the game stays paused until they resume.
+    private(set) var disconnectedController: String?
+    private(set) var controllerReconnected = false
 
     @ObservationIgnored let input = GameInput()
     @ObservationIgnored weak var displayLayer: CALayer?
@@ -36,6 +45,12 @@ final class GameSession {
     @ObservationIgnored private var pickerButtons: SEJoypadButtons = []
     /// The chord opens the picker only after it has been released since it last fired.
     @ObservationIgnored private var chordArmed = true
+    @ObservationIgnored private var hotkeyHeldSince: ContinuousClock.Instant?
+    /// False after the menu opens until the hotkey is released, so a still-held hotkey doesn't reopen it.
+    @ObservationIgnored private var hotkeyArmed = true
+    @ObservationIgnored private var overlayTimer: Timer?
+    @ObservationIgnored private var overlayHeld: Set<PadInput> = []
+    @ObservationIgnored private var controllerObservers: [NSObjectProtocol] = []
 
     private static let autosaveInterval = Duration.seconds(30)
 
@@ -43,10 +58,26 @@ final class GameSession {
         self.game = game
         self.sync = sync ?? .shared
         hasManualState = FileManager.default.fileExists(atPath: AppPaths.manualState(for: game.id).path)
+        input.layout = ConsoleLayout.forSystem(Self.system(for: game))
+        input.gameID = game.id
+        #if DEBUG
+        // UI-only stub for overlay screenshots of consoles without a test ROM: SUPERSEMU_DEBUG_LAYOUT=n64.
+        if let system = ProcessInfo.processInfo.environment["SUPERSEMU_DEBUG_LAYOUT"] {
+            input.layout = ConsoleLayout.forSystem(system)
+        }
+        #endif
+    }
+
+    /// `SystemID` raw value for the game ("snes", "n64", ...), which picks the controller layout.
+    static func system(for game: Game) -> String {
+        CoreRegistry.systemID(forConsole: game.console)
+            ?? CoreRegistry.core(forExtension: game.fileURL.pathExtension)?.systems.first
+            ?? "snes"
     }
 
     func start() {
         guard host == nil, startTask == nil else { return }
+        observeControllers()
         startTask = Task { await launch() }
     }
 
@@ -146,7 +177,7 @@ final class GameSession {
 
     func resume() {
         // Never run frames while saves are still syncing or a conflict is waiting for an answer.
-        guard let host, hasStarted, timer == nil, !isChoosingDisc else { return }
+        guard let host, hasStarted, timer == nil, !isChoosingDisc, !isMenuOpen, disconnectedController == nil else { return }
         let timer = Timer(timeInterval: 1.0 / max(host.framesPerSecond, 1), repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -164,18 +195,28 @@ final class GameSession {
 
     private func tick() {
         guard let host else { return }
-        let buttons = input.currentButtons()
+        if menuHotkeyHeld() {
+            clearHostInput()
+            openMenu()
+            return
+        }
+        let outputs = input.outputs()
+        let buttons = SEJoypadButtons(rawValue: outputs[0].buttons)
         if buttons.isSuperset(of: Self.discPickerChord) {
             if diskCount > 1, chordArmed {
                 chordArmed = false
-                host.buttons = []
+                clearHostInput()
                 openDiscPicker()
                 return
             }
         } else {
             chordArmed = true
         }
-        host.buttons = buttons
+        for (port, output) in outputs.enumerated() {
+            host.setButtons(SEJoypadButtons(rawValue: output.buttons), port: port)
+            host.setAnalog(.left, x: output.leftStick.x, y: output.leftStick.y, port: port)
+            host.setAnalog(.right, x: output.rightStick.x, y: output.rightStick.y, port: port)
+        }
         let frameStart = ContinuousClock.now
         host.runFrame()
         if let image = host.copyFrameImage() {
@@ -271,6 +312,177 @@ final class GameSession {
 
     func discLabel(_ index: Int) -> String? { host?.label(forDisk: index) }
 
+    private func clearHostInput() {
+        guard let host else { return }
+        for port in 0..<SEInputPortCount {
+            host.setButtons([], port: port)
+            host.setAnalog(.left, x: 0, y: 0, port: port)
+            host.setAnalog(.right, x: 0, y: 0, port: port)
+        }
+    }
+
+    // MARK: In-game menu
+
+    enum MenuItem: String, CaseIterable, Identifiable {
+        case resume = "Resume", save = "Save State", load = "Load State", swapDisc = "Swap Disc"
+        case controls = "Controls", exit = "Exit to Library"
+        var id: String { rawValue }
+    }
+
+    var menuItems: [MenuItem] {
+        MenuItem.allCases.filter { item in
+            switch item {
+            case .swapDisc: diskCount > 1
+            case .load: hasManualState
+            default: true
+            }
+        }
+    }
+
+    private static let menuChordDuration = Duration.seconds(1)
+    private static let homeLongPress = Duration.milliseconds(600)
+
+    /// Select+Start held for 1 s, or Home/Guide held, on any controller or the keyboard (Tab+Return).
+    private func menuHotkeyHeld() -> Bool {
+        let sources = input.sourceStates().map(\.pressed)
+        let chord = sources.contains { $0.isSuperset(of: [.select, .start]) }
+        let home = sources.contains { $0.contains(.home) }
+        guard chord || home else {
+            hotkeyHeldSince = nil
+            hotkeyArmed = true
+            return false
+        }
+        guard hotkeyArmed else { return false }
+        let since = hotkeyHeldSince ?? .now
+        hotkeyHeldSince = since
+        return ContinuousClock.now - since >= (chord ? Self.menuChordDuration : Self.homeLongPress)
+    }
+
+    func openMenu() {
+        guard hasStarted, !isMenuOpen, !isChoosingDisc, pendingConflict == nil else { return }
+        pause()
+        hotkeyHeldSince = nil
+        hotkeyArmed = false
+        menuSelection = 0
+        isMenuOpen = true
+        startOverlayPolling()
+    }
+
+    func closeMenu() {
+        guard isMenuOpen else { return }
+        isMenuOpen = false
+        isShowingControls = false
+        if disconnectedController == nil { stopOverlayPolling() }
+        resume()
+    }
+
+    func choose(_ item: MenuItem) {
+        switch item {
+        case .resume:
+            closeMenu()
+        case .save:
+            saveManualState()
+            closeMenu()
+        case .load:
+            loadManualState()
+            closeMenu()
+        case .swapDisc:
+            isMenuOpen = false
+            stopOverlayPolling()
+            openDiscPicker()
+        case .controls:
+            isShowingControls = true
+        case .exit:
+            isMenuOpen = false
+            stopOverlayPolling()
+            wantsExit = true
+        }
+    }
+
+    // MARK: Controller disconnects
+
+    private func observeControllers() {
+        guard controllerObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        controllerObservers.append(center.addObserver(forName: .gamepadDisconnected, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated { self?.controllerDisconnected(note.object as? String ?? "Controller") }
+        })
+        controllerObservers.append(center.addObserver(forName: .gamepadConnected, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.disconnectedController != nil else { return }
+                self.controllerReconnected = true
+            }
+        })
+    }
+
+    private func controllerDisconnected(_ name: String) {
+        guard hasStarted, disconnectedController == nil else { return }
+        pause()
+        clearHostInput()
+        disconnectedController = name
+        controllerReconnected = false
+        if !isMenuOpen, !isChoosingDisc { startOverlayPolling() }
+    }
+
+    /// Continues after a disconnect, with the reconnected pad, another pad, touch or the keyboard.
+    func dismissDisconnect() {
+        guard disconnectedController != nil else { return }
+        disconnectedController = nil
+        controllerReconnected = false
+        if !isMenuOpen {
+            stopOverlayPolling()
+            resume()
+        }
+    }
+
+    // MARK: Menu navigation with a controller or the keyboard
+
+    private func startOverlayPolling() {
+        overlayTimer?.invalidate()
+        // Buttons still held from the hotkey must be released before they count as menu input.
+        overlayHeld = navigationInputs()
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollOverlay() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        overlayTimer = timer
+    }
+
+    private func stopOverlayPolling() {
+        overlayTimer?.invalidate()
+        overlayTimer = nil
+        #if os(macOS)
+        input.releaseAll()
+        #endif
+    }
+
+    private func navigationInputs() -> Set<PadInput> {
+        var state = input.physicalState()
+        if state.leftStick.y > 0.5 { state.pressed.insert(.dpadUp) }
+        if state.leftStick.y < -0.5 { state.pressed.insert(.dpadDown) }
+        return state.pressed
+    }
+
+    /// Up/down move, bottom face button or Start chooses, right face button or Select backs out.
+    private func pollOverlay() {
+        let held = navigationInputs()
+        let pressed = held.subtracting(overlayHeld)
+        overlayHeld = held
+        if isShowingControls { return }
+        if isMenuOpen {
+            let items = menuItems
+            if pressed.contains(.dpadUp) { menuSelection = max(menuSelection - 1, 0) }
+            if pressed.contains(.dpadDown) { menuSelection = min(menuSelection + 1, items.count - 1) }
+            if !pressed.isDisjoint(with: [.south, .start]), items.indices.contains(menuSelection) {
+                choose(items[menuSelection])
+            } else if !pressed.isDisjoint(with: [.east, .select, .home]) {
+                closeMenu()
+            }
+        } else if disconnectedController != nil, !pressed.isDisjoint(with: [.south, .start]) {
+            dismissDisconnect()
+        }
+    }
+
     /// L + R + Select opens the disc picker from a controller (keyboard: Command-D).
     private static let discPickerChord: SEJoypadButtons = [.l, .r, .select]
 
@@ -317,6 +529,7 @@ final class GameSession {
         input.releaseAll()
         #endif
         resume()
+        if disconnectedController != nil, overlayTimer == nil { startOverlayPolling() }
     }
 
     private func insert(_ disc: Int) {
@@ -355,6 +568,12 @@ final class GameSession {
         pickerTimer?.invalidate()
         pickerTimer = nil
         isChoosingDisc = false
+        overlayTimer?.invalidate()
+        overlayTimer = nil
+        isMenuOpen = false
+        disconnectedController = nil
+        controllerObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        controllerObservers = []
         host?.shutdown()
         host = nil
     }

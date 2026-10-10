@@ -137,7 +137,7 @@ final class SaveSyncEngineTests: XCTestCase {
             XCTAssertNotNil(report.offlineError)
             XCTAssertEqual(report.remaining, 1, "queued copies of the same line coalesce")
             let status = await phone.engine.status(of: self.auto)
-            guard case .failed = status else { return XCTFail("\(status)") }
+            XCTAssertEqual(status, .waitingToUpload, "offline isn't reported as a failed upload")
 
             // Relaunch: a new engine reads the queue from disk, then the server comes back.
             let relaunched = SaveSyncEngine(directory: phone.engine.directory, provider: TestProvider(online))
