@@ -79,7 +79,7 @@ struct GameDetailView: View {
             }
             .overlay(alignment: .topLeading) {
                 if let logo = item.logoPath ?? gameDetail?.logoPath {
-                    RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit)
+                    RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit) { EmptyView() }
                         .frame(maxWidth: 260, maxHeight: 80, alignment: .leading)
                         .padding(20)
                         .accessibilityHidden(true)
@@ -256,7 +256,7 @@ struct GameDetailView: View {
     private var gameDetail: GameDetail? { detail ?? downloads.downloaded[item.id]?.detail }
 
     private var playableGame: Game? {
-        item.source == .server ? downloads.playableGame(item.id) : item.playable
+        item.source == .server ? downloads.playableGame(item.id) ?? item.playable : item.playable
     }
 
     private func downloadButton(title: String) -> some View {

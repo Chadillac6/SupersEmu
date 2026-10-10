@@ -27,7 +27,9 @@ struct CoverArt: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 14))
-            .task(id: item.coverPath) { image = await ArtworkCache.image(item.coverPath, key: item.id, server: server) }
+            .task(id: ArtworkCache.taskID(item.coverPath, server)) {
+                await ArtworkCache.load(item.coverPath, key: item.id, server: server) { image = $0 }
+            }
     }
 }
 
@@ -52,19 +54,20 @@ struct WideArt: View {
                 }
             }
             .clipped()
-            .task(id: item.heroPath ?? item.coverPath) {
-                hero = await ArtworkCache.image(item.heroPath, key: ArtworkCache.key(item.id, item.heroPath), server: server)
-                if hero == nil { cover = await ArtworkCache.image(item.coverPath, key: item.id, server: server) }
+            .task(id: ArtworkCache.taskID(item.heroPath ?? item.coverPath, server)) {
+                await ArtworkCache.load(item.heroPath, key: ArtworkCache.key(item.id, item.heroPath), server: server) { hero = $0 }
+                if hero == nil { await ArtworkCache.load(item.coverPath, key: item.id, server: server) { cover = $0 } }
             }
     }
 }
 
-/// Any server artwork path (screenshots, logos), loaded like covers.
-struct RemoteArtwork: View {
+/// Any server artwork path (screenshots, logos), loaded like covers. The placeholder shows until the image loads.
+struct RemoteArtwork<Placeholder: View>: View {
     @Environment(ServerSession.self) private var server
     let gameID: String
     let path: String
     var contentMode: ContentMode = .fill
+    @ViewBuilder let placeholder: () -> Placeholder
     @State private var image: Image?
 
     var body: some View {
@@ -72,10 +75,18 @@ struct RemoteArtwork: View {
             if let image {
                 image.resizable().aspectRatio(contentMode: contentMode)
             } else {
-                Color.white.opacity(0.06)
+                placeholder()
             }
         }
-        .task(id: path) { image = await ArtworkCache.image(path, key: ArtworkCache.key(gameID, path), server: server) }
+        .task(id: ArtworkCache.taskID(path, server)) {
+            await ArtworkCache.load(path, key: ArtworkCache.key(gameID, path), server: server) { image = $0 }
+        }
+    }
+}
+
+extension RemoteArtwork where Placeholder == Color {
+    init(gameID: String, path: String, contentMode: ContentMode = .fill) {
+        self.init(gameID: gameID, path: path, contentMode: contentMode) { Color.white.opacity(0.06) }
     }
 }
 
@@ -86,14 +97,21 @@ enum ArtworkCache {
         return gameID + "-" + path[range.upperBound...].replacingOccurrences(of: "/", with: "-")
     }
 
-    @MainActor static func image(_ path: String?, key: String, server: ServerSession) async -> Image? {
-        guard let path else { return nil }
+    /// Reruns artwork tasks on reconnect, so art that couldn't load offline appears.
+    @MainActor static func taskID(_ path: String?, _ server: ServerSession) -> String {
+        "\(path ?? "")|\(server.isOnline)"
+    }
+
+    /// The disk copy straight away (works offline), then the server's when it has changed (replaced art keeps its path).
+    @MainActor static func load(_ path: String?, key: String, server: ServerSession, show: (Image) -> Void) async {
+        guard let path else { return }
         let file = AppPaths.covers.appendingPathComponent(key)
-        if let data = try? Data(contentsOf: file), let image = image(from: data) { return image }
-        guard server.isOnline, let data = try? await server.data(atPath: path), let image = image(from: data) else { return nil }
+        let cached = try? Data(contentsOf: file)
+        if let cached, let image = image(from: cached) { show(image) }
+        guard server.isOnline, let data = try? await server.data(atPath: path), data != cached, let image = image(from: data) else { return }
         try? FileManager.default.createDirectory(at: AppPaths.covers, withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
-        return image
+        show(image)
     }
 
     static func palette(_ id: String) -> [Color] {

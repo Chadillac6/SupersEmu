@@ -25,7 +25,7 @@ public actor WikipediaMetadataProvider: MetadataProvider {
             guard summary.type == "standard", summary.description?.lowercased().contains("game") == true else { continue }
             let pageURL = summary.content_urls?.desktop?.page ?? "https://en.wikipedia.org/wiki/" + Self.encodedTitle(page)
             var reception: ReceptionSummary?
-            if let data = try await http.get(Self.extractURL(page)),
+            if let data = try? await http.get(Self.extractURL(page)),
                let extract = try? JSONDecoder().decode(ExtractResponse.self, from: data).query?.pages.first?.extract,
                let text = Self.reception(in: extract) {
                 reception = ReceptionSummary(text: text, source: "Wikipedia", url: pageURL + "#Reception")

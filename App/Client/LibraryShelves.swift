@@ -48,8 +48,11 @@ enum LibraryShelves {
     static let recentlyAddedLimit = 12
 
     @MainActor static func items(server: [GameSummary], firstSeen: [String: Date], downloads: DownloadCenter, local: [Game]) -> [LibraryItem] {
+        // A local copy of a server game shows once, with the server's metadata, and plays from the local file if not downloaded.
+        let localByID = Dictionary(local.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let serverIDs = Set(server.map(\.id))
         let serverItems = server.map { summary in
-            let playable = downloads.playableGame(summary.id)
+            let playable = downloads.playableGame(summary.id) ?? localByID[summary.id]
             return LibraryItem(
                 id: summary.id, title: summary.title, console: summary.system.displayName, system: summary.system,
                 year: summary.year, genre: summary.genre, coverPath: summary.coverPath, size: summary.totalSize,
@@ -57,7 +60,7 @@ enum LibraryShelves {
                 playable: playable, lastPlayed: lastPlayed(summary.id), heroPath: summary.heroPath ?? summary.backdropPath,
                 logoPath: summary.logoPath, genres: summary.genres, players: summary.players, criticScore: summary.criticScore?.score)
         }
-        let localItems = local.map { game in
+        let localItems = local.filter { !serverIDs.contains($0.id) }.map { game in
             LibraryItem(
                 id: game.id, title: game.title, console: game.console, system: CoreRegistry.systemID(forConsole: game.console).flatMap(SystemID.init(rawValue:)), year: nil, genre: nil, coverPath: nil,
                 size: (try? FileManager.default.attributesOfItem(atPath: game.fileURL.path)[.size] as? NSNumber)?.int64Value ?? 0,

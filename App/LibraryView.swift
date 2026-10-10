@@ -138,8 +138,8 @@ struct LibraryView: View {
     }
 
     private func heroPlayable(_ item: LibraryItem) -> Game? {
-        let game = item.source == .server ? downloads.playableGame(item.id) : item.playable
-        return bios.isMissing(item.system) ? nil : game
+        let game = item.source == .server ? downloads.playableGame(item.id) ?? item.playable : item.playable
+        return bios.isMissing(item.system) || (bios.isSyncing && item.system?.requiresBIOS == true) ? nil : game
     }
 
     private func heroTitle(_ item: LibraryItem) -> String {

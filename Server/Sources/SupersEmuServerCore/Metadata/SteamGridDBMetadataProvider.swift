@@ -12,6 +12,12 @@ public actor SteamGridDBMetadataProvider: MetadataProvider {
     static let api = "https://www.steamgriddb.com/api/v2/"
     static let images: [(ArtworkKind, String, String)] = [(.backdrop, "heroes", "image/png,image/jpeg"), (.logo, "logos", "image/png")]
 
+    /// Only SteamGridDB's own hosts, so a bad API response can't point the server at other (e.g. private) hosts.
+    static func isCDN(_ url: URL) -> Bool {
+        guard url.scheme == "https", let host = url.host?.lowercased() else { return false }
+        return host == "steamgriddb.com" || host.hasSuffix(".steamgriddb.com")
+    }
+
     public init(key: @escaping @Sendable () -> String?, http: RateLimitedFetcher) {
         self.key = key
         self.http = http
@@ -28,7 +34,7 @@ public actor SteamGridDBMetadataProvider: MetadataProvider {
         var urls: [ArtworkKind: URL] = [:]
         for (kind, path, mimes) in Self.images {
             guard let data = try await get(Self.imagesURL(path, gameID: match.id, mimes: mimes), key: key),
-                  let image = try? JSONDecoder().decode(Response<[Image]>.self, from: data).data?.first(where: { $0.url.scheme == "https" })
+                  let image = try? JSONDecoder().decode(Response<[Image]>.self, from: data).data?.first(where: { Self.isCDN($0.url) })
             else { continue }
             urls[kind] = image.url
         }

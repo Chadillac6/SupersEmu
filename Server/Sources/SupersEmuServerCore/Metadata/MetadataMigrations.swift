@@ -60,6 +60,8 @@ enum MetadataMigrations {
             for column in ["reception", "reception_source", "reception_url", "review_name", "review_url", "artwork_urls"] {
                 try db.execute(sql: "ALTER TABLE game_metadata ADD COLUMN \(column) TEXT")
             }
+            // The title a name-searching provider looked up; an unmatched game is retried when a better title appears.
+            try db.execute(sql: "ALTER TABLE metadata_jobs ADD COLUMN search_title TEXT")
         }
     }
 }

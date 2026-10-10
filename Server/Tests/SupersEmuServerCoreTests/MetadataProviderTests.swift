@@ -141,6 +141,28 @@ final class MetadataProviderTests: XCTestCase {
 
     // MARK: IGDB
 
+    func testUnmatchedGameIsSearchedAgainWhenABetterTitleAppears() async throws {
+        let id = try await importROM("SM.sfc")
+        let fetcher = RequestStub { request in
+            let url = request.url!.absoluteString
+            guard url.contains("list=search") else { return nil }
+            return self.json(["query": ["search": url.contains("Super%20Metroid") ? [["title": "Super Metroid"]] : []]])
+        }
+        let metadata = service(fetcher) { [WikipediaMetadataProvider(http: $0)] }
+        _ = await metadata.enrichPending()
+        _ = await metadata.enrichPending()
+        XCTAssertEqual(fetcher.requests.count, 1, "an unmatched title isn't searched again")
+
+        try await store.db.write { db in
+            try MetadataRecord(provider: "libretro", title: "Super Metroid").save(gameID: id, db: db)
+        }
+        _ = await metadata.enrichPending()
+        XCTAssertEqual(fetcher.requests.count, 3, "searched again with the canonical title, then its summary")
+        XCTAssertTrue(fetcher.requests[1].url!.absoluteString.contains("Super%20Metroid"))
+        _ = await metadata.enrichPending()
+        XCTAssertEqual(fetcher.requests.count, 3)
+    }
+
     func testIGDBDisabledWithoutCredentials() async throws {
         let id = try await importROM("Super Metroid.sfc")
         let fetcher = RequestStub { _ in XCTFail("no request without credentials"); return nil }
@@ -209,7 +231,7 @@ final class MetadataProviderTests: XCTestCase {
             SteamGridDBMetadataProvider.searchURL("Super Metroid"):
                 json(["success": true, "data": [["id": 9, "name": "Metroid"], ["id": 5250, "name": "Super Metroid"]]]),
             SteamGridDBMetadataProvider.imagesURL("heroes", gameID: 5250, mimes: "image/png,image/jpeg"):
-                json(["success": true, "data": [["id": 1, "url": hero.absoluteString]]]),
+                json(["success": true, "data": [["id": 9, "url": "https://10.0.0.5/internal.png"], ["id": 1, "url": hero.absoluteString]]]),
             SteamGridDBMetadataProvider.imagesURL("logos", gameID: 5250, mimes: "image/png"):
                 json(["success": true, "data": [["id": 2, "url": logo.absoluteString]]]),
             hero: DatFixtures.png,

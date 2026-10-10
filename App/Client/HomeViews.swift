@@ -69,12 +69,13 @@ struct HomeHero: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(item.lastPlayed != nil ? "CONTINUE PLAYING" : "IN YOUR LIBRARY")
                         .font(.caption.bold()).tracking(1.5).foregroundStyle(theme.accent)
+                    let title = Text(item.title).font(.system(size: 32, weight: .heavy)).lineLimit(2)
                     if let logo = item.logoPath {
-                        RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit)
+                        RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit) { title }
                             .frame(maxWidth: 320, maxHeight: 90, alignment: .leading)
                             .accessibilityLabel(item.title)
                     } else {
-                        Text(item.title).font(.system(size: 32, weight: .heavy)).lineLimit(2)
+                        title
                     }
                     Text(subtitle).font(.callout).foregroundStyle(.white.opacity(0.8))
                     HStack(spacing: 10) {
