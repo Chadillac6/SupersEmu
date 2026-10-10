@@ -1,0 +1,153 @@
+name: SupersEmu
+options:
+  bundleIdPrefix: com.chadillac6.supersemu
+  deploymentTarget:
+    iOS: "18.0"
+    macOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    CLANG_CXX_LANGUAGE_STANDARD: gnu++17
+targets:
+  # Snes9x libretro core, statically linked for the M0 spike.
+  # Production plan: one dynamic framework per core (see docs/adr/0002-core-packaging.md).
+  Snes9xCore:
+    type: library.static
+    platform: [iOS, macOS]
+    sources:
+      - path: Vendor/cores/snes9x
+        includes:
+          - "apu/apu.cpp"
+          - "apu/bapu/dsp/sdsp.cpp"
+          - "apu/bapu/smp/smp.cpp"
+          - "apu/bapu/smp/smp_state.cpp"
+          - "c4emu.c"
+          - "msu1.c"
+          - "zipfile.c"
+          - "srtc.c"
+          - "obc1.c"
+          - "bsflash.c"
+          - "tile.c"
+          - "bsx.c"
+          - "spc7110.c"
+          - "fxemu.c"
+          - "sdd1.c"
+          - "seta.c"
+          - "sa1hw.c"
+          - "dsp.c"
+          - "filter/snes_ntsc.c"
+          - "cheats2.cpp"
+          - "clip.cpp"
+          - "controls.cpp"
+          - "cpu.cpp"
+          - "cpuexec.cpp"
+          - "cpuops.cpp"
+          - "crosshairs.cpp"
+          - "dma.cpp"
+          - "gfx.cpp"
+          - "globals.cpp"
+          - "loadzip.cpp"
+          - "memmap.cpp"
+          - "ppu.cpp"
+          - "sa1.cpp"
+          - "sa1cpu.cpp"
+          - "snapshot.cpp"
+          - "sha256.cpp"
+          - "bml.cpp"
+          - "fscompat.cpp"
+          - "libretro/libretro.cpp"
+          - "libretro/libretro-common/compat/compat_posix_string.c"
+          - "libretro/libretro-common/compat/compat_strcasestr.c"
+          - "libretro/libretro-common/compat/compat_snprintf.c"
+          - "libretro/libretro-common/compat/compat_strl.c"
+          - "libretro/libretro-common/compat/fopen_utf8.c"
+          - "libretro/libretro-common/encodings/encoding_utf.c"
+          - "libretro/libretro-common/encodings/encoding_deflate.c"
+          - "libretro/libretro-common/file/file_path.c"
+          - "libretro/libretro-common/file/file_path_io.c"
+          - "libretro/libretro-common/streams/file_stream.c"
+          - "libretro/libretro-common/streams/file_stream_transforms.c"
+          - "libretro/libretro-common/string/stdstring.c"
+          - "libretro/libretro-common/time/rtime.c"
+          - "libretro/libretro-common/vfs/vfs_implementation.c"
+          - "libretro/libretro-common/vfs/vfs_hybrid.c"
+          - "libretro/libretro-common/file/retro_dirent.c"
+    settings:
+      base:
+        GCC_OPTIMIZATION_LEVEL: "3"
+        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "ALLOW_CPU_OVERCLOCK", "HAVE_STRINGS_H"]
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Vendor/cores/snes9x"
+          - "$(SRCROOT)/Vendor/cores/snes9x/libretro"
+          - "$(SRCROOT)/Vendor/cores/snes9x/libretro/libretro-common/include"
+          - "$(SRCROOT)/Vendor/cores/snes9x/apu"
+          - "$(SRCROOT)/Vendor/cores/snes9x/apu/bapu"
+        GCC_ENABLE_CPP_RTTI: NO
+        GCC_ENABLE_CPP_EXCEPTIONS: NO
+        GCC_WARN_INHIBIT_ALL_WARNINGS: YES
+        CLANG_ENABLE_OBJC_ARC: NO
+
+  SupersEmu:
+    type: application
+    platform: [iOS, macOS]
+    sources:
+      - App
+      - Host
+    dependencies:
+      - target: Snes9xCore_${platform}
+      - sdk: AVFoundation.framework
+      - sdk: GameController.framework
+    settings:
+      base:
+        PRODUCT_NAME: SupersEmu
+        PRODUCT_BUNDLE_IDENTIFIER: com.chadillac6.supersemu
+        SWIFT_OBJC_BRIDGING_HEADER: Host/SupersEmu-Bridging-Header.h
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/cores/snes9x/libretro"]
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: SupersEmu
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.games
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_GCSupportsControllerUserInteraction: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_APP_SANDBOX: NO
+
+  SupersEmuHostTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/HostTests
+      - Host/SELibretroHost.h
+      - Host/SELibretroHost.mm
+    dependencies:
+      - target: Snes9xCore_macOS
+      - sdk: AVFoundation.framework
+      - sdk: CoreGraphics.framework
+    settings:
+      base:
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/cores/snes9x/libretro", "$(SRCROOT)/Host"]
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  SupersEmu-macOS:
+    build:
+      targets:
+        SupersEmu_macOS: all
+        SupersEmuHostTests: [test]
+    run:
+      config: Debug
+    test:
+      targets: [SupersEmuHostTests]
+  SupersEmu-iOS:
+    build:
+      targets:
+        SupersEmu_iOS: all
+    run:
+      config: Debug
