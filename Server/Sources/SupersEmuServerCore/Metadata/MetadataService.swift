@@ -71,10 +71,12 @@ public actor MetadataService {
     private func enrich(with provider: any MetadataProvider) async throws -> Int {
         let pending = try await store.db.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT g.id, g.system, g.title, j.match_status, j.dataset_version FROM games g
+                SELECT g.id, g.system, g.title, j.match_status, j.dataset_version, j.artwork_status, j.artwork_version,
+                    m.provider_ref FROM games g
                 LEFT JOIN metadata_jobs j ON j.game_id = g.id AND j.provider = ?
+                LEFT JOIN game_metadata m ON m.game_id = g.id AND m.provider = j.provider
                 WHERE g.needs_review = 0 AND (j.game_id IS NULL OR j.match_status IS NULL OR j.dataset_version IS NOT ?
-                    OR (j.match_status = 'matched' AND j.artwork_status IS NULL))
+                    OR (j.match_status = 'matched'))
                 ORDER BY g.created_at DESC
                 """, arguments: [provider.id, provider.version])
         }
@@ -84,6 +86,7 @@ public actor MetadataService {
             let id: String = row["id"]
             guard let system = SystemID(rawValue: row["system"]), !unavailable.contains(system) else { continue }
             let status: String? = row["match_status"]
+            let previousRef: String? = row["provider_ref"]
             if status == nil || (row["dataset_version"] as String?) != provider.version {
                 let game = MetadataLookup(gameID: id, system: system, title: row["title"], files: try candidateFiles(gameID: id))
                 let result = (try? await provider.lookup(game)) ?? .unavailable
@@ -92,16 +95,21 @@ public actor MetadataService {
                     unavailable.insert(system)
                     continue
                 case .unmatched:
+                    try artwork.removeProviderArtwork(provider: provider.id, gameID: id)
                     try await recordJob(id, provider, match: "unmatched", clearingRecord: true)
                     changed += 1
                     continue
                 case .matched(let record):
+                    if previousRef != nil, previousRef != record.providerRef {
+                        try artwork.removeProviderArtwork(provider: provider.id, gameID: id)
+                    }
                     try await store.db.write { db in try record.save(gameID: id, db: db) }
                     try await recordJob(id, provider, match: "matched", clearingRecord: false)
                     logger.info("\(provider.id) matched \(id.prefix(12)) to \"\(record.providerRef ?? record.title ?? "?")\"")
                     changed += 1
                 }
-            } else if status != "matched" {
+            } else if status != "matched" || ((row["artwork_status"] as String?) != nil
+                        && (row["artwork_version"] as String?) == provider.artworkVersion(system: system)) {
                 continue
             }
             try await fetchArtwork(gameID: id, system: system, provider: provider)
@@ -145,8 +153,9 @@ public actor MetadataService {
             }
         }
         try await store.db.write { db in
-            try db.execute(sql: "UPDATE metadata_jobs SET artwork_status = 'done', updated_at = ? WHERE game_id = ? AND provider = ?",
-                           arguments: [Date(), gameID, provider.id])
+            try db.execute(sql: """
+                UPDATE metadata_jobs SET artwork_status = 'done', artwork_version = ?, updated_at = ? WHERE game_id = ? AND provider = ?
+                """, arguments: [provider.artworkVersion(system: system), Date(), gameID, provider.id])
         }
     }
 
@@ -156,7 +165,7 @@ public actor MetadataService {
         return nil
     }
 
-    /// ROM, or the data files of the first disc (track 01 sorts first), resolved and contained under the store root.
+    /// ROM, or every track of the first disc (lookup stops at the first match), resolved and contained under the store root.
     private func candidateFiles(gameID: String) throws -> [URL] {
         let rows = try store.db.read { db in
             try Row.fetchAll(db, sql: """
@@ -166,7 +175,7 @@ public actor MetadataService {
         }
         let firstDisc: Int? = rows.first?["disc_number"]
         let root = store.paths.root.resolvingSymlinksInPath().standardizedFileURL.path
-        return rows.filter { ($0["disc_number"] as Int?) == firstDisc }.prefix(4).compactMap { row in
+        return rows.filter { ($0["disc_number"] as Int?) == firstDisc }.compactMap { row in
             let path: String = row["stored_path"]
             let url = store.paths.root.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
             return url.path.hasPrefix(root + "/") ? url : nil

@@ -21,7 +21,7 @@ enum ROMHasher {
         switch system {
         case .snes where size % 1024 == 512:
             results.append(try hash(url, skip: 512, transform: nil))
-        case .genesis where size % 0x4000 == 512 && size > 512:
+        case .genesis where size % 0x4000 == 512 && size > 512, .sega32x where size % 0x4000 == 512 && size > 512:
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
             if let plain = deinterleaveSMD(data) { results.append(hash(plain)) }
         case .n64 where head == [0x37, 0x80, 0x40, 0x12]:

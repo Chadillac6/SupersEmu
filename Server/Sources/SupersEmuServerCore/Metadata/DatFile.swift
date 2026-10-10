@@ -83,6 +83,7 @@ public struct DatIndex: Sendable {
     private var byMD5: [String: Int] = [:]
     private var byCRC: [String: [ROM]] = [:]
     private var supplements: [String: [String: String]] = [:]
+    private var supplementsBySerial: [String: [String: String]] = [:]
 
     public init(dat: String) {
         for (kind, game) in DatFile.parse(dat) where kind == "game" {
@@ -101,16 +102,19 @@ public struct DatIndex: Sendable {
         }
     }
 
-    /// Adds a supplement DAT whose games carry `field` (e.g. `genre`) and `rom ( crc … )`.
+    /// Adds a supplement DAT whose games carry `field` (e.g. `genre`) and `rom ( crc … )`, or a `serial` (PlayStation).
     public mutating func addSupplement(field: String, dat: String) {
-        var values: [String: String] = [:]
+        var values: [String: String] = [:], bySerial: [String: String] = [:]
         for (kind, game) in DatFile.parse(dat) where kind == "game" {
             guard let value = game[field], !value.isEmpty else { continue }
+            if let serial = game["serial"]?.uppercased(), bySerial[serial] == nil { bySerial[serial] = value }
             for rom in game.blocks("rom") {
                 if let crc = rom["crc"]?.uppercased(), values[crc] == nil { values[crc] = value }
+                if let serial = rom["serial"]?.uppercased(), bySerial[serial] == nil { bySerial[serial] = value }
             }
         }
         supplements[field] = values
+        supplementsBySerial[field] = bySerial
     }
 
     /// SHA-1 first, then MD5, then CRC32 with a matching size (CRC alone is too weak).
@@ -120,8 +124,8 @@ public struct DatIndex: Sendable {
         return nil
     }
 
-    public func supplement(_ field: String, crc: String?) -> String? {
-        crc.flatMap { supplements[field]?[$0] }
+    public func supplement(_ field: String, crc: String?, serial: String? = nil) -> String? {
+        crc.flatMap { supplements[field]?[$0] } ?? serial.flatMap { supplementsBySerial[field]?[$0.uppercased()] }
     }
 }
 

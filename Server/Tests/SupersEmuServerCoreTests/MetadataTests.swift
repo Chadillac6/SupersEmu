@@ -16,6 +16,7 @@ final class StubFetcher: MetadataFetching, @unchecked Sendable {
     private var _offline = false
 
     func set(_ url: URL, _ data: Data) { lock.withLock { responses[url] = data } }
+    func remove(_ url: URL) { lock.withLock { responses[url] = nil } }
     var requests: [URL] { lock.withLock { log } }
 
     func get(_ url: URL) async throws -> Data? {
@@ -82,13 +83,14 @@ final class MetadataTests: XCTestCase {
     }
 
     /// A catalog pinned to the given synthetic DATs (system -> kind -> text), served by the stub fetcher.
-    func catalog(_ dats: [SystemID: (name: String, source: String, files: [String: String])]) -> MetadataCatalog {
+    func catalog(_ dats: [SystemID: (name: String, source: String, files: [String: String])], commit: String = "test-commit",
+                 thumbnails: String = "thumbs1") -> MetadataCatalog {
         var systems: [SystemID: MetadataCatalog.SystemSet] = [:]
         for (system, dat) in dats {
             systems[system] = .init(name: dat.name, source: dat.source, files: dat.files.mapValues { SHA256.hash(data: Data($0.utf8)).hex },
-                                    thumbnailsCommit: "thumbs1")
+                                    thumbnailsCommit: thumbnails)
         }
-        let catalog = MetadataCatalog(databaseCommit: "test-commit", systems: systems)
+        let catalog = MetadataCatalog(databaseCommit: commit, systems: systems)
         for (system, dat) in dats {
             for (kind, text) in dat.files { fetcher.set(catalog.datURL(systems[system]!, kind: kind), Data(text.utf8)) }
         }
@@ -122,6 +124,20 @@ final class MetadataTests: XCTestCase {
         XCTAssertNil(index.match(ROMHasher.hash(other)))
     }
 
+    func testSerialKeyedSupplement() {
+        let track = DiscFixtures.psxTrack(seed: 30)
+        var index = DatIndex(dat: DatFixtures.entry("Vagrant Story (USA)", rom: track, romName: "Vagrant Story (USA).bin", serial: "SLUS-01040"))
+        index.addSupplement(field: "developer", dat: """
+            game (
+            \tserial "SLUS-01040"
+            \tdeveloper "Square"
+            \trom ( serial "SLUS-01040" name "Vagrant Story (USA).cue" )
+            )
+            """)
+        let entry = try! XCTUnwrap(index.match(ROMHasher.hash(track)))
+        XCTAssertEqual(index.supplement("developer", crc: entry.crc, serial: entry.serial), "Square")
+    }
+
     func testCanonicalNames() {
         XCTAssertEqual(CanonicalName.title("Legend of Zelda, The - A Link to the Past (USA) (Rev 1)"), "The Legend of Zelda - A Link to the Past")
         XCTAssertEqual(CanonicalName.title("Final Fantasy VII (USA) (Disc 1)"), "Final Fantasy VII")
@@ -145,8 +161,9 @@ final class MetadataTests: XCTestCase {
         z64[0] = 0x80
 
         let genesis = ROMFixtures.genesis(seed: 3)
-        XCTAssertTrue(try ROMHasher.variants(of: try write(ROMFixtures.smd(from: genesis), "Sonic.smd"), system: .genesis)
-            .contains(ROMHasher.hash(genesis)))
+        let smd = try write(ROMFixtures.smd(from: genesis), "Sonic.smd")
+        XCTAssertTrue(try ROMHasher.variants(of: smd, system: .genesis).contains(ROMHasher.hash(genesis)))
+        XCTAssertTrue(try ROMHasher.variants(of: smd, system: .sega32x).contains(ROMHasher.hash(genesis)), "32X .smd dumps too")
     }
 
     // MARK: Service
@@ -332,5 +349,66 @@ let pass6 = await service(catalog).enrichPending()
                 XCTAssertEqual(Data(buffer: $0.body), manual, "manual cover beats provider covers")
             }
         }
+    }
+
+    func testMissingSupplementDefersMatchUntilAvailable() async throws {
+        let rom = ROMFixtures.snes(seed: 50)
+        let catalog = catalog([.snes: ("Nintendo - Super Nintendo Entertainment System", "no-intro", [
+            "source": DatFixtures.entry("EarthBound (USA)", rom: rom, romName: "EarthBound (USA).sfc"),
+            "publisher": DatFixtures.supplement("publisher", "Nintendo", rom: rom),
+        ])])
+        let publisherURL = catalog.datURL(catalog.systems[.snes]!, kind: "publisher")
+        let fetched = try await fetcher.get(publisherURL)
+        let publisher = try XCTUnwrap(fetched)
+        fetcher.remove(publisherURL)
+        let id = try await importROM(rom, "eb.sfc")
+        let service = service(catalog)
+        let first = await service.enrichPending()
+        XCTAssertEqual(first, 0, "no partial match while a pinned supplement is missing")
+
+        fetcher.set(publisherURL, publisher)
+        let second = await service.enrichPending()
+        XCTAssertEqual(second, 1)
+        let stored = try await store.db.read { try String.fetchOne($0, sql: "SELECT publisher FROM game_metadata WHERE game_id = ?", arguments: [id]) }
+        XCTAssertEqual(stored, "Nintendo")
+    }
+
+    func testDatasetBumpsRefreshArtworkAndDropStaleMatches() async throws {
+        let rom = ROMFixtures.gameBoy(seed: 9)
+        let name = "Kirby's Dream Land (USA, Europe)"
+        let dats: [SystemID: (name: String, source: String, files: [String: String])] = [.gb: ("Nintendo - Game Boy", "no-intro", [
+            "source": DatFixtures.entry(name, rom: rom, romName: "\(name).gb"),
+        ])]
+        let first = catalog(dats)
+        fetcher.set(first.thumbnailURL(first.systems[.gb]!, kind: "Named_Boxarts", name: name), DatFixtures.png)
+        let id = try await importROM(rom, "kirby.gb")
+        await service(first).enrichPending()
+        func coverPath() async throws -> String? {
+            try await store.db.read { try String.fetchOne($0, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND kind = 'cover'", arguments: [id]) }
+        }
+        let original = try await coverPath()
+        XCTAssertNotNil(original)
+
+        // New thumbnail pin: artwork is refetched without rematching.
+        let rethumbed = catalog(dats, thumbnails: "thumbs2")
+        let newArt = DatFixtures.png + Data([2])
+        fetcher.set(rethumbed.thumbnailURL(rethumbed.systems[.gb]!, kind: "Named_Boxarts", name: name), newArt)
+        let refreshed = await service(rethumbed).enrichPending()
+        XCTAssertEqual(refreshed, 0, "no rematch")
+        let updated = try await coverPath()
+        XCTAssertNotEqual(updated, original)
+        XCTAssertEqual(try Data(contentsOf: store.paths.root.appendingPathComponent(try XCTUnwrap(updated))), newArt)
+
+        // New database pin without the game: its metadata and provider art go away.
+        let bumped = catalog([.gb: ("Nintendo - Game Boy", "no-intro", [
+            "source": DatFixtures.entry("Other (USA)", rom: ROMFixtures.gameBoy(seed: 10), romName: "Other.gb"),
+        ])], commit: "test-commit-2", thumbnails: "thumbs2")
+        await service(bumped).enrichPending()
+        let afterBump = try await coverPath()
+        XCTAssertNil(afterBump)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.paths.root.appendingPathComponent(try XCTUnwrap(updated)).path))
+        let summary = try LibraryQueries.visibleGames(for: try XCTUnwrap(store.authenticate(token: adminToken)), store: store)[0]
+        XCTAssertEqual(summary.title, "kirby")
+        XCTAssertNil(summary.coverPath)
     }
 }

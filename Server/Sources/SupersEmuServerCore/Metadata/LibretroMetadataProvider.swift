@@ -35,7 +35,7 @@ public actor LibretroMetadataProvider: MetadataProvider {
         for url in game.files {
             for hashes in (try? ROMHasher.variants(of: url, system: game.system)) ?? [] {
                 guard let entry = index.match(hashes) else { continue }
-                func value(_ kind: String) -> String? { index.supplement(Self.supplements[kind]!, crc: entry.crc) }
+                func value(_ kind: String) -> String? { index.supplement(Self.supplements[kind]!, crc: entry.crc, serial: entry.serial) }
                 return .matched(MetadataRecord(
                     provider: id, providerRef: entry.name, title: CanonicalName.title(entry.name),
                     region: entry.region ?? CanonicalName.region(entry.name),
@@ -56,11 +56,16 @@ public actor LibretroMetadataProvider: MetadataProvider {
         }
     }
 
+    public nonisolated func artworkVersion(system: SystemID) -> String {
+        catalog.systems[system]?.thumbnailsCommit ?? version
+    }
+
+    /// Every pinned DAT must load, or the lookup is retried later rather than matching with missing fields.
     func index(for system: SystemID, set: MetadataCatalog.SystemSet) async throws -> DatIndex {
         if let index = indexes[system] { return index }
         var index = DatIndex(dat: try await dat(set, kind: "source"))
         for (kind, field) in Self.supplements.sorted(by: { $0.key < $1.key }) where set.files[kind] != nil {
-            if let text = try? await dat(set, kind: kind) { index.addSupplement(field: field, dat: text) }
+            index.addSupplement(field: field, dat: try await dat(set, kind: kind))
         }
         indexes[system] = index
         return index

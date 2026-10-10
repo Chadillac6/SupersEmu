@@ -49,5 +49,8 @@ enum MetadataMigrations {
                 );
                 """)
         }
+        migrator.registerMigration("v4_metadata_artwork_version") { db in
+            try db.execute(sql: "ALTER TABLE metadata_jobs ADD COLUMN artwork_version TEXT")
+        }
     }
 }

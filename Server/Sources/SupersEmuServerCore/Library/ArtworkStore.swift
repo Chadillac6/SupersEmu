@@ -76,6 +76,20 @@ public struct ArtworkStore: Sendable {
         return url
     }
 
+    /// Drops every image a provider stored for a game (its match changed or went away). The manual cover is untouched.
+    public func removeProviderArtwork(provider: String, gameID: String) throws {
+        guard Self.isSafeComponent(gameID), Self.isSafeComponent(provider) else { throw ArtworkError.invalidGameID }
+        let directory = store.paths.artwork.appendingPathComponent(gameID, isDirectory: true)
+        try Self.writeLock.withLock {
+            try store.db.write { db in
+                try db.execute(sql: "DELETE FROM game_artwork WHERE game_id = ? AND provider = ?", arguments: [gameID, provider])
+            }
+            for file in (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [] where file.hasPrefix("\(provider)-") {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(file))
+            }
+        }
+    }
+
     /// Recorded path for a kind/position: the manual cover first, then providers in `MetadataMerge` precedence.
     static func recordedPath(gameID: String, kind: ArtworkKind, position: Int, db: Database) throws -> String? {
         if kind == .cover, position == 0,

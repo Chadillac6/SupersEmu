@@ -71,4 +71,10 @@ public protocol MetadataProvider: Sendable {
     var version: String { get }
     func lookup(_ game: MetadataLookup) async throws -> MetadataLookupResult
     func artwork(for record: MetadataRecord, system: SystemID) -> [ArtworkCandidate]
+    /// Bump to refetch artwork for matched games without rematching (e.g. a new pinned thumbnail set).
+    func artworkVersion(system: SystemID) -> String
+}
+
+public extension MetadataProvider {
+    func artworkVersion(system: SystemID) -> String { version }
 }

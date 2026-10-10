@@ -13,9 +13,10 @@ Every provider writes its own row; every field is optional.
 - `game_artwork (game_id, provider, kind, position, path, source_url)`. Kinds are `cover`, `backdrop`, `logo`, `title`
   (title screen) and `screenshot`. `position` orders screenshots. The files are content-addressed under
   `artwork/<gameID>/<provider>-<kind>-<position>-<sha256>.<ext>`.
-- `metadata_jobs (game_id, provider, match_status, artwork_status, dataset_version)` tracks background work.
-  `match_status` is `matched` or `unmatched`. A NULL status or a stale `dataset_version` gets retried, and so does
-  NULL `artwork_status` on a matched game.
+- `metadata_jobs (game_id, provider, match_status, artwork_status, dataset_version, artwork_version)` tracks background
+  work. `match_status` is `matched` or `unmatched`. A NULL status or a stale `dataset_version` gets rematched. A matched
+  game whose `artwork_status` is NULL or whose `artwork_version` is stale gets its artwork refetched, without a
+  rematch. When a rematch drops or changes the match, that provider's art is deleted. The manual cover is kept.
 - `games` keeps what the importer found (filename title, system). `games.cover_artwork` is the manual cover override
   (`ArtworkStore.setCover`).
 
@@ -38,16 +39,19 @@ adding one means implementing `MetadataProvider` (`lookup` + `artwork(for:)`) an
 
 1. Hashing. The server computes CRC32, MD5 and SHA-1 of the stored ROM. For No-Intro it also tries headerless forms:
    SNES without its 512-byte copier header, de-interleaved `.smd`, and big-endian `.z64` from `.v64`/`.n64`. For disc
-   games it hashes the data tracks of the first disc (Redump hashes per track). Matching tries SHA-1, then MD5, then
+   games it hashes the first disc's tracks until one matches (Redump hashes per track). Matching tries SHA-1, then MD5, then
    CRC32 together with the size.
 2. Fields. Title comes from the No-Intro/Redump name ("Legend of Zelda, The - A Link to the Past (USA)" becomes "The
    Legend of Zelda - A Link to the Past"), and region from its first parenthesised group. Year, publisher, developer,
-   genre and max players come from the `metadat/{releaseyear,publisher,developer,genre,maxusers}` DATs, keyed by CRC.
+   genre and max players come from the `metadat/{releaseyear,publisher,developer,genre,maxusers}` DATs, keyed by CRC
+   or, for PlayStation, by serial. All pinned DATs for a system must load before anything matches, so a failed
+   download defers the match instead of leaving fields blank.
    Those supplements exist for the cartridge systems. PlayStation only has `developer`, and Sega CD has none, so disc
    games mostly get title and region. Neither DAT has descriptions or critic scores; those wait for a later provider.
 3. Artwork. `Named_Boxarts` becomes `cover`, `Named_Titles` becomes `title`, and `Named_Snaps` becomes `screenshot/0`.
    Files come from `raw.githubusercontent.com/libretro-thumbnails/<System>/<commit>/…`, named by the DAT name with
-   `&*/:\`<>?\|"` replaced by `_`. Multi-disc sets also try the name without " (Disc N)". libretro has no backdrops.
+   `&*/:\`<>?\|"` replaced by `_`. Multi-disc sets also try the name without " (Disc N)". libretro has no backdrops. The artwork version is the
+   system's thumbnail commit, so bumping a thumbnail pin refetches art only.
 4. Background. `MetadataService` runs after every import or scan, at launch, and every 30 minutes after that. All
    requests share one rate limiter (at most one request a second). Network errors leave the job pending for the next
    pass. `supersemu-server run --no-metadata` turns the service off.
