@@ -69,6 +69,6 @@ public enum LibraryQueries {
             id: id, title: row["title"], system: SystemID(rawValue: row["system"]) ?? .snes,
             year: row["year"], genre: row["genre"],
             coverPath: cover == nil ? nil : "/v1/games/\(id)/artwork/cover",
-            totalSize: row["total_size"] ?? 0)
+            totalSize: row["total_size"] ?? 0, addedAt: row["created_at"])
     }
 }

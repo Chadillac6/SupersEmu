@@ -18,6 +18,10 @@ enum AppPaths {
     static let saves = root.appendingPathComponent("Saves", isDirectory: true)
     static let states = root.appendingPathComponent("States", isDirectory: true)
     static let system = root.appendingPathComponent("System", isDirectory: true)
+    /// Downloaded server games: Cache/<gameID>/<files> + manifest.json.
+    static let cache = root.appendingPathComponent("Cache", isDirectory: true)
+    static let covers = root.appendingPathComponent("Covers", isDirectory: true)
+    static let serverLibrarySnapshot = root.appendingPathComponent("ServerLibrary.json")
 
     static func autoState(for gameID: String) -> URL {
         states.appendingPathComponent(gameID, isDirectory: true).appendingPathComponent("auto.state")
@@ -32,7 +36,7 @@ enum AppPaths {
     }
 
     static func ensureDirectories() {
-        for url in [library, saves, states, system] {
+        for url in [library, saves, states, system, cache] {
             try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
     }
