@@ -79,6 +79,7 @@ const CoreEntry kCores[] = {
     {"gambatte", se_core_gambatte},
     {"mgba", se_core_mgba},
     {"genesis_plus_gx", se_core_genesis_plus_gx},
+    {"picodrive", se_core_picodrive},
 };
 
 std::vector<CoreEntry> &registeredCores() {
@@ -227,6 +228,7 @@ NSString *const SECoreIDSnes9x = @"snes9x";
 NSString *const SECoreIDGambatte = @"gambatte";
 NSString *const SECoreIDMGBA = @"mgba";
 NSString *const SECoreIDGenesisPlusGX = @"genesis_plus_gx";
+NSString *const SECoreIDPicoDrive = @"picodrive";
 
 static __weak SELibretroHost *gActiveHost;
 

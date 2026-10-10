@@ -1,4 +1,5 @@
 import Foundation
+import SupersEmuKit
 
 /// Maps a console (`SystemID` raw value from SupersEmuKit) or ROM file extension to the
 /// statically linked libretro core that runs it.
@@ -14,6 +15,10 @@ enum CoreRegistry {
         Core(id: SECoreIDGambatte, systems: ["gb", "gbc"], extensions: ["gb", "gbc", "dmg"]),
         Core(id: SECoreIDMGBA, systems: ["gba"], extensions: ["gba"]),
         Core(id: SECoreIDGenesisPlusGX, systems: ["genesis"], extensions: ["md", "gen", "smd", "bin", "mdx"]),
+        // Sega CD discs: `.cue`/`.chd`/`.iso` aren't claimed by extension (PS1 uses them too), so the
+        // console decides. Needs bios_CD_U/E/J.bin in the system directory.
+        Core(id: SECoreIDGenesisPlusGX, systems: ["segacd"], extensions: []),
+        Core(id: SECoreIDPicoDrive, systems: ["sega32x"], extensions: ["32x"]),
     ]
 
     /// Every ROM extension some linked core can run (for library import filters).
@@ -27,9 +32,16 @@ enum CoreRegistry {
         cores.first { $0.extensions.contains(ext.lowercased()) }
     }
 
-    /// Core for a ROM: by file extension, then by console name, else Snes9x.
+    /// `SystemID` raw value for a console given as raw value ("segacd") or display name ("Sega CD").
+    static func systemID(forConsole console: String) -> String? {
+        SystemID.allCases.first { $0.rawValue == console.lowercased() || $0.displayName == console }?.rawValue
+    }
+
+    /// Core for a ROM: by known console first (`.bin`/`.cue` are ambiguous across systems), then by
+    /// file extension, else Snes9x.
     static func coreID(for romURL: URL, console: String? = nil) -> String {
-        (core(forExtension: romURL.pathExtension) ?? console.flatMap { core(forSystem: $0) })?.id
+        (console.flatMap(systemID(forConsole:)).flatMap(core(forSystem:))
+            ?? core(forExtension: romURL.pathExtension))?.id
             ?? SECoreIDSnes9x
     }
 }
