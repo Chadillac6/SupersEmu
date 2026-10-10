@@ -66,8 +66,9 @@ xcodebuild -exportArchive -archivePath "$archive" -exportPath "$out/export" \
 app="$out/export/SupersEmu.app"
 
 codesign --verify --deep --strict "$app"
-app_archs="$(lipo -archs "$app/Contents/MacOS/SupersEmu")"
-server_archs="$(lipo -archs "$app/Contents/MacOS/supersemu-server")"
+sorted_archs() { lipo -archs "$1" | tr ' ' '\n' | sort | xargs; }
+app_archs="$(sorted_archs "$app/Contents/MacOS/SupersEmu")"
+server_archs="$(sorted_archs "$app/Contents/MacOS/supersemu-server")"
 [ "$app_archs" = "$server_archs" ] ||
   { echo "error: app is '$app_archs' but supersemu-server is '$server_archs'" >&2; exit 1; }
 for bin in "$app/Contents/MacOS/SupersEmu" "$app/Contents/MacOS/supersemu-server"; do

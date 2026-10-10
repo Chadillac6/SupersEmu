@@ -6,7 +6,6 @@ set -euo pipefail
 config=debug
 [ "${CONFIGURATION:-Debug}" = "Release" ] && config=release
 archs="${ARCHS:-$(uname -m)}"
-[ "${ONLY_ACTIVE_ARCH:-NO}" = "YES" ] && archs="${NATIVE_ARCH:-$(uname -m)}"
 swiftpm() { # arch, extra args...
     local arch="$1"; shift
     # Clean environment so Xcode's SDK/arch settings don't leak into SwiftPM.
