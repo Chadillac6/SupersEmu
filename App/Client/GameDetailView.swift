@@ -83,6 +83,11 @@ struct GameDetailView: View {
                     downloadButton(title: "Retry Download")
                 case nil:
                     if downloads.isDownloaded(item.id) {
+                        if playableGame == nil {
+                            Label("\(item.console) games can't be played in this version yet.", systemImage: "info.circle")
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("unsupported-system")
+                        }
                         Button(role: .destructive) { downloads.remove(item.id) } label: {
                             Label("Remove Download", systemImage: "trash")
                         }

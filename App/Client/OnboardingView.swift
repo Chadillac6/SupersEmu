@@ -242,13 +242,17 @@ struct QRScannerView: UIViewRepresentable {
         let session = AVCaptureSession()
         let onScan: (String) -> Void
         private var lastValue: String?
+        private var lastScan = Date.distantPast
 
         init(onScan: @escaping (String) -> Void) { self.onScan = onScan }
 
         func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
             guard let value = (metadataObjects.first as? AVMetadataMachineReadableCodeObject)?.stringValue,
-                  value.hasPrefix("supersemu://"), value != lastValue else { return }
+                  value.hasPrefix("supersemu://") else { return }
+            // Debounce repeats of the same code, but let it retry if the first attempt failed.
+            if value == lastValue, Date().timeIntervalSince(lastScan) < 3 { return }
             lastValue = value
+            lastScan = Date()
             onScan(value)
         }
     }

@@ -7,11 +7,15 @@ final class PinnedTrustDelegate: NSObject, URLSessionDelegate, Sendable {
     let certificateSHA256: String?
 
     init(certificateSHA256: String?) {
-        self.certificateSHA256 = certificateSHA256?.lowercased().replacingOccurrences(of: ":", with: "")
+        self.certificateSHA256 = Self.normalize(certificateSHA256)
+    }
+
+    static func normalize(_ pin: String?) -> String? {
+        pin?.lowercased().replacingOccurrences(of: ":", with: "").replacingOccurrences(of: " ", with: "")
     }
 
     static func evaluate(_ challenge: URLAuthenticationChallenge, pin: String?) -> (URLSession.AuthChallengeDisposition, URLCredential?) {
-        guard let pin, !pin.isEmpty,
+        guard let pin = normalize(pin), !pin.isEmpty,
               challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust else { return (.performDefaultHandling, nil) }
         guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let leaf = chain.first else {

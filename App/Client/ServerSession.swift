@@ -28,6 +28,8 @@ final class ServerSession {
     @ObservationIgnored private let snapshotURL: URL
     @ObservationIgnored private var urlSession: URLSession?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    /// Bumped on pair/sign-out so responses for a previous connection are dropped.
+    @ObservationIgnored private var generation = 0
 
     init(store: CredentialStore = ServerSession.defaultStore(), snapshotURL: URL = AppPaths.serverLibrarySnapshot) {
         self.store = store
@@ -66,6 +68,10 @@ final class ServerSession {
                     serverName: response.serverName, urls: payload.urls, certificateSHA256: payload.certificateSHA256,
                     token: response.token, deviceID: response.deviceID, user: response.user)
                 try store.save(credential)
+                generation += 1
+                refreshTask?.cancel()
+                refreshTask = nil
+                urlSession = nil
                 self.credential = credential
                 activeURL = url
                 status = .connecting
@@ -91,6 +97,7 @@ final class ServerSession {
 
     private func performRefresh() async {
         guard let credential else { status = .notPaired; return }
+        let generation = self.generation
         if status != .online { status = .connecting }
         let candidates = [activeURL].compactMap { $0 } + credential.urls.filter { $0 != activeURL }
         var failure = "Can't reach \(credential.serverName)"
@@ -98,12 +105,14 @@ final class ServerSession {
             let client = APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
             do {
                 let library = try await client.library()
+                guard generation == self.generation else { return }
                 activeURL = url
                 apply(library.games)
                 lastRefreshed = Date()
                 status = .online
                 return
             } catch APIClientError.http(let code, _) where code == 401 {
+                guard generation == self.generation else { return }
                 failure = "This device was signed out by \(credential.serverName). Pair it again."
                 status = .offline(failure)
                 return
@@ -111,10 +120,14 @@ final class ServerSession {
                 continue
             }
         }
+        guard generation == self.generation else { return }
         status = .offline(failure)
     }
 
     func signOut() {
+        generation += 1
+        refreshTask?.cancel()
+        refreshTask = nil
         store.delete()
         urlSession = nil
         credential = nil

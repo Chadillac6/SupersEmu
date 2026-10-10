@@ -24,10 +24,22 @@ public struct GameCache: Sendable {
         directory(for: gameID).appendingPathComponent(Self.safeFilename(file.filename, fallback: file.id))
     }
 
+    /// Game and file IDs come from the server; only accept plain path components so nothing escapes the cache.
+    public static func isSafeID(_ id: String) -> Bool {
+        !id.isEmpty && id != "." && id != ".." && !id.contains("/") && !id.contains("\\") && !id.contains(":") && !id.hasPrefix(".")
+    }
+
+    static func isSHA256(_ id: String) -> Bool {
+        id.count == 64 && id.allSatisfy(\.isHexDigit)
+    }
+
     public func cachedGame(_ gameID: String) -> CachedGame? {
-        guard let data = try? Data(contentsOf: manifestURL(for: gameID)),
+        guard Self.isSafeID(gameID), let data = try? Data(contentsOf: manifestURL(for: gameID)),
               let cached = try? SupersEmuJSON.decoder().decode(CachedGame.self, from: data) else { return nil }
-        let complete = cached.detail.files.allSatisfy { FileManager.default.fileExists(atPath: fileURL(gameID: gameID, file: $0).path) }
+        let complete = cached.detail.files.allSatisfy { file in
+            let size = (try? FileManager.default.attributesOfItem(atPath: fileURL(gameID: gameID, file: file).path)[.size] as? NSNumber)?.int64Value
+            return size == file.size
+        }
         return complete ? cached : nil
     }
 
@@ -63,9 +75,14 @@ public struct GameCache: Sendable {
         try SupersEmuJSON.encoder().encode(cached).write(to: manifestURL(for: cached.detail.game.id), options: .atomic)
     }
 
+    /// Keeps the server's relative layout (e.g. "Disc 1/Track 01.bin") so cue/m3u references still resolve,
+    /// but drops anything that could leave the game's directory.
     static func safeFilename(_ name: String, fallback: String) -> String {
-        let cleaned = (name as NSString).lastPathComponent.replacingOccurrences(of: ":", with: "_")
-        return cleaned.isEmpty || cleaned.hasPrefix(".") ? fallback : cleaned
+        let parts = name.split(whereSeparator: { $0 == "/" || $0 == "\\" })
+            .map { $0.replacingOccurrences(of: ":", with: "_") }
+            .filter { !$0.isEmpty && $0 != "." && $0 != ".." }
+        guard !parts.isEmpty, !parts.contains(where: { $0.hasPrefix(".") }) else { return fallback }
+        return parts.joined(separator: "/")
     }
 }
 
@@ -81,6 +98,7 @@ public enum DownloadError: Error, Equatable, CustomStringConvertible {
     case checksumMismatch(filename: String)
     case unexpectedRange
     case noFiles
+    case invalidFile(String)
 
     public var description: String {
         switch self {
@@ -88,6 +106,7 @@ public enum DownloadError: Error, Equatable, CustomStringConvertible {
         case .checksumMismatch(let filename): return "\(filename) didn't match the server's checksum, so it was discarded"
         case .unexpectedRange: return "The server sent an unexpected byte range"
         case .noFiles: return "This game has no files on the server"
+        case .invalidFile(let name): return "The server listed an invalid file (\(name))"
         }
     }
 }
@@ -124,12 +143,29 @@ public final class GameDownloader: Sendable {
     public func download(_ detail: GameDetail, progress: @escaping @Sendable (DownloadProgress) -> Void = { _ in }) async throws -> CachedGame {
         let gameID = detail.game.id
         guard !detail.files.isEmpty else { throw DownloadError.noFiles }
+        guard GameCache.isSafeID(gameID) else { throw DownloadError.invalidFile(gameID) }
+        var destinations = Set<String>()
+        for file in detail.files {
+            guard GameCache.isSHA256(file.id), destinations.insert(cache.fileURL(gameID: gameID, file: file).path).inserted else {
+                throw DownloadError.invalidFile(file.filename)
+            }
+        }
         try FileManager.default.createDirectory(at: cache.directory(for: gameID), withIntermediateDirectories: true)
         let total = detail.files.reduce(0) { $0 + $1.size }
         var finished: Int64 = 0
         for file in detail.files {
             let destination = cache.fileURL(gameID: gameID, file: file)
             if FileManager.default.fileExists(atPath: destination.path) {
+                // A same-named file from an older version of the game must not count as current.
+                guard try Self.sha256(of: destination) == file.id.lowercased() else {
+                    try FileManager.default.removeItem(at: destination)
+                    let base = finished
+                    try await downloadFile(gameID: gameID, file: file) { received in
+                        progress(.init(receivedBytes: base + received, totalBytes: total))
+                    }
+                    finished += file.size
+                    continue
+                }
                 finished += file.size
                 progress(.init(receivedBytes: finished, totalBytes: total))
                 continue
@@ -175,8 +211,17 @@ public final class GameDownloader: Sendable {
             throw DownloadError.checksumMismatch(filename: file.filename)
         }
         let destination = cache.fileURL(gameID: gameID, file: file)
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: part, to: destination)
+    }
+
+    static func sha256(of url: URL) throws -> String {
+        var hasher = SHA256()
+        let reader = try FileHandle(forReadingFrom: url)
+        defer { try? reader.close() }
+        while let chunk = try reader.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -320,7 +365,8 @@ public enum PairingLinkParser {
     public static func serverURL(fromAddress address: String) -> URL? {
         var text = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
-        if !text.contains("://") { text = "http://" + text }
+        // The server speaks HTTPS (pinned self-signed cert); plain HTTP only when typed explicitly.
+        if !text.contains("://") { text = "https://" + text }
         guard var components = URLComponents(string: text), let host = components.host, !host.isEmpty,
               ["http", "https"].contains(components.scheme?.lowercased() ?? "") else { return nil }
         if components.port == nil { components.port = defaultPort }

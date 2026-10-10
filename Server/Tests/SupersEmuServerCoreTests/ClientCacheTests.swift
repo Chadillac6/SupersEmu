@@ -149,6 +149,48 @@ final class ClientCacheTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: cache.fileURL(gameID: detail.game.id, file: detail.files[0])), bytes)
     }
 
+    func testRejectsUnsafeIDsAndKeepsSubdirectories() async throws {
+        let cache = GameCache(root: cacheRoot)
+        let sha = String(repeating: "a", count: 64)
+        let summary = GameSummary(id: "game", title: "T", system: .psx, year: nil, genre: nil, coverPath: nil, totalSize: 1)
+        let downloader = GameDownloader(client: APIClient(baseURL: URL(string: "http://localhost:1")!, token: "t"), cache: cache)
+        for detail in [
+            GameDetail(game: summary, summary: nil, files: [GameFileInfo(id: "../../escape", filename: "a.bin", role: .disc, size: 1, discNumber: 1)]),
+            GameDetail(game: GameSummary(id: "../x", title: "T", system: .psx, year: nil, genre: nil, coverPath: nil, totalSize: 1),
+                       summary: nil, files: [GameFileInfo(id: sha, filename: "a.bin", role: .disc, size: 1, discNumber: 1)]),
+            GameDetail(game: summary, summary: nil, files: [
+                GameFileInfo(id: sha, filename: "Track 01.bin", role: .disc, size: 1, discNumber: 1),
+                GameFileInfo(id: String(repeating: "b", count: 64), filename: "./Track 01.bin", role: .disc, size: 1, discNumber: 2)]),
+        ] {
+            do {
+                _ = try await downloader.download(detail)
+                XCTFail("expected invalidFile")
+            } catch let error as DownloadError {
+                guard case .invalidFile = error else { return XCTFail("\(error)") }
+            }
+        }
+        let disc1 = GameFileInfo(id: sha, filename: "Disc 1/Track 01.bin", role: .disc, size: 1, discNumber: 1)
+        let disc2 = GameFileInfo(id: String(repeating: "b", count: 64), filename: "Disc 2/Track 01.bin", role: .disc, size: 1, discNumber: 2)
+        XCTAssertNotEqual(cache.fileURL(gameID: "game", file: disc1), cache.fileURL(gameID: "game", file: disc2))
+        XCTAssertTrue(cache.fileURL(gameID: "game", file: disc1).path.hasPrefix(cache.directory(for: "game").path + "/"))
+        XCTAssertEqual(cache.fileURL(gameID: "game", file: GameFileInfo(id: sha, filename: "../../etc/passwd", role: .rom, size: 1, discNumber: nil)).lastPathComponent, "passwd")
+        XCTAssertTrue(cache.fileURL(gameID: "game", file: GameFileInfo(id: sha, filename: "../../etc/passwd", role: .rom, size: 1, discNumber: nil))
+            .path.hasPrefix(cache.directory(for: "game").path + "/"))
+    }
+
+    func testRedownloadsStaleSameNamedFile() async throws {
+        let bytes = Self.randomBytes(40_000)
+        let detail = try insertGame(title: "Stale", bytes: bytes)
+        let cache = GameCache(root: cacheRoot)
+        let stale = cache.fileURL(gameID: detail.game.id, file: detail.files[0])
+        try FileManager.default.createDirectory(at: stale.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Self.randomBytes(40_000).write(to: stale)
+        try await withClient(app()) { client in
+            _ = try await GameDownloader(client: client, cache: cache).download(gameID: detail.game.id)
+        }
+        XCTAssertEqual(try Data(contentsOf: stale), bytes)
+    }
+
     func testRemoveDownload() async throws {
         let detail = try insertGame(title: "Foxtrot", bytes: Self.randomBytes(10_000))
         try await withClient(app()) { client in
@@ -185,8 +227,9 @@ final class ClientCacheTests: XCTestCase {
         XCTAssertNil(PairingLinkParser.payload(fromLink: "https://example.com/pair?d=abc"))
         XCTAssertNil(PairingLinkParser.payload(fromLink: "supersemu://pair?d=!!!"))
 
-        XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "mac-mini.local")?.absoluteString, "http://mac-mini.local:8487")
-        XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "192.168.1.20:9000")?.absoluteString, "http://192.168.1.20:9000")
+        XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "mac-mini.local")?.absoluteString, "https://mac-mini.local:8487")
+        XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "192.168.1.20:9000")?.absoluteString, "https://192.168.1.20:9000")
+        XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "http://localhost:8487")?.absoluteString, "http://localhost:8487")
         XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "https://mini.tail.ts.net/")?.absoluteString, "https://mini.tail.ts.net:8487")
         XCTAssertNil(PairingLinkParser.serverURL(fromAddress: "  "))
         XCTAssertEqual(PairingLinkParser.payload(address: "mac-mini.local", code: "123 456")?.code, "123456")

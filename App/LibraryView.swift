@@ -117,7 +117,10 @@ struct LibraryView: View {
             if server.isPaired {
                 Section(statusText) {
                     Button("Refresh Library", systemImage: "arrow.clockwise") { Task { await server.refresh() } }
-                    Button("Disconnect This Device", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { server.signOut() }
+                    Button("Disconnect & Remove Downloads", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                        server.signOut()
+                        downloads.removeAll()
+                    }
                 }
             } else {
                 Button("Connect to Server…", systemImage: "server.rack") { isConnecting = true }

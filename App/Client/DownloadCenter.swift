@@ -11,6 +11,9 @@ final class DownloadCenter {
         case failed(String)
     }
 
+    /// Systems this build has a core for (GameSession is Snes9x-only today); others can download but not launch.
+    static let launchableSystems: Set<SystemID> = [.snes]
+
     let cache: GameCache
     private(set) var states: [String: State] = [:]
     private(set) var downloaded: [String: CachedGame] = [:]
@@ -29,7 +32,8 @@ final class DownloadCenter {
 
     /// Ready-to-play `Game` for a downloaded server game, compatible with GameSession/PlayerView.
     func playableGame(_ gameID: String) -> Game? {
-        guard let cached = downloaded[gameID], let url = cache.launchFileURL(for: cached) else { return nil }
+        guard let cached = downloaded[gameID], Self.launchableSystems.contains(cached.detail.game.system),
+              let url = cache.launchFileURL(for: cached) else { return nil }
         let game = cached.detail.game
         return Game(id: game.id, title: game.title, fileURL: url, console: game.system.displayName,
                     hasResumePoint: FileManager.default.fileExists(atPath: AppPaths.autoState(for: game.id).path))
@@ -67,6 +71,18 @@ final class DownloadCenter {
         cancel(gameID)
         try? cache.remove(gameID)
         states[gameID] = nil
+        reload()
+    }
+
+    /// Downloads belong to the account that made them; called when this device disconnects.
+    func removeAll() {
+        for task in tasks.values { task.cancel() }
+        tasks = [:]
+        states = [:]
+        for id in downloaded.keys { try? cache.remove(id) }
+        if let leftovers = try? FileManager.default.contentsOfDirectory(at: cache.root, includingPropertiesForKeys: nil) {
+            for url in leftovers { try? FileManager.default.removeItem(at: url) }
+        }
         reload()
     }
 

@@ -38,7 +38,7 @@ enum LibraryShelves {
             return LibraryItem(
                 id: summary.id, title: summary.title, console: summary.system.displayName, system: summary.system,
                 year: summary.year, genre: summary.genre, coverPath: summary.coverPath, size: summary.totalSize,
-                addedAt: summary.addedAt ?? firstSeen[summary.id], source: .server, isDownloaded: playable != nil,
+                addedAt: summary.addedAt ?? firstSeen[summary.id], source: .server, isDownloaded: downloads.isDownloaded(summary.id),
                 playable: playable, lastPlayed: lastPlayed(summary.id))
         }
         let localItems = local.map { game in
