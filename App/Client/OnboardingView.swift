@@ -33,7 +33,7 @@ struct OnboardingView: View {
                 .pickerStyle(.segmented)
                 .accessibilityIdentifier("pairing-mode")
                 if mode == .scan {
-                    QRScannerPanel { scanned in Task { await pair(link: scanned) } }
+                    QRScannerPanel(paused: isPairing) { scanned in Task { await pair(link: scanned) } }
                 } else {
                     codeForm
                 }
@@ -168,6 +168,7 @@ struct OnboardingView: View {
 
 #if os(iOS)
 struct QRScannerPanel: View {
+    let paused: Bool
     let onScan: (String) -> Void
     @State private var authorization = AVCaptureDevice.authorizationStatus(for: .video)
 
@@ -176,7 +177,7 @@ struct QRScannerPanel: View {
             if AVCaptureDevice.default(for: .video) == nil {
                 unavailable("No camera available on this device. Use Enter Code instead.")
             } else if authorization == .authorized {
-                QRScannerView(onScan: onScan)
+                QRScannerView(paused: paused, onScan: onScan)
                     .aspectRatio(1, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 18))
                     .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.4), lineWidth: 2))
@@ -203,6 +204,7 @@ struct QRScannerPanel: View {
 }
 
 struct QRScannerView: UIViewRepresentable {
+    let paused: Bool
     let onScan: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onScan: onScan) }
@@ -226,7 +228,9 @@ struct QRScannerView: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: PreviewView, context: Context) {}
+    func updateUIView(_ uiView: PreviewView, context: Context) {
+        context.coordinator.setPaused(paused)
+    }
 
     static func dismantleUIView(_ uiView: PreviewView, coordinator: Coordinator) {
         let session = coordinator.session
@@ -243,13 +247,20 @@ struct QRScannerView: UIViewRepresentable {
         let onScan: (String) -> Void
         private var lastValue: String?
         private var lastScan = Date.distantPast
+        private var paused = false
+
+        /// No scans are delivered while a pairing request is in flight; after a failure the same
+        /// code can retry once the 3 s grace period has passed.
+        func setPaused(_ value: Bool) {
+            if paused, !value { lastScan = Date() }
+            paused = value
+        }
 
         init(onScan: @escaping (String) -> Void) { self.onScan = onScan }
 
         func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
             guard let value = (metadataObjects.first as? AVMetadataMachineReadableCodeObject)?.stringValue,
-                  value.hasPrefix("supersemu://") else { return }
-            // Debounce repeats of the same code, but let it retry if the first attempt failed.
+                  value.hasPrefix("supersemu://"), !paused else { return }
             if value == lastValue, Date().timeIntervalSince(lastScan) < 3 { return }
             lastValue = value
             lastScan = Date()

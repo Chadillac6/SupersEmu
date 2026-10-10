@@ -61,11 +61,15 @@ final class ServerSession {
         let request = PairRequest(code: payload.code, deviceName: Self.deviceName, platform: Self.platform)
         var lastError: Error = APIClientError.invalidResponse
         for url in payload.urls {
-            let client = APIClient(baseURL: url, token: nil, session: session(pin: payload.certificateSHA256))
+            let trust = PinnedTrustDelegate(certificateSHA256: payload.certificateSHA256, trustOnFirstUse: true)
+            let pairingSession = URLSession(configuration: Self.configuration, delegate: trust, delegateQueue: nil)
+            defer { pairingSession.finishTasksAndInvalidate() }
+            let client = APIClient(baseURL: url, token: nil, session: pairingSession)
             do {
                 let response = try await client.pair(request)
+                let pin = payload.certificateSHA256 ?? (url.scheme == "https" ? trust.observedSHA256 : nil)
                 let credential = ServerCredential(
-                    serverName: response.serverName, urls: payload.urls, certificateSHA256: payload.certificateSHA256,
+                    serverName: response.serverName, urls: payload.urls, certificateSHA256: pin,
                     token: response.token, deviceID: response.deviceID, user: response.user)
                 try store.save(credential)
                 generation += 1
@@ -162,12 +166,16 @@ final class ServerSession {
         saveSnapshot()
     }
 
-    private func session(pin: String?) -> URLSession {
-        if let urlSession { return urlSession }
+    private static var configuration: URLSessionConfiguration {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 8
         configuration.waitsForConnectivity = false
-        let session = URLSession(configuration: configuration, delegate: PinnedTrustDelegate(certificateSHA256: pin), delegateQueue: nil)
+        return configuration
+    }
+
+    private func session(pin: String?) -> URLSession {
+        if let urlSession { return urlSession }
+        let session = URLSession(configuration: Self.configuration, delegate: PinnedTrustDelegate(certificateSHA256: pin), delegateQueue: nil)
         if credential != nil { urlSession = session }
         return session
     }

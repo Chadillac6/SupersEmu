@@ -161,6 +161,13 @@ final class ClientCacheTests: XCTestCase {
             GameDetail(game: summary, summary: nil, files: [
                 GameFileInfo(id: sha, filename: "Track 01.bin", role: .disc, size: 1, discNumber: 1),
                 GameFileInfo(id: String(repeating: "b", count: 64), filename: "./Track 01.bin", role: .disc, size: 1, discNumber: 2)]),
+            GameDetail(game: summary, summary: nil, files: [
+                GameFileInfo(id: sha, filename: "Track.bin", role: .disc, size: 1, discNumber: 1),
+                GameFileInfo(id: String(repeating: "b", count: 64), filename: "TRACK.BIN", role: .disc, size: 1, discNumber: 2)]),
+            GameDetail(game: summary, summary: nil, files: [
+                GameFileInfo(id: sha, filename: "Disc 1", role: .disc, size: 1, discNumber: 1),
+                GameFileInfo(id: String(repeating: "b", count: 64), filename: "Disc 1/Track.bin", role: .disc, size: 1, discNumber: 2)]),
+            GameDetail(game: summary, summary: nil, files: [GameFileInfo(id: sha, filename: "Manifest.json", role: .rom, size: 1, discNumber: nil)]),
         ] {
             do {
                 _ = try await downloader.download(detail)

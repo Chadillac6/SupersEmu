@@ -71,6 +71,21 @@ public struct GameCache: Sendable {
         if FileManager.default.fileExists(atPath: dir.path) { try FileManager.default.removeItem(at: dir) }
     }
 
+    /// Every file needs a SHA-256 ID and its own destination: no duplicates (APFS is case-insensitive),
+    /// no file that is also another file's parent directory, and nothing that shadows manifest.json.
+    func validateLayout(_ files: [GameFileInfo]) throws {
+        var paths = Set<String>()
+        for file in files {
+            let path = Self.safeFilename(file.filename, fallback: file.id).lowercased()
+            guard Self.isSHA256(file.id), path != "manifest.json", paths.insert(path).inserted else {
+                throw DownloadError.invalidFile(file.filename)
+            }
+        }
+        for path in paths where paths.contains(where: { $0.hasPrefix(path + "/") }) {
+            throw DownloadError.invalidFile(path)
+        }
+    }
+
     func writeManifest(_ cached: CachedGame) throws {
         try SupersEmuJSON.encoder().encode(cached).write(to: manifestURL(for: cached.detail.game.id), options: .atomic)
     }
@@ -144,12 +159,7 @@ public final class GameDownloader: Sendable {
         let gameID = detail.game.id
         guard !detail.files.isEmpty else { throw DownloadError.noFiles }
         guard GameCache.isSafeID(gameID) else { throw DownloadError.invalidFile(gameID) }
-        var destinations = Set<String>()
-        for file in detail.files {
-            guard GameCache.isSHA256(file.id), destinations.insert(cache.fileURL(gameID: gameID, file: file).path).inserted else {
-                throw DownloadError.invalidFile(file.filename)
-            }
-        }
+        try cache.validateLayout(detail.files)
         try FileManager.default.createDirectory(at: cache.directory(for: gameID), withIntermediateDirectories: true)
         let total = detail.files.reduce(0) { $0 + $1.size }
         var finished: Int64 = 0
