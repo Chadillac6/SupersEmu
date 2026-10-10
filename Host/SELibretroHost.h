@@ -19,20 +19,38 @@ typedef NS_OPTIONS(uint32_t, SEJoypadButtons) {
     SEJoypadButtonR      NS_SWIFT_NAME(r)      = 1u << 11,
 };
 
+/// Identifiers of the statically linked libretro cores (stable; used in save metadata).
+FOUNDATION_EXPORT NSString *const SECoreIDSnes9x;
+FOUNDATION_EXPORT NSString *const SECoreIDGambatte;
+FOUNDATION_EXPORT NSString *const SECoreIDMGBA;
+FOUNDATION_EXPORT NSString *const SECoreIDGenesisPlusGX;
+
 /// Thin libretro frontend. libretro cores use process-global callbacks,
 /// so only one host may be active at a time.
 @interface SELibretroHost : NSObject
 
 @property (class, nonatomic, readonly, nullable) SELibretroHost *activeHost;
+@property (class, nonatomic, readonly) NSArray<NSString *> *availableCoreIDs;
 
+- (nullable instancetype)initWithCoreID:(NSString *)coreID
+                                 romURL:(NSURL *)romURL
+                             saveRAMURL:(NSURL *)saveRAMURL
+                        systemDirectory:(NSURL *)systemDirectory
+                                  error:(NSError **)error NS_SWIFT_NAME(init(coreID:romURL:saveRAMURL:systemDirectory:)) NS_DESIGNATED_INITIALIZER;
+/// Snes9x, kept for existing callers.
 - (nullable instancetype)initWithROMURL:(NSURL *)romURL
                              saveRAMURL:(NSURL *)saveRAMURL
                         systemDirectory:(NSURL *)systemDirectory
-                                  error:(NSError **)error NS_SWIFT_NAME(init(romURL:saveRAMURL:systemDirectory:)) NS_DESIGNATED_INITIALIZER;
+                                  error:(NSError **)error NS_SWIFT_NAME(init(romURL:saveRAMURL:systemDirectory:));
 - (instancetype)init NS_UNAVAILABLE;
 
+/// Stable core identifier, e.g. "gambatte" (save metadata `coreID`).
+@property (nonatomic, readonly, copy) NSString *coreID;
 @property (nonatomic, readonly, copy) NSString *coreName;
+/// Core's own version plus the pinned upstream commit, e.g. "v0.5.0 (d9d6cd0)" (save metadata `coreVersion`).
 @property (nonatomic, readonly, copy) NSString *coreVersion;
+/// Pinned upstream commit (short SHA) of the core this build links.
+@property (nonatomic, readonly, copy) NSString *coreRevision;
 @property (nonatomic, readonly) double framesPerSecond;
 @property (nonatomic, readonly) double sampleRate;
 @property (nonatomic, readonly) NSInteger frameWidth;
