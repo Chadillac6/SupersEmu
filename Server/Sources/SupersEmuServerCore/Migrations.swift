@@ -100,5 +100,6 @@ public enum ServerMigrations {
 
     /// Later tracks append their migrations here (one line each) to keep merge conflicts trivial.
     static func registerTrackMigrations(_ migrator: inout DatabaseMigrator) {
+        PairingMigrations.register(&migrator)
     }
 }

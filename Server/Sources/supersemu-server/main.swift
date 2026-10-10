@@ -22,12 +22,39 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Run the server (the launch daemon runs this).")
         @OptionGroup var options: Options
         @Option var hostname = "0.0.0.0"
-        @Option var port = 8487
+        @Option var port = ServerDefaults.port
+        @Flag(help: "Serve plain HTTP instead of HTTPS (tests and local debugging only).")
+        var insecureHTTP = false
+        @Option(name: .customLong("advertise-url"), help: "URL to put in pairing QR codes (repeatable; default: detected LAN + Tailscale).")
+        var advertiseURLs: [String] = []
+        @Option(help: "Tailscale MagicDNS name of this Mac, e.g. mac-mini.tail1234.ts.net.")
+        var tailscaleHost: String?
+        @Flag(help: "Don't advertise _supersemu._tcp over Bonjour.")
+        var noBonjour = false
+        @Flag(help: "Create the admin user and local admin token on first run if missing.")
+        var bootstrap = false
+        @Option(help: "Admin display name used by --bootstrap.")
+        var adminName = "Chad"
 
         func run() async throws {
             let store = try ServerStore.open(paths: options.paths)
-            let app = buildApplication(store: store, configuration: .init(address: .hostname(hostname, port: port), serverName: "SupersEmu"))
-            try await app.runService()
+            if bootstrap {
+                let (admin, wroteToken) = try ServerBootstrap.ensureAdmin(store: store, displayName: adminName)
+                if wroteToken { print("Admin \(admin.displayName) (\(admin.id)). Local admin token written to \(options.paths.adminToken.path)") }
+            }
+            var runOptions = ServerRunOptions()
+            runOptions.hostname = hostname
+            runOptions.port = port
+            runOptions.insecureHTTP = insecureHTTP
+            runOptions.advertiseURLs = try advertiseURLs.map { value in
+                guard let url = URL(string: value), url.scheme != nil, url.host != nil else {
+                    throw ValidationError("Invalid --advertise-url \(value)")
+                }
+                return url
+            }
+            runOptions.tailscaleHost = tailscaleHost
+            runOptions.bonjour = !noBonjour
+            try await ServerLauncher.run(store: store, options: runOptions)
         }
     }
 
@@ -39,11 +66,8 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
 
         func run() async throws {
             let store = try ServerStore.open(paths: options.paths)
-            let admin = try store.adminUser() ?? store.createUser(displayName: name, role: .admin)
-            let (_, token) = try store.createAPIToken(ownerUserID: admin.id, name: "local-cli", scopes: Scope.allCases)
-            let url = options.paths.adminToken
-            FileManager.default.createFile(atPath: url.path, contents: Data(token.utf8), attributes: [.posixPermissions: 0o600])
-            print("Admin \(admin.displayName) (\(admin.id)). Local CLI token written to \(url.path)")
+            let (admin, _) = try ServerBootstrap.ensureAdmin(store: store, displayName: name, rotateToken: true)
+            print("Admin \(admin.displayName) (\(admin.id)). Local CLI token written to \(options.paths.adminToken.path)")
         }
     }
 }
