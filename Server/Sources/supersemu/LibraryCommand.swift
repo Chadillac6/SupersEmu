@@ -73,5 +73,6 @@ private func printReport(_ report: ImportReport, json: Bool) throws {
     for game in report.imported { CLIOutput.stdout("+ \(game.title) [\(game.system.rawValue)]") }
     for item in report.needsReview { CLIOutput.stdout("? \(item.filename): \(item.reason)") }
     for line in report.unsupported { CLIOutput.stdout("- \(line)") }
+    for bios in report.bios ?? [] { CLIOutput.stdout("BIOS \(bios.system.rawValue) \(bios.region ?? "") \(bios.filename)") }
     CLIOutput.stdout("Imported \(report.imported.count), \(report.duplicates) already in library, \(report.needsReview.count) need review, \(report.unsupported.count) unsupported")
 }

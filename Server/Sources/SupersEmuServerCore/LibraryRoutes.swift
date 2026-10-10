@@ -27,34 +27,8 @@ func registerLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: Server
         }
 
         // File IDs are content hashes, so the ETag is strong and the bytes never change.
-        let eTag = "\"\(fileID)\""
-        var headers: HTTPFields = [
-            .acceptRanges: "bytes",
-            .eTag: eTag,
-            .contentType: "application/octet-stream",
-            .contentDisposition: "attachment; filename=\"\(file.filename.replacingOccurrences(of: "\"", with: "'"))\"",
-            .cacheControl: "private, max-age=31536000, immutable",
-        ]
-        if LibraryHTTP.ifNoneMatch(request, matches: eTag) {
-            return Response(status: .notModified, headers: headers)
-        }
-
-        var range = ByteRange.parse(request.headers[.range], size: size)
-        if let ifRange = request.headers[.ifRange], ifRange != eTag { range = .full }
-        switch range {
-        case .unsatisfiable:
-            headers[.contentRange] = "bytes */\(size)"
-            return Response(status: .rangeNotSatisfiable, headers: headers)
-        case .partial(let bytes):
-            headers[.contentRange] = "bytes \(bytes.lowerBound)-\(bytes.upperBound)/\(size)"
-            headers[.contentLength] = String(bytes.count)
-            return Response(status: .partialContent, headers: headers,
-                            body: try await fileIO.loadFile(path: file.url.path, range: bytes, context: context))
-        case .full:
-            headers[.contentLength] = String(size)
-            let body = size == 0 ? ResponseBody() : try await fileIO.loadFile(path: file.url.path, context: context)
-            return Response(status: .ok, headers: headers, body: body)
-        }
+        return try await LibraryHTTP.serveImmutableFile(request, context: context, fileIO: fileIO, path: file.url.path,
+                                                        size: size, filename: file.filename, eTag: "\"\(fileID)\"")
     }
 
     group.get("games/:id/artwork/cover") { request, context -> Response in

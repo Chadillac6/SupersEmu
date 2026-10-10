@@ -39,6 +39,7 @@ public func buildRouter(store: ServerStore) -> Router<SERequestContext> {
 
     // Each Wave 1 track owns one of these files and fills in its routes.
     registerLibraryRoutes(authed, store: store)
+    registerBIOSRoutes(authed, store: store)
     registerAdminLibraryRoutes(authed, store: store)
     registerAdminUserRoutes(authed, store: store)
     registerPairingRoutes(public: router.group("v1"), authed: authed, store: store)

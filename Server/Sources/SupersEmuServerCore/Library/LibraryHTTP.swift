@@ -13,6 +13,36 @@ enum LibraryHTTP {
     }
 
     /// `If-None-Match` uses weak comparison (RFC 9110 13.1.2): `W/"x"` matches `"x"`.
+    /// Serves a content-addressed file with a strong ETag, `If-None-Match`, `Range` and `If-Range` (game files, BIOS).
+    static func serveImmutableFile(_ request: Request, context: some RequestContext, fileIO: FileIO, path: String,
+                                   size: Int, filename: String, eTag: String) async throws -> Response {
+        var headers: HTTPFields = [
+            .acceptRanges: "bytes",
+            .eTag: eTag,
+            .contentType: "application/octet-stream",
+            .contentDisposition: "attachment; filename=\"\(filename.replacingOccurrences(of: "\"", with: "'"))\"",
+            .cacheControl: "private, max-age=31536000, immutable",
+        ]
+        if ifNoneMatch(request, matches: eTag) {
+            return Response(status: .notModified, headers: headers)
+        }
+        var range = ByteRange.parse(request.headers[.range], size: size)
+        if let ifRange = request.headers[.ifRange], ifRange != eTag { range = .full }
+        switch range {
+        case .unsatisfiable:
+            headers[.contentRange] = "bytes */\(size)"
+            return Response(status: .rangeNotSatisfiable, headers: headers)
+        case .partial(let bytes):
+            headers[.contentRange] = "bytes \(bytes.lowerBound)-\(bytes.upperBound)/\(size)"
+            headers[.contentLength] = String(bytes.count)
+            return Response(status: .partialContent, headers: headers, body: try await fileIO.loadFile(path: path, range: bytes, context: context))
+        case .full:
+            headers[.contentLength] = String(size)
+            let body = size == 0 ? ResponseBody() : try await fileIO.loadFile(path: path, context: context)
+            return Response(status: .ok, headers: headers, body: body)
+        }
+    }
+
     static func ifNoneMatch(_ request: Request, matches eTag: String) -> Bool {
         let opaque = { (tag: String) in tag.hasPrefix("W/") ? String(tag.dropFirst(2)) : tag }
         let tags = request.headers[values: .ifNoneMatch].flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }

@@ -51,6 +51,10 @@ Build notes:
 - Gambatte is built with `-ftrivial-auto-var-init=zero` so unused save-state fields are
   deterministic.
 
+## Server import for disc systems (M2 import track)
+The server importer groups `.cue`+tracks, `.chd`, `.iso` and `.m3u` into disc games for PS1 (`psx`) and Sega CD (`segacd`). It files BIOS files by hash (`KnownBIOS`) and serves them at `/v1/bios`. Details and the verification status are in [disc-games.md](disc-games.md#import-track-built-and-verified-server).
+Verified with synthetic fixtures only. Core playback of these games belongs to the PS1 and Sega CD tracks.
+
 ## Tests and fixtures
 
 `Tests/HostTests/SECoreMatrixTests.mm` runs per core: loads + reports id/version/timing, renders
