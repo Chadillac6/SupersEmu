@@ -13,6 +13,8 @@ final class BIOSCenter {
 
     @ObservationIgnored let store: BIOSStore
     @ObservationIgnored private var syncTask: Task<Void, Never>?
+    /// Bumped when a sync starts so an older disk scan can't overwrite a newer result.
+    @ObservationIgnored private var generation = 0
 
     init(store: BIOSStore = BIOSStore(directory: AppPaths.system)) {
         self.store = store
@@ -35,6 +37,7 @@ final class BIOSCenter {
     }
 
     private func performSync(client: APIClient?) async {
+        generation += 1
         isSyncing = true
         defer { isSyncing = false }
         let store = store
@@ -53,7 +56,10 @@ final class BIOSCenter {
 
     private func reloadFromDisk() async {
         let store = store
-        installed = await Task.detached(priority: .userInitiated) { store.installed() }.value
+        let generation = generation
+        let found = await Task.detached(priority: .userInitiated) { store.installed() }.value
+        guard generation == self.generation else { return }
+        installed = found
     }
 }
 

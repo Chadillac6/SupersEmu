@@ -34,6 +34,8 @@ final class GameSession {
     @ObservationIgnored private var core: SaveCore?
     @ObservationIgnored private var pickerTimer: Timer?
     @ObservationIgnored private var pickerButtons: SEJoypadButtons = []
+    /// The chord opens the picker only after it has been released since it last fired.
+    @ObservationIgnored private var chordArmed = true
 
     private static let autosaveInterval = Duration.seconds(30)
 
@@ -163,10 +165,15 @@ final class GameSession {
     private func tick() {
         guard let host else { return }
         let buttons = input.currentButtons()
-        if diskCount > 1, buttons.isSuperset(of: Self.discPickerChord) {
-            host.buttons = []
-            openDiscPicker()
-            return
+        if buttons.isSuperset(of: Self.discPickerChord) {
+            if diskCount > 1, chordArmed {
+                chordArmed = false
+                host.buttons = []
+                openDiscPicker()
+                return
+            }
+        } else {
+            chordArmed = true
         }
         host.buttons = buttons
         host.runFrame()
@@ -252,6 +259,7 @@ final class GameSession {
         guard hasStarted, diskCount > 1, pendingConflict == nil, !isChoosingDisc else { return }
         pause()
         isChoosingDisc = true
+        chordArmed = false
         discSelection = currentDisk
         // Buttons still held from the chord must be released before they count as picker input.
         pickerButtons = input.currentButtons()

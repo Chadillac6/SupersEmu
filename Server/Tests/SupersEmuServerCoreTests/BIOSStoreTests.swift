@@ -71,6 +71,40 @@ final class BIOSStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: userFile.path))
     }
 
+    func testUserPlacedFilesAreNeverReplacedOrRemoved() async throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let bytes = Data("synthetic".utf8)
+        let matching = Self.bios(bytes, "scph5501.bin", .psx)
+        try bytes.write(to: directory.appendingPathComponent("scph5501.bin"))
+        let userOther = Data("user's own dump".utf8)
+        try userOther.write(to: directory.appendingPathComponent("bios_CD_U.bin"))
+        let segacd = Self.bios(Data("server sega cd".utf8), "bios_CD_U.bin", .segacd)
+        let result = try await store.sync([matching, segacd]) { _ in XCTFail("nothing should be fetched"); return Data() }
+        XCTAssertEqual(result.installed, [matching], "a matching user file counts as installed")
+        XCTAssertEqual(result.failed, [segacd])
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("bios_CD_U.bin")), userOther, "never overwritten")
+        XCTAssertEqual(store.installed(), [matching])
+        _ = try await store.sync([]) { _ in Data() }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("scph5501.bin").path), "never deleted")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("bios_CD_U.bin").path))
+    }
+
+    func testFailedReplacementKeepsPreviousCopy() async throws {
+        let old = Data("revision A".utf8)
+        let oldInfo = Self.bios(old, "scph5501.bin", .psx)
+        _ = try await store.sync([oldInfo]) { _ in old }
+        let newInfo = Self.bios(Data("revision B".utf8), "scph5501.bin", .psx)
+        let result = try await store.sync([newInfo]) { _ in throw URLError(.notConnectedToInternet) }
+        XCTAssertEqual(result.failed, [newInfo])
+        XCTAssertEqual(result.installed, [oldInfo])
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("scph5501.bin")), old)
+        XCTAssertEqual(store.installed(), [oldInfo], "still playable offline")
+        let new = Data("revision B".utf8)
+        _ = try await store.sync([newInfo]) { _ in new }
+        XCTAssertEqual(store.installed(), [newInfo])
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("scph5501.bin")), new)
+    }
+
     func testRejectsUnsafeFilenamesAndIDs() async throws {
         let bytes = Data("synthetic".utf8)
         var badID = Self.bios(bytes, "scph5501.bin", .psx)

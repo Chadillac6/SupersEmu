@@ -41,8 +41,8 @@ public struct BIOSStore: Sendable {
         return directory.appendingPathComponent(name)
     }
 
-    /// Synced BIOS files whose bytes still match their hash.
-    public func installed() -> [BIOSFileInfo] { manifest().filter(isIntact) }
+    /// BIOS files known from the last sync whose bytes still match their hash.
+    public func installed() -> [BIOSFileInfo] { manifest().filter { isIntact($0.bios) }.map(\.bios) }
 
     /// True when `system` needs no BIOS or a verified one is installed.
     public static func isSatisfied(_ system: SystemID, by installed: [BIOSFileInfo]) -> Bool {
@@ -50,10 +50,15 @@ public struct BIOSStore: Sendable {
     }
 
     /// Downloads anything missing or changed, verifies each file's SHA-256 before it becomes visible
-    /// to the core, and removes previously synced files the server no longer lists.
+    /// to the core, and removes app-written files whose names the server no longer lists.
+    /// Files the app didn't write are never replaced or removed; a matching one counts as installed.
+    /// A failed replacement keeps the previous app-written copy.
     public func sync(_ list: [BIOSFileInfo], fetch: @Sendable (BIOSFileInfo) async throws -> Data) async throws -> BIOSSyncResult {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var installed: [BIOSFileInfo] = []
+        let previous = manifest()
+        let ownedNames = Set(previous.filter(\.owned).compactMap { fileURL(for: $0.bios)?.lastPathComponent })
+        let listedNames = Set(list.compactMap { fileURL(for: $0)?.lastPathComponent })
+        var entries: [ManifestEntry] = []
         var failed: [BIOSFileInfo] = []
         var claimed = Set<String>()
         // Required files first so they win a canonical-name clash with an optional variant.
@@ -63,37 +68,50 @@ public struct BIOSStore: Sendable {
                 failed.append(bios)
                 continue
             }
+            let name = url.lastPathComponent
+            let owned = ownedNames.contains(name)
+            claimed.insert(name)
             if isIntact(bios) {
-                claimed.insert(url.lastPathComponent)
-                installed.append(bios)
+                entries.append(ManifestEntry(bios: bios, owned: owned))
+                continue
+            }
+            if !owned, FileManager.default.fileExists(atPath: url.path) {
+                failed.append(bios)
                 continue
             }
             do {
                 let data = try await fetch(bios)
                 guard Self.sha256(data) == bios.id.lowercased() else { throw DownloadError.checksumMismatch(filename: bios.filename) }
                 try data.write(to: url, options: .atomic)
-                claimed.insert(url.lastPathComponent)
-                installed.append(bios)
+                entries.append(ManifestEntry(bios: bios, owned: true))
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 failed.append(bios)
+                entries += previous.filter { $0.owned && fileURL(for: $0.bios)?.lastPathComponent == name && isIntact($0.bios) }
             }
         }
-        for stale in manifest() where !claimed.contains(fileURL(for: stale)?.lastPathComponent ?? "") {
-            if let url = fileURL(for: stale) { try? FileManager.default.removeItem(at: url) }
+        for stale in previous where stale.owned {
+            guard let url = fileURL(for: stale.bios), !listedNames.contains(url.lastPathComponent) else { continue }
+            try? FileManager.default.removeItem(at: url)
         }
-        try SupersEmuJSON.encoder().encode(installed).write(to: manifestURL, options: .atomic)
-        return BIOSSyncResult(installed: installed, failed: failed)
+        try SupersEmuJSON.encoder().encode(entries).write(to: manifestURL, options: .atomic)
+        return BIOSSyncResult(installed: entries.map(\.bios), failed: failed)
+    }
+
+    struct ManifestEntry: Codable, Equatable {
+        var bios: BIOSFileInfo
+        /// Written by sync (so sync may replace or delete it), as opposed to placed by the user.
+        var owned: Bool
     }
 
     static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func manifest() -> [BIOSFileInfo] {
+    private func manifest() -> [ManifestEntry] {
         guard let data = try? Data(contentsOf: manifestURL) else { return [] }
-        return (try? SupersEmuJSON.decoder().decode([BIOSFileInfo].self, from: data)) ?? []
+        return (try? SupersEmuJSON.decoder().decode([ManifestEntry].self, from: data)) ?? []
     }
 
     private func isIntact(_ bios: BIOSFileInfo) -> Bool {
