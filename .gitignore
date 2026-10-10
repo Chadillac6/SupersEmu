@@ -1,0 +1,7 @@
+.DS_Store
+build/
+DerivedData/
+*.xcodeproj/
+xcuserdata/
+# Test ROMs are fetched locally and never committed (see scripts/fetch-test-roms.sh)
+Tests/Fixtures/local/
