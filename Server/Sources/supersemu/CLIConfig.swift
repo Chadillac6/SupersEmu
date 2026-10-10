@@ -19,7 +19,7 @@ struct CLIConfigFile: Codable, Equatable {
         do {
             return try JSONDecoder().decode(CLIConfigFile.self, from: Data(contentsOf: url))
         } catch {
-            throw CLIError.usage("Can't read config \(url.path): \(error.localizedDescription)")
+            throw CLIError.unexpected("Can't read config \(url.path): \(error.localizedDescription)")
         }
     }
 
@@ -32,7 +32,7 @@ struct CLIConfigFile: Codable, Equatable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let tmp = dir.appendingPathComponent(".config.json.\(UUID().uuidString)")
         guard fm.createFile(atPath: tmp.path, contents: try encoder.encode(self), attributes: [.posixPermissions: 0o600]) else {
-            throw CLIError.usage("Can't write \(url.path)")
+            throw CLIError.unexpected("Can't write \(url.path)")
         }
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
         if fm.fileExists(atPath: url.path) {
@@ -66,17 +66,20 @@ struct Connection: ParsableArguments {
     func resolve(environment: [String: String] = ProcessInfo.processInfo.environment,
                  configURL: URL? = nil,
                  localAdminTokenPath: String = Connection.localAdminTokenPath) throws -> Resolved {
-        let config = try CLIConfigFile.load(from: configURL ?? CLIConfigFile.defaultURL(environment: environment))
-        let serverString = nonEmpty(server) ?? nonEmpty(environment["SUPERSEMU_SERVER"]) ?? config?.server ?? Self.defaultServer
+        let explicitServer = nonEmpty(server) ?? nonEmpty(environment["SUPERSEMU_SERVER"])
+        var resolvedToken = nonEmpty(token) ?? nonEmpty(environment["SUPERSEMU_TOKEN"])
+        // The config file is only read when it can supply something, so a broken one never blocks explicit flags.
+        let config = explicitServer != nil && resolvedToken != nil
+            ? nil : try CLIConfigFile.load(from: configURL ?? CLIConfigFile.defaultURL(environment: environment))
+        let serverString = explicitServer ?? config?.server ?? Self.defaultServer
         guard let url = URL(string: serverString), let scheme = url.scheme, ["http", "https"].contains(scheme), url.host != nil else {
             throw CLIError.usage("Invalid server URL: \(serverString)")
         }
         // Only reuse a saved or local token for the server it belongs to, so it is never sent elsewhere.
-        var resolvedToken = nonEmpty(token) ?? nonEmpty(environment["SUPERSEMU_TOKEN"])
         if resolvedToken == nil, let config, Self.sameServer(config.server, serverString) {
             resolvedToken = nonEmpty(config.token)
         }
-        if resolvedToken == nil, ["127.0.0.1", "localhost", "::1"].contains(url.host ?? "") {
+        if resolvedToken == nil, Self.isLocalDefaultServer(url) {
             resolvedToken = nonEmpty((try? String(contentsOfFile: localAdminTokenPath, encoding: .utf8))?
                 .trimmingCharacters(in: .whitespacesAndNewlines))
         }
@@ -88,9 +91,32 @@ struct Connection: ParsableArguments {
         return APIClient(baseURL: resolved.server, token: resolved.token)
     }
 
+    /// Same scheme, host and port (case-insensitive) and the exact same path, ignoring a trailing slash.
     static func sameServer(_ a: String, _ b: String) -> Bool {
-        func normalized(_ s: String) -> String { s.hasSuffix("/") ? String(s.dropLast()) : s }
-        return normalized(a).lowercased() == normalized(b).lowercased()
+        guard let a = Origin(a), let b = Origin(b) else { return false }
+        return a == b
+    }
+
+    /// The Mac mini's own server: a loopback host on the default port. Only then is `admin.token` used.
+    static func isLocalDefaultServer(_ url: URL) -> Bool {
+        guard let origin = Origin(url.absoluteString), let defaultOrigin = Origin(defaultServer) else { return false }
+        return ["127.0.0.1", "localhost", "::1"].contains(origin.host) && origin.scheme == defaultOrigin.scheme
+            && origin.port == defaultOrigin.port && origin.path.isEmpty
+    }
+
+    private struct Origin: Equatable {
+        var scheme: String, host: String, port: Int, path: String
+
+        init?(_ string: String) {
+            guard let c = URLComponents(string: string), let scheme = c.scheme?.lowercased(), let host = c.host?.lowercased(),
+                  c.query == nil, c.fragment == nil, c.user == nil else { return nil }
+            self.scheme = scheme
+            self.host = host.hasPrefix("[") ? String(host.dropFirst().dropLast()) : host
+            self.port = c.port ?? (scheme == "https" ? 443 : 80)
+            var path = c.path
+            while path.hasSuffix("/") { path.removeLast() }
+            self.path = path
+        }
     }
 
     private func nonEmpty(_ value: String?) -> String? {

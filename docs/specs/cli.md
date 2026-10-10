@@ -14,12 +14,12 @@ Every API command takes `--server URL`, `--token TOKEN` and `--json`. They're re
 |---|---|---|
 | 1 | `--server` | `--token` |
 | 2 | `SUPERSEMU_SERVER` | `SUPERSEMU_TOKEN` |
-| 3 | config file `server` | config file `token` (only used when the server is the one saved with it) |
-| 4 | `http://127.0.0.1:8487` | `/Library/Application Support/SupersEmu Server/admin.token` (only for `localhost`/`127.0.0.1`, i.e. on the Mac mini) |
+| 3 | config file `server` | config file `token` (only sent to the server it was saved with: same scheme, host, port and path) |
+| 4 | `http://127.0.0.1:8487` | `/Library/Application Support/SupersEmu Server/admin.token` (only for `http://localhost:8487` / `127.0.0.1:8487`, i.e. the server on this Mac mini) |
 
 Config file: `~/.config/supersemu/config.json` (or `$XDG_CONFIG_HOME/supersemu/config.json`;
 `SUPERSEMU_CONFIG` overrides the path). `supersemu login` writes it atomically with mode `0600`
-in a `0700` directory:
+in a `0700` directory. The file is only read when a flag or env var doesn't already give both server and token, so a broken config never blocks explicit flags.
 
 ```json
 { "server" : "https://macmini.tailnet.ts.net:8487", "token" : "sek_…" }
@@ -40,7 +40,7 @@ in a `0700` directory:
 
 Scopes: `library:read`, `library:write`, `users:admin`, `saves:read`. A token can only create tokens with
 scopes it holds itself. Write and admin scopes only work for tokens owned by an admin user, and a
-player's token never gets admin rights. Every admin change is written to the server's `audit_log`.
+player's token never gets admin rights. Every admin change and its `audit_log` row are written in one transaction. Revoking something that is already revoked keeps the first `revokedAt` and adds no audit row.
 
 ## Output
 - Text mode prints a table or a short line. `tokens create` prints **only the token** on stdout
@@ -55,7 +55,7 @@ player's token never gets admin rights. Every admin change is written to the ser
 | Code | Meaning |
 |---|---|
 | 0 | OK |
-| 1 | Unexpected error |
+| 1 | Unexpected error (e.g. config file unreadable or unwritable) |
 | 2 | Not found (HTTP 404) |
 | 3 | Unauthorized: missing, wrong or revoked token (HTTP 401) |
 | 4 | Forbidden: not admin or missing scope (HTTP 403) |

@@ -34,9 +34,7 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
         let body = try await request.decode(as: CreateUserRequest.self, context: context)
         let name = body.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw HTTPError(.badRequest, message: "displayName is required") }
-        let user = try store.createUser(displayName: name, role: .player)
-        try store.audit(auth, action: "user.create", detail: "\(user.id) \(user.displayName)")
-        return EditedResponse(status: .created, response: user)
+        return EditedResponse(status: .created, response: try store.createPlayer(displayName: name, by: auth))
     }
 
     admin.get("devices") { _, context in
@@ -47,11 +45,8 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
     admin.delete("devices/:id") { _, context in
         let auth = try adminCaller(context)
         let id = try context.parameters.require("id")
-        guard let device = try store.device(id: id) else { throw HTTPError(.notFound, message: "No device \(id)") }
-        if device.revokedAt != nil { return device }
-        try store.revokeDevice(id)
-        try store.audit(auth, action: "device.revoke", detail: "\(id) \(device.name)")
-        return try store.device(id: id) ?? device
+        guard let device = try store.revokeDevice(id: id, by: auth) else { throw HTTPError(.notFound, message: "No device \(id)") }
+        return device
     }
 
     admin.get("tokens") { _, context in
@@ -70,20 +65,13 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
         if let missing = scopes.first(where: { !auth.has($0) }) {
             throw HTTPError(.forbidden, message: "Caller lacks scope \(missing.rawValue)")
         }
-        let (id, token) = try store.createAPIToken(ownerUserID: auth.user.id, name: name, scopes: scopes)
-        try store.audit(auth, action: "token.create", detail: "\(id) \(name) [\(scopes.map(\.rawValue).joined(separator: ","))]")
-        guard var info = try store.apiToken(id: id) else { throw HTTPError(.internalServerError) }
-        info.token = token
-        return EditedResponse(status: .created, response: info)
+        return EditedResponse(status: .created, response: try store.createAPIToken(by: auth, name: name, scopes: scopes))
     }
 
     admin.delete("tokens/:id") { _, context in
         let auth = try adminCaller(context)
         let id = try context.parameters.require("id")
-        guard let info = try store.apiToken(id: id) else { throw HTTPError(.notFound, message: "No token \(id)") }
-        if info.revokedAt != nil { return info }
-        try store.revokeAPIToken(id)
-        try store.audit(auth, action: "token.revoke", detail: "\(id) \(info.name)")
-        return try store.apiToken(id: id) ?? info
+        guard let info = try store.revokeAPIToken(id: id, by: auth) else { throw HTTPError(.notFound, message: "No token \(id)") }
+        return info
     }
 }

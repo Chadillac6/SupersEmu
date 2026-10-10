@@ -65,6 +65,7 @@ final class CLIParsingTests: XCTestCase {
         XCTAssertEqual(CLIError(APIClientError.http(status: 400, message: nil)).exitCode, 6)
         XCTAssertEqual(CLIError(APIClientError.http(status: 500, message: nil)).exitCode, 7)
         XCTAssertEqual(CLIError.usage("x").exitCode, 64)
+        XCTAssertEqual(CLIError(CocoaError(.fileWriteNoPermission)).exitCode, 1)
     }
 }
 
@@ -114,10 +115,25 @@ final class CLIConfigTests: XCTestCase {
         // The saved token is only sent to the server it was saved for.
         XCTAssertNil(try resolve(["--server", "http://other:1"]).token)
         XCTAssertEqual(try resolve(["--server", "http://MINI:8487/"]).token, "from-config")
+        XCTAssertNil(try resolve(["--server", "http://mini:8487/other"]).token)
+        XCTAssertNil(try resolve(["--server", "https://mini:8487"]).token)
+        XCTAssertTrue(Connection.sameServer("http://mini:8487/api/", "HTTP://Mini:8487/api"))
+        XCTAssertFalse(Connection.sameServer("http://mini:8487/api", "http://mini:8487/API"))
+        XCTAssertTrue(Connection.sameServer("http://mini", "http://mini:80"))
         // No config: localhost falls back to the Mac mini's admin.token, remote hosts don't.
         let missing = dir.appendingPathComponent("missing.json")
         XCTAssertEqual(try resolve([], configURL: missing), .init(server: URL(string: Connection.defaultServer)!, token: "from-admin-file"))
         XCTAssertNil(try resolve(["--server", "http://mini:8487"], configURL: missing).token)
+        XCTAssertEqual(try resolve(["--server", "http://localhost:8487"], configURL: missing).token, "from-admin-file")
+        // admin.token only goes to the server's own port, not another local service.
+        XCTAssertNil(try resolve(["--server", "http://127.0.0.1:9999"], configURL: missing).token)
+        XCTAssertNil(try resolve(["--server", "http://127.0.0.1:8487/x"], configURL: missing).token)
+        // A broken config doesn't block explicit flags or env, but is reported when it's needed.
+        let broken = dir.appendingPathComponent("broken.json")
+        try "{invalid".write(to: broken, atomically: true, encoding: .utf8)
+        XCTAssertEqual(try resolve(["--server", "http://mini:8487", "--token", "t"], configURL: broken).token, "t")
+        XCTAssertEqual(try resolve([], env: ["SUPERSEMU_SERVER": "http://mini:8487", "SUPERSEMU_TOKEN": "e"], configURL: broken).token, "e")
+        XCTAssertThrowsError(try resolve([], configURL: broken)) { XCTAssertEqual(($0 as? CLIError)?.exitCode, 1) }
         XCTAssertThrowsError(try resolve(["--server", "mini:8487"]))
         XCTAssertThrowsError(try resolve(["--server", "ftp://mini"]))
     }

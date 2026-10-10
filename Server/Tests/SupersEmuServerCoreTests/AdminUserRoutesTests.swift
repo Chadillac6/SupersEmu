@@ -194,6 +194,37 @@ final class AdminUserRoutesTests: XCTestCase {
         XCTAssertEqual(try auditActions(), ["token.revoke"])
     }
 
+    func testConcurrentRevokesKeepFirstTimeAndAuditOnce() async throws {
+        let auth = try XCTUnwrap(try store.authenticate(token: adminDevice.token))
+        let ipad = try store.createDeviceToken(userID: admin.id, deviceName: "Chad's iPad")
+        let (tokenID, _) = try store.createAPIToken(ownerUserID: admin.id, name: "openclaw", scopes: [.libraryRead])
+        let store = self.store!
+        let results = try await withThrowingTaskGroup(of: (Date?, Date?).self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    (try store.revokeDevice(id: ipad.deviceID, by: auth)?.revokedAt, try store.revokeAPIToken(id: tokenID, by: auth)?.revokedAt)
+                }
+            }
+            return try await group.reduce(into: []) { $0.append($1) }
+        }
+        XCTAssertEqual(Set(results.map(\.0)).count, 1)
+        XCTAssertEqual(Set(results.map(\.1)).count, 1)
+        XCTAssertNotNil(results.first?.0 ?? nil)
+        XCTAssertEqual(try auditActions().sorted(), ["device.revoke", "token.revoke"])
+    }
+
+    func testFailedAuditRollsBackTheMutation() throws {
+        let auth = try XCTUnwrap(try store.authenticate(token: adminDevice.token))
+        let ipad = try store.createDeviceToken(userID: admin.id, deviceName: "Chad's iPad")
+        try store.db.write { try $0.execute(sql: "DROP TABLE audit_log") }
+        XCTAssertThrowsError(try store.createAPIToken(by: auth, name: "openclaw", scopes: [.libraryRead]))
+        XCTAssertThrowsError(try store.createPlayer(displayName: "Alex", by: auth))
+        XCTAssertThrowsError(try store.revokeDevice(id: ipad.deviceID, by: auth))
+        XCTAssertEqual(try store.listAPITokens(), [])
+        XCTAssertEqual(try store.listUsers().map(\.displayName), ["Chad"])
+        XCTAssertNil(try store.device(id: ipad.deviceID)?.revokedAt)
+    }
+
     func testCreatePlayerUser() async throws {
         try await app().test(.router) { client in
             let headers = self.bearer(self.adminDevice.token)

@@ -7,10 +7,12 @@ enum CLIError: Error, Equatable, CustomStringConvertible {
     case usage(String)
     case unreachable(String)
     case http(status: Int, message: String?)
+    case unexpected(String)
 
     var exitCode: Int32 {
         switch self {
         case .usage: return 64
+        case .unexpected: return 1
         case .unreachable: return 5
         case .http(let status, _):
             switch status {
@@ -27,7 +29,7 @@ enum CLIError: Error, Equatable, CustomStringConvertible {
 
     var description: String {
         switch self {
-        case .usage(let message), .unreachable(let message): return message
+        case .usage(let message), .unreachable(let message), .unexpected(let message): return message
         case .http(let status, let message):
             let hint = status == 401 ? " (check --server/--token, SUPERSEMU_TOKEN or `supersemu login`)" : ""
             return "HTTP \(status): \(message ?? HTTPURLResponse.localizedString(forStatusCode: status))\(hint)"
@@ -41,7 +43,8 @@ enum CLIError: Error, Equatable, CustomStringConvertible {
         case APIClientError.invalidResponse: self = .http(status: 502, message: "Invalid response from server")
         case let error as URLError: self = .unreachable("Can't reach server: \(error.localizedDescription)")
         case is DecodingError: self = .http(status: 502, message: "Unexpected response from server: \(error)")
-        default: self = .usage("\(error)")
+        case let error as LocalizedError: self = .unexpected(error.errorDescription ?? "\(error)")
+        default: self = .unexpected((error as NSError).localizedDescription)
         }
     }
 }
