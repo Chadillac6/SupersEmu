@@ -37,8 +37,9 @@ static const CoreFixture kFixtures[] = {
     // bytes (eg_cnt/eg_timer and per-channel FM fields) after a restore.
     {@"picodrive", @"noudar.32x", @"PicoDrive", 320, 224,
      @"PicoDrive's YM2612 state does not replay byte-identically"},
-    // GLideN64 redraws a restored frame with a few hundred edge pixels changed, and a state saved
-    // in a fresh session differs from the original by a few bytes near its end.
+    // With frame buffer emulation off GLideN64 never writes frames back to RDRAM, so after a restore
+    // the parts of the picture the demo doesn't redraw show stale RDRAM. A state saved in a fresh
+    // session also differs from the original by a few bytes near its end.
     {@"mupen64plus_next", @"cube-fill-triangle.z64", @"Mupen64Plus-Next", 320, 240,
      @"Mupen64Plus-Next's state does not replay byte-identically in a fresh session",
      @"GLideN64 frames after a restore are not pixel-identical"},

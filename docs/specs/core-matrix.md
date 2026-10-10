@@ -57,6 +57,10 @@ Build notes:
   `gliden64` RDP, `hle` RSP, `cached_interpreter` CPU, no threaded renderer. On macOS GLideN64 frame buffer emulation is off
   (`EnableFBEmulation=False`): with it on, only black reaches the host FBO (seen on a macOS VM, not yet
   checked on a real Mac GPU), so games that need frame-buffer effects can draw wrongly until that is fixed.
+  Probably for the same reason, a state resumed in a new session (the app's "Resumed where you left off")
+  can show stale stripes wherever the game doesn't redraw: GLideN64 doesn't write frames back to RDRAM, so
+  the restored RDRAM holds old picture data. The cube demo redraws only its cubes, so it shows there. It
+  isn't caused by switching cores; a host-test resume with no other core in between showed it too.
   iOS keeps the upstream default (on). The iOS Simulator can't back a GLES texture with an IOSurface
   (`CVOpenGLESTextureCacheCreateTextureFromImage` fails), so there the host falls back to `glReadPixels`.
   **Known gap:** in the iOS Simulator the test ROM's geometry is right but its colours are not (yellow
