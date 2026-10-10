@@ -29,12 +29,22 @@ public enum CertificatePin {
 }
 
 /// URLSession delegate that only trusts a server whose certificate matches `certificateSHA256`.
-/// With no pin it falls back to the system's default TLS handling.
-public final class PinnedCertificateDelegate: NSObject, URLSessionDelegate, Sendable {
+/// With no pin it falls back to the system's default TLS handling. Never follows redirects, so tokens,
+/// codes and pins stay bound to the host they were meant for.
+public final class PinnedCertificateDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     public let certificateSHA256: String?
+    /// Typed address + code has no fingerprint to pin: the first certificate seen from `expectedHost`
+    /// is accepted and recorded in `observedSHA256` (trust on first use), then pinned from then on.
+    public let trustOnFirstUse: Bool
+    public let expectedHost: String?
+    private let lock = NSLock()
+    private var observed: String?
+    public var observedSHA256: String? { lock.withLock { observed } }
 
-    public init(certificateSHA256: String?) {
+    public init(certificateSHA256: String?, trustOnFirstUse: Bool = false, expectedHost: String? = nil) {
         self.certificateSHA256 = certificateSHA256
+        self.trustOnFirstUse = trustOnFirstUse && certificateSHA256 == nil && expectedHost != nil
+        self.expectedHost = expectedHost?.lowercased()
     }
 
     public enum Decision: Equatable {
@@ -44,20 +54,44 @@ public final class PinnedCertificateDelegate: NSObject, URLSessionDelegate, Send
     }
 
     public func decision(authenticationMethod: String, trust: SecTrust?) -> Decision {
+        Self.decision(authenticationMethod: authenticationMethod, trust: trust, pin: certificateSHA256)
+    }
+
+    public static func decision(authenticationMethod: String, trust: SecTrust?, pin: String?) -> Decision {
         guard authenticationMethod == NSURLAuthenticationMethodServerTrust else { return .defaultHandling }
-        guard let pin = certificateSHA256 else { return .defaultHandling }
+        guard let pin else { return .defaultHandling }
         guard let trust, CertificatePin.evaluate(trust, expected: pin) else { return .reject }
         return .useTrust
     }
 
+    /// Pin check for other delegates (e.g. `GameDownloader`'s trust handler).
+    public static func disposition(for challenge: URLAuthenticationChallenge, pin: String?) -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        let trust = challenge.protectionSpace.serverTrust
+        switch decision(authenticationMethod: challenge.protectionSpace.authenticationMethod, trust: trust, pin: pin) {
+        case .useTrust: return (.useCredential, URLCredential(trust: trust!))
+        case .reject: return (.cancelAuthenticationChallenge, nil)
+        case .defaultHandling: return (.performDefaultHandling, nil)
+        }
+    }
+
     public func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                            completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        let trust = challenge.protectionSpace.serverTrust
-        switch decision(authenticationMethod: challenge.protectionSpace.authenticationMethod, trust: trust) {
-        case .useTrust: completionHandler(.useCredential, URLCredential(trust: trust!))
-        case .reject: completionHandler(.cancelAuthenticationChallenge, nil)
-        case .defaultHandling: completionHandler(.performDefaultHandling, nil)
+        let space = challenge.protectionSpace
+        if trustOnFirstUse, space.host.lowercased() == expectedHost,
+           space.authenticationMethod == NSURLAuthenticationMethodServerTrust, let trust = space.serverTrust,
+           let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first {
+            let digest = CertificatePin.sha256(ofDER: SecCertificateCopyData(leaf) as Data)
+            lock.withLock { observed = digest }
+            completionHandler(.useCredential, URLCredential(trust: trust))
+            return
         }
+        let (disposition, credential) = Self.disposition(for: challenge, pin: certificateSHA256)
+        completionHandler(disposition, credential)
+    }
+
+    public func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                           newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 
     /// An ephemeral session pinned to `certificateSHA256`.

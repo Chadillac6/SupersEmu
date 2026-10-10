@@ -291,3 +291,29 @@ extension NetworkTests {
         XCTAssertEqual(roundTrip, profile)
     }
 }
+
+extension NetworkTests {
+    func testPinnedDelegateRefusesRedirects() {
+        let delegate = PinnedCertificateDelegate(certificateSHA256: nil)
+        let url = URL(string: "https://mini.local:8487/v1/me")!
+        let task = URLSession.shared.dataTask(with: url)
+        let response = HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil, headerFields: ["Location": "http://evil/"])!
+        let followed = LockedBox<URLRequest?>(URLRequest(url: url))
+        delegate.urlSession(URLSession.shared, task: task, willPerformHTTPRedirection: response,
+                            newRequest: URLRequest(url: URL(string: "http://evil/")!)) { followed.value = $0 }
+        XCTAssertNil(followed.value)
+    }
+
+    func testTrustOnFirstUseNeedsTypedHostAndNoPin() {
+        XCTAssertTrue(PinnedCertificateDelegate(certificateSHA256: nil, trustOnFirstUse: true, expectedHost: "Mini.local").trustOnFirstUse)
+        XCTAssertFalse(PinnedCertificateDelegate(certificateSHA256: nil, trustOnFirstUse: true).trustOnFirstUse)
+        XCTAssertFalse(PinnedCertificateDelegate(certificateSHA256: "ab", trustOnFirstUse: true, expectedHost: "mini").trustOnFirstUse)
+    }
+}
+
+private final class LockedBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: T
+    init(_ value: T) { stored = value }
+    var value: T { get { lock.withLock { stored } } set { lock.withLock { stored = newValue } } }
+}

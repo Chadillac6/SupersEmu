@@ -6,6 +6,8 @@ import SupersEmuKit
 struct CLIConfigFile: Codable, Equatable {
     var server: String
     var token: String
+    /// Pin for a self-signed server, verified at login.
+    var certificateSHA256: String? = nil
 
     static func defaultURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         if let path = environment["SUPERSEMU_CONFIG"], !path.isEmpty { return URL(fileURLWithPath: path) }
@@ -88,7 +90,8 @@ struct Connection: ParsableArguments {
                 .trimmingCharacters(in: .whitespacesAndNewlines))
         }
         // The local daemon's certificate is only a sensible default pin for the local daemon.
-        let pin = nonEmpty(certificateSHA256) ?? nonEmpty(environment["SUPERSEMU_CERT_SHA256"])
+        let savedPin = config.flatMap { Self.sameServer($0.server, serverString) ? nonEmpty($0.certificateSHA256) : nil }
+        let pin = nonEmpty(certificateSHA256) ?? nonEmpty(environment["SUPERSEMU_CERT_SHA256"]) ?? savedPin
             ?? (Self.isLocalDefaultServer(url) ? FileManager.default.contents(atPath: Self.localCertificatePath).map(CertificatePin.sha256(ofDER:)) : nil)
         return Resolved(server: url, token: resolvedToken, certificateSHA256: pin)
     }
@@ -104,8 +107,8 @@ struct Connection: ParsableArguments {
         if resolved.server.scheme == "http", resolved.token != nil, !isLoopback(resolved.server) {
             throw CLIError.usage("Refusing to send a token over plain HTTP to \(resolved.server.absoluteString); use https://")
         }
-        return resolved.server.scheme == "https" && resolved.certificateSHA256 != nil
-            ? PinnedCertificateDelegate.session(certificateSHA256: resolved.certificateSHA256) : .shared
+        // Always the pinning delegate: it also refuses redirects, so the bearer token can't be bounced to HTTP.
+        return PinnedCertificateDelegate.session(certificateSHA256: resolved.certificateSHA256, timeout: 120)
     }
 
     static func isLoopback(_ url: URL) -> Bool {

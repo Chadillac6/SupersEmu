@@ -31,7 +31,7 @@ struct Login: AsyncParsableCommand {
             let resolved = try connection.resolve(environment: [:], configURL: URL(fileURLWithPath: "/dev/null/none"))
             let me = noVerify ? nil : try await APIClient(baseURL: resolved.server, token: value, session: try Connection.session(for: resolved)).me()
             let url = CLIConfigFile.defaultURL()
-            try CLIConfigFile(server: server, token: value).write(to: url)
+            try CLIConfigFile(server: server, token: value, certificateSHA256: resolved.certificateSHA256).write(to: url)
             if json { return try CLIOutput.json(Output(server: server, configPath: url.path, me: me)) }
             if let me { CLIOutput.stdout("Signed in to \(server) as \(me.user.displayName) [\(me.user.role.rawValue)]") }
             CLIOutput.stdout("Saved \(url.path)")

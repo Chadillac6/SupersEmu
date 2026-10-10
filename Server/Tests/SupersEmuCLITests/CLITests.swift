@@ -332,3 +332,17 @@ extension CLIConfigTests {
         XCTAssertNoThrow(try Connection.session(for: .init(server: URL(string: "https://mini:8487")!, token: "t", certificateSHA256: String(repeating: "a", count: 64))))
     }
 }
+
+extension CLIConfigTests {
+    func testLoginPinIsReusedOnlyForItsServer() throws {
+        let config = dir.appendingPathComponent("pinned.json")
+        let pin = String(repeating: "b", count: 64)
+        try CLIConfigFile(server: "https://mini:8487", token: "sek_1", certificateSHA256: pin).write(to: config)
+        func resolve(_ args: [String]) throws -> Connection.Resolved {
+            try connection(args).resolve(environment: [:], configURL: config, localAdminTokenPath: "/nonexistent")
+        }
+        XCTAssertEqual(try resolve([]).certificateSHA256, pin)
+        XCTAssertNil(try resolve(["--server", "https://other:8487"]).certificateSHA256)
+        XCTAssertEqual(try resolve(["--certificate-sha256", "cc"]).certificateSHA256, "cc")
+    }
+}

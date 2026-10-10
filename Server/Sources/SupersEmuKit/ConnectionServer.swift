@@ -44,7 +44,7 @@ extension ServerProfile {
                   lastGoodURL: try c.decodeIfPresent(URL.self, forKey: .lastGoodURL),
                   userID: try c.decodeIfPresent(String.self, forKey: .userID),
                   deviceID: try c.decodeIfPresent(String.self, forKey: .deviceID),
-                  tokenAccount: try c.decodeIfPresent(String.self, forKey: .tokenAccount) ?? pin.map(CertificatePin.normalize) ?? serverName,
+                  tokenAccount: try c.decodeIfPresent(String.self, forKey: .tokenAccount) ?? pin.map(CertificatePin.normalize) ?? "unpinned:\(serverName)",
                   allowsInsecureTransport: try c.decodeIfPresent(Bool.self, forKey: .allowsInsecureTransport) ?? false)
     }
 }
