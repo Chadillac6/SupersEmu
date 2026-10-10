@@ -17,25 +17,52 @@ final class GameInput {
     ]
     private var appKitButtons: SEJoypadButtons = []
     private var keyMonitor: Any?
+    private var observers: [NSObjectProtocol] = []
+
+    /// The player window this input belongs to; keys from other windows are ignored.
+    weak var window: NSWindow? {
+        didSet {
+            guard window !== oldValue else { return }
+            releaseAll()
+            observers.removeAll { NotificationCenter.default.removeObserver($0); return true }
+            let center = NotificationCenter.default
+            observers.append(center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.releaseAll() })
+            if let window {
+                observers.append(center.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in self?.releaseAll() })
+            }
+        }
+    }
 
     init() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
-            guard let self, let button = Self.keyCodeMap[event.keyCode],
-                  !event.modifierFlags.contains(.command) else { return event }
+            guard let self, let window = self.window, event.window === window,
+                  let button = Self.keyCodeMap[event.keyCode] else { return event }
+            let isCommand = event.modifierFlags.contains(.command)
             switch event.type {
-            case .keyDown: self.appKitButtons.insert(button)
-            case .keyUp: self.appKitButtons.remove(button)
+            case .keyDown:
+                if isCommand { return event }
+                self.appKitButtons.insert(button)
+            case .keyUp:
+                self.appKitButtons.remove(button)
+                if isCommand { return event }
             case .flagsChanged:
                 if event.modifierFlags.contains(.shift) { self.appKitButtons.insert(button) }
                 else { self.appKitButtons.remove(button) }
-            default: break
+                return event
+            default:
+                return event
             }
             return nil
         }
     }
 
+    func releaseAll() {
+        appKitButtons = []
+    }
+
     deinit {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
     #endif
 

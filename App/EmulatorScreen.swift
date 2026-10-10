@@ -30,6 +30,13 @@ struct EmulatorScreen: UIViewRepresentable {
 import AppKit
 
 final class EmulatorScreenView: NSView {
+    var onWindowChange: ((NSWindow?) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindowChange?(window)
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         let layer = CALayer()
@@ -49,6 +56,8 @@ struct EmulatorScreen: NSViewRepresentable {
     func makeNSView(context: Context) -> EmulatorScreenView {
         let view = EmulatorScreenView()
         session.displayLayer = view.layer
+        let input = session.input
+        view.onWindowChange = { input.window = $0 }
         return view
     }
 
