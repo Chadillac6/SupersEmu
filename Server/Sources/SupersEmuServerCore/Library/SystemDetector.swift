@@ -1,0 +1,105 @@
+import Foundation
+import SupersEmuKit
+
+/// Decides which system a file belongs to from its extension and header bytes.
+/// Never guesses: anything ambiguous is sent to the review queue with a reason.
+public enum SystemDetector {
+    public enum Result: Equatable, Sendable {
+        case system(SystemID)
+        /// Looks like a game file but can't be identified safely. Stored and queued for review.
+        case needsReview(String)
+        /// Not a game file (or a format we don't take). Reported, not stored.
+        case unsupported(String)
+        /// OS junk (`.DS_Store`, AppleDouble). Skipped without reporting.
+        case ignored
+    }
+
+    /// Bytes of the file header that `detect` needs.
+    public static let headerLength = 512 + 0x4000  // room for one de-interleaved .smd block
+
+    static let archiveExtensions: Set<String> = ["7z", "rar", "tar", "gz", "tgz", "bz2", "xz"]
+    static let nonGameExtensions: Set<String> = [
+        "txt", "nfo", "diz", "md5", "sfv", "sha1", "crc", "dat", "xml", "json", "ini", "cfg", "log", "url", "htm", "html",
+        "pdf", "doc", "docx", "rtf", "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "ips", "bps", "ups",
+    ]
+
+    static let nintendoLogo: [UInt8] = [
+        0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+        0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
+        0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+    ]
+
+    public static func isIgnorable(_ filename: String) -> Bool {
+        filename == ".DS_Store" || filename.hasPrefix("._") || filename == "Thumbs.db" || filename == "desktop.ini"
+    }
+
+    /// - Parameters:
+    ///   - header: the first `headerLength` bytes (or the whole file if shorter).
+    ///   - size: full file size in bytes.
+    public static func detect(filename: String, header: Data, size: Int64) -> Result {
+        if isIgnorable(filename) { return .ignored }
+        let ext = (filename as NSString).pathExtension.lowercased()
+        let bytes = [UInt8](header)
+        switch ext {
+        case "sfc", "smc":
+            // SNES has no magic number; the extension is SNES-only, so only sanity-check the size.
+            let romSize = size % 1024 == 512 ? size - 512 : size
+            return romSize >= 0x8000 ? .system(.snes) : .needsReview("Too small for a SNES ROM (\(size) bytes)")
+        case "gb", "gbc":
+            guard bytes.count >= 0x150, Array(bytes[0x104..<0x134]) == nintendoLogo else {
+                return .needsReview("No Game Boy header (Nintendo logo at 0x104 missing)")
+            }
+            switch bytes[0x143] {
+            case 0xC0: return .system(.gbc)
+            case 0x80: return .system(ext == "gbc" ? .gbc : .gb)
+            default: return .system(.gb)
+            }
+        case "gba":
+            guard bytes.count >= 0xC0, bytes[0xB2] == 0x96 else {
+                return .needsReview("No Game Boy Advance header (fixed byte 0x96 at 0xB2 missing)")
+            }
+            return .system(.gba)
+        case "md", "gen", "bin", "smd":
+            return detectGenesis(ext: ext, bytes: bytes, size: size)
+        case "zip":
+            return .unsupported("Archive inside an archive")
+        case _ where archiveExtensions.contains(ext):
+            return .unsupported("Archive format .\(ext) is not supported (use .zip)")
+        case _ where nonGameExtensions.contains(ext):
+            return .unsupported("Not a game file (.\(ext))")
+        default:
+            return .needsReview(ext.isEmpty ? "Unknown file type (no extension)" : "Unknown file type .\(ext)")
+        }
+    }
+
+    static func detectGenesis(ext: String, bytes: [UInt8], size: Int64) -> Result {
+        if let header = segaHeader(bytes, at: 0x100) ?? (size % 0x4000 == 512 ? smdHeader(bytes) : nil) {
+            if header.contains("32X") { return .needsReview("Sega 32X ROM (not supported yet)") }
+            return .system(.genesis)
+        }
+        if bytes.count >= 0x20, String(decoding: bytes[0..<0x20], as: UTF8.self).contains("SEGADISCSYSTEM") {
+            return .needsReview("Sega CD disc image (not supported yet)")
+        }
+        return .needsReview(ext == "bin"
+            ? "Ambiguous .bin: no SEGA header at 0x100"
+            : "No SEGA header at 0x100")
+    }
+
+    /// The 16-byte system name at `offset` if it contains "SEGA" (e.g. "SEGA GENESIS", " SEGA MEGA DRIVE").
+    static func segaHeader(_ bytes: [UInt8], at offset: Int) -> String? {
+        guard bytes.count >= offset + 16 else { return nil }
+        let name = String(decoding: bytes[offset..<offset + 16], as: UTF8.self)
+        return name.contains("SEGA") ? name : nil
+    }
+
+    /// Super Magic Drive dumps: 512-byte header, then 16 KB blocks with odd bytes in the first half, even in the second.
+    static func smdHeader(_ bytes: [UInt8]) -> String? {
+        guard bytes.count >= 512 + 0x4000 else { return nil }
+        var block = [UInt8](repeating: 0, count: 0x4000)
+        for i in 0..<0x2000 {
+            block[i * 2 + 1] = bytes[512 + i]
+            block[i * 2] = bytes[512 + 0x2000 + i]
+        }
+        return segaHeader(block, at: 0x100)
+    }
+}
