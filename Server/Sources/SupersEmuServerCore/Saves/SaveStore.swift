@@ -149,7 +149,7 @@ public struct SaveStore: Sendable {
 
                 // An `ifHead` retry whose first attempt (lost response) became the head now looks stale: return that head.
                 // A historical attached match is not reused, so a stale device still gets a branch copy and the real head.
-                let retryOfHead = upload.onlyIfHead && stale && head?["sha256"] == sha
+                let retryOfHead = !upload.keepAsBranch && upload.onlyIfHead && stale && head?["sha256"] == sha
                     && (head?["parent_id"] as String?) == upload.parentID && (head?["device_id"] as String?) == upload.deviceID
                 // Retries after a lost response, and unchanged content on top of the head, return the existing revision.
                 if let existingID = try (retryOfHead ? headID : nil) ?? String.fetchOne(db, sql: """
