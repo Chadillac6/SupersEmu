@@ -9,8 +9,7 @@ import SupersEmuKit
 import XCTest
 
 /// Download/cache manager (client track) against a live in-process SupersEmu Server: real store,
-/// real token auth and permissions. `GET /v1/games/{id}` and its Range file route belong to the
-/// library track; until `LibraryRoutes` serves them, `LibraryFileRoutesStub` stands in on the same paths.
+/// real token auth, permissions and the library track's `GET /v1/games/{id}` + Range file routes.
 final class ClientCacheTests: XCTestCase {
     var store: ServerStore!
     var token: String!
@@ -33,24 +32,24 @@ final class ClientCacheTests: XCTestCase {
 
     /// Inserts a game row + file directly (as the library track's import would) and returns its detail.
     @discardableResult
-    func insertGame(title: String, bytes: Data, filename: String = "Test.sfc") throws -> GameDetail {
+    /// `servedBytes` lets a test store different bytes than the advertised SHA-256 (corruption).
+    func insertGame(title: String, bytes: Data, filename: String = "Test.sfc", servedBytes: Data? = nil) throws -> GameDetail {
         let sha = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
         let stored = store.paths.games.appendingPathComponent(sha, isDirectory: true)
         try FileManager.default.createDirectory(at: stored, withIntermediateDirectories: true)
-        try bytes.write(to: stored.appendingPathComponent(filename))
+        try (servedBytes ?? bytes).write(to: stored.appendingPathComponent(filename))
         try store.db.write { db in
             try db.execute(sql: "INSERT INTO games (id, title, system, created_at) VALUES (?, ?, 'snes', ?)", arguments: [sha, title, Date()])
             try db.execute(sql: "INSERT INTO game_files (id, game_id, filename, role, size, stored_path) VALUES (?, ?, ?, 'rom', ?, ?)",
-                           arguments: [sha, sha, filename, bytes.count, "\(sha)/\(filename)"])
+                           arguments: [sha, sha, filename, bytes.count, "games/\(sha)/\(filename)"])
         }
         let summary = GameSummary(id: sha, title: title, system: .snes, year: nil, genre: nil, coverPath: nil, totalSize: Int64(bytes.count))
         return GameDetail(game: summary, summary: nil, files: [GameFileInfo(id: sha, filename: filename, role: .rom, size: Int64(bytes.count), discNumber: nil)])
     }
 
-    func app(ignoreRange: Bool = false, corrupt: Bool = false) -> some ApplicationProtocol {
-        let router = buildRouter(store: store)
-        LibraryFileRoutesStub(store: store, log: rangeRequests, ignoreRange: ignoreRange, corrupt: corrupt).register(on: router)
-        return Application(router: router, configuration: .init())
+    func app(ignoreRange: Bool = false) -> some ApplicationProtocol {
+        let responder = RangeObservingResponder(inner: buildRouter(store: store).buildResponder(), log: rangeRequests, ignoreRange: ignoreRange)
+        return Application(responder: responder, configuration: .init())
     }
 
     func withClient(_ app: some ApplicationProtocol, _ body: @escaping (APIClient) async throws -> Void) async throws {
@@ -112,8 +111,11 @@ final class ClientCacheTests: XCTestCase {
     }
 
     func testChecksumMismatchDiscardsFile() async throws {
-        let detail = try insertGame(title: "Delta", bytes: Self.randomBytes(100_000))
-        try await withClient(app(corrupt: true)) { client in
+        let bytes = Self.randomBytes(100_000)
+        var corrupted = bytes
+        corrupted[0] ^= 0xFF
+        let detail = try insertGame(title: "Delta", bytes: bytes, servedBytes: corrupted)
+        try await withClient(app()) { client in
             do {
                 try await GameDownloader(client: client, cache: self.cache).download(gameID: detail.game.id)
                 XCTFail("Expected checksum mismatch")
@@ -264,54 +266,20 @@ final class ProgressLog: @unchecked Sendable {
     var values: [DownloadProgress] { lock.withLock { items } }
 }
 
-/// Stand-in for the library track's `GET /v1/games/{id}` and `GET /v1/games/{id}/files/{file}` (HTTP Range).
-/// Same paths, same auth and permission checks. Remove once `LibraryRoutes` implements them.
-struct LibraryFileRoutesStub {
-    let store: ServerStore
+/// Wraps the real server: records `Range` request headers, or strips them to mimic a server/proxy that ignores Range.
+struct RangeObservingResponder<Inner: HTTPResponder>: HTTPResponder where Inner.Context == SERequestContext {
+    let inner: Inner
     let log: RequestLog
-    var ignoreRange = false
-    var corrupt = false
+    let ignoreRange: Bool
 
-    func register(on router: Router<SERequestContext>) {
-        let games = router.group("v1/games").add(middleware: TokenAuthMiddleware(store: store))
-        games.get(":id") { _, context -> GameDetail in
-            let auth = try context.caller()
-            try auth.require(.libraryRead)
-            let id = try context.parameters.require("id")
-            return try store.db.read { db in
-                guard try Permissions.canSee(gameID: id, auth: auth, db: db),
-                      let row = try Row.fetchOne(db, sql: "SELECT g.*, (SELECT SUM(size) FROM game_files WHERE game_id = g.id) AS total_size FROM games g WHERE id = ?", arguments: [id])
-                else { throw HTTPError(.notFound) }
-                let files = try Row.fetchAll(db, sql: "SELECT * FROM game_files WHERE game_id = ? ORDER BY filename", arguments: [id]).map {
-                    GameFileInfo(id: $0["id"], filename: $0["filename"], role: GameFileRole(rawValue: $0["role"]) ?? .rom, size: $0["size"], discNumber: $0["disc_number"])
-                }
-                return GameDetail(game: LibraryQueries.summary(from: row), summary: row["summary"], files: files)
-            }
+    func respond(to request: Request, context: SERequestContext) async throws -> Response {
+        guard let range = request.headers[.range] else { return try await inner.respond(to: request, context: context) }
+        guard ignoreRange else {
+            log.append(range)
+            return try await inner.respond(to: request, context: context)
         }
-        games.get(":id/files/:file") { request, context -> Response in
-            let auth = try context.caller()
-            try auth.require(.libraryRead)
-            let id = try context.parameters.require("id")
-            let fileID = try context.parameters.require("file")
-            let stored: String = try store.db.read { db in
-                guard try Permissions.canSee(gameID: id, auth: auth, db: db),
-                      let path = try String.fetchOne(db, sql: "SELECT stored_path FROM game_files WHERE game_id = ? AND id = ?", arguments: [id, fileID])
-                else { throw HTTPError(.notFound) }
-                return path
-            }
-            var data = try Data(contentsOf: store.paths.games.appendingPathComponent(stored))
-            if corrupt { data[data.startIndex] ^= 0xFF }
-            let total = data.count
-            if !ignoreRange, let range = request.headers[.range] {
-                log.append(range)
-                let start = Int(range.dropFirst("bytes=".count).split(separator: "-").first ?? "") ?? 0
-                guard start < total else { return Response(status: .rangeNotSatisfiable) }
-                return Response(status: .partialContent,
-                                headers: [.contentRange: "bytes \(start)-\(total - 1)/\(total)", .contentLength: "\(total - start)"],
-                                body: .init(byteBuffer: ByteBuffer(bytes: data[start...])))
-            }
-            return Response(status: .ok, headers: [.contentLength: "\(total)", .acceptRanges: "bytes"],
-                            body: .init(byteBuffer: ByteBuffer(bytes: data)))
-        }
+        var head = request.head
+        head.headerFields[.range] = nil
+        return try await inner.respond(to: Request(head: head, body: request.body), context: context)
     }
 }
