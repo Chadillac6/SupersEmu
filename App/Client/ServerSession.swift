@@ -60,7 +60,7 @@ final class ServerSession {
     func pair(_ payload: PairingPayload) async throws {
         let request = PairRequest(code: payload.code, deviceName: Self.deviceName, platform: Self.platform)
         // Device tokens are bearer secrets: only pair over HTTPS (plain HTTP is allowed for loopback dev servers).
-        let urls = payload.urls.filter { $0.scheme == "https" || Self.isLoopback($0) }
+        let urls = payload.urls.filter { $0.scheme == "https" || ($0.scheme == "http" && Self.isLoopback($0)) }
         guard !urls.isEmpty else { throw PairingError.insecureAddress }
         var lastError: Error = APIClientError.invalidResponse
         for url in urls {

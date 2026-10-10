@@ -18,16 +18,37 @@ final class DownloadCenter {
     private(set) var states: [String: State] = [:]
     private(set) var downloaded: [String: CachedGame] = [:]
     @ObservationIgnored private var tasks: [String: Task<Void, Never>] = [:]
+    /// Canceled downloads that may still be writing; a replacement waits for these before touching the folder.
+    @ObservationIgnored private var stopping: [String: Task<Void, Never>] = [:]
     /// Bumped on start/remove so a task that finishes after Remove can't resurrect the game.
     @ObservationIgnored private var generations: [String: Int] = [:]
+    @ObservationIgnored private var reloadToken = 0
+    /// Changes made while a background reload is verifying, applied on top of its result.
+    @ObservationIgnored private var editsDuringReload: [String: CachedGame?] = [:]
 
     init(cache: GameCache = GameCache(root: AppPaths.cache)) {
         self.cache = cache
         reload()
     }
 
+    /// Re-verifies the cache off the main actor (hashing large disc images can take a while).
     func reload() {
-        downloaded = Dictionary(uniqueKeysWithValues: cache.cachedGames().map { ($0.detail.game.id, $0) })
+        reloadToken += 1
+        let token = reloadToken
+        editsDuringReload = [:]
+        let cache = cache
+        Task { [weak self] in
+            let games = await Task.detached(priority: .userInitiated) { cache.cachedGames() }.value
+            guard let self, token == self.reloadToken else { return }
+            var fresh = Dictionary(games.map { ($0.detail.game.id, $0) }, uniquingKeysWith: { first, _ in first })
+            for (id, edit) in self.editsDuringReload { fresh[id] = edit }
+            self.downloaded = fresh
+        }
+    }
+
+    private func setDownloaded(_ gameID: String, _ game: CachedGame?) {
+        downloaded[gameID] = game
+        editsDuringReload[gameID] = .some(game)
     }
 
     func isDownloaded(_ gameID: String) -> Bool { downloaded[gameID] != nil }
@@ -51,10 +72,12 @@ final class DownloadCenter {
         states[gameID] = .downloading(.init(receivedBytes: cache.bytesOnDisk(for: gameID), totalBytes: total))
         let generation = (generations[gameID] ?? 0) + 1
         generations[gameID] = generation
+        let previous = stopping[gameID]
         tasks[gameID] = Task { [weak self] in
+            await previous?.value
             do {
                 let cached = try await downloader.download(gameID: gameID) { progress in
-                    Task { @MainActor [weak self] in self?.report(progress, for: gameID) }
+                    Task { @MainActor [weak self] in self?.report(progress, for: gameID, generation: generation) }
                 }
                 self?.finish(gameID, cached: cached, generation: generation)
             } catch is CancellationError {
@@ -72,29 +95,46 @@ final class DownloadCenter {
     }
 
     func remove(_ gameID: String) {
-        cancel(gameID)
-        tasks[gameID] = nil
+        if let task = tasks.removeValue(forKey: gameID) { retire(task, for: gameID) }
         generations[gameID, default: 0] += 1
         try? cache.remove(gameID)
         states[gameID] = nil
-        reload()
+        setDownloaded(gameID, nil)
     }
 
     /// Downloads belong to the account that made them; called when this device disconnects.
     func removeAll() {
-        for task in tasks.values { task.cancel() }
-        for id in tasks.keys { generations[id, default: 0] += 1 }
+        for (id, task) in tasks {
+            generations[id, default: 0] += 1
+            retire(task, for: id)
+        }
         tasks = [:]
         states = [:]
         for id in downloaded.keys { try? cache.remove(id) }
         if let leftovers = try? FileManager.default.contentsOfDirectory(at: cache.root, includingPropertiesForKeys: nil) {
             for url in leftovers { try? FileManager.default.removeItem(at: url) }
         }
-        reload()
+        reloadToken += 1
+        editsDuringReload = [:]
+        downloaded = [:]
     }
 
-    private func report(_ progress: DownloadProgress, for gameID: String) {
-        guard tasks[gameID] != nil else { return }
+    private func retire(_ task: Task<Void, Never>, for gameID: String) {
+        task.cancel()
+        let waitFor = stopping[gameID]
+        let done = Task<Void, Never> {
+            await waitFor?.value
+            await task.value
+        }
+        stopping[gameID] = done
+        Task { [weak self] in
+            await done.value
+            if self?.stopping[gameID] == done { self?.stopping[gameID] = nil }
+        }
+    }
+
+    private func report(_ progress: DownloadProgress, for gameID: String, generation: Int) {
+        guard generations[gameID] == generation, tasks[gameID] != nil else { return }
         if case .downloading(let current) = states[gameID],
            progress.receivedBytes < progress.totalBytes, progress.fraction - current.fraction < 0.002 { return }
         states[gameID] = .downloading(progress)
@@ -108,11 +148,14 @@ final class DownloadCenter {
         }
         tasks[gameID] = nil
         states[gameID] = nil
-        downloaded[gameID] = cached
+        setDownloaded(gameID, cached)
     }
 
     private func finish(_ gameID: String, error: Error?, generation: Int) {
-        guard generations[gameID] == generation else { return }
+        guard generations[gameID] == generation else {
+            if tasks[gameID] == nil { try? cache.remove(gameID) }
+            return
+        }
         tasks[gameID] = nil
         if let error {
             states[gameID] = .failed((error as? DownloadError)?.description ?? error.localizedDescription)
