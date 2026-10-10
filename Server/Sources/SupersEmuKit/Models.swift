@@ -69,8 +69,11 @@ public struct GameSummary: Codable, Sendable, Equatable, Identifiable {
     /// Server-relative artwork path, e.g. `/v1/games/{id}/artwork/cover`. Nil until art exists.
     public var coverPath: String?
     public var totalSize: Int64
+    /// When the game was added to the server (drives "Recently Added"). Optional so older servers still decode.
+    public var addedAt: Date?
 
-    public init(id: String, title: String, system: SystemID, year: Int?, genre: String?, coverPath: String?, totalSize: Int64) {
+    public init(id: String, title: String, system: SystemID, year: Int?, genre: String?, coverPath: String?, totalSize: Int64,
+                addedAt: Date? = nil) {
         self.id = id
         self.title = title
         self.system = system
@@ -78,6 +81,7 @@ public struct GameSummary: Codable, Sendable, Equatable, Identifiable {
         self.genre = genre
         self.coverPath = coverPath
         self.totalSize = totalSize
+        self.addedAt = addedAt
     }
 }
 
