@@ -94,8 +94,11 @@ public enum SystemDetector {
     }
 
     static func detectGenesis(ext: String, bytes: [UInt8], size: Int64) -> Result {
-        if let header = segaHeader(bytes, at: 0x100) ?? (size % 0x4000 == 512 ? smdHeader(bytes) : nil) {
+        if let header = segaHeader(bytes, at: 0x100) {
             return .system(is32X(header: header, bytes: bytes) ? .sega32x : .genesis)
+        }
+        if size % 0x4000 == 512, let block = smdBlock(bytes), let header = segaHeader(block, at: 0x100) {
+            return .system(is32X(header: header, bytes: block) ? .sega32x : .genesis)
         }
         if bytes.count >= 0x20, String(decoding: bytes[0..<0x20], as: UTF8.self).contains("SEGADISCSYSTEM") {
             return .needsReview("Sega CD disc image without a .cue sheet")
@@ -120,13 +123,13 @@ public enum SystemDetector {
     }
 
     /// Super Magic Drive dumps: 512-byte header, then 16 KB blocks with odd bytes in the first half, even in the second.
-    static func smdHeader(_ bytes: [UInt8]) -> String? {
+    static func smdBlock(_ bytes: [UInt8]) -> [UInt8]? {
         guard bytes.count >= 512 + 0x4000 else { return nil }
         var block = [UInt8](repeating: 0, count: 0x4000)
         for i in 0..<0x2000 {
             block[i * 2 + 1] = bytes[512 + i]
             block[i * 2] = bytes[512 + 0x2000 + i]
         }
-        return segaHeader(block, at: 0x100)
+        return block
     }
 }

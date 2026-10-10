@@ -43,8 +43,8 @@ final class BIOSCenter {
         let store = store
         if let client {
             do {
-                let list: [BIOSFileInfo] = try await client.get("/v1/bios")
-                let result = try await store.sync(list) { bios in try await client.raw("GET", "/v1/bios/\(bios.id)") }
+                let list = try await client.bios()
+                let result = try await store.sync(list) { bios in try await client.biosData(sha256: bios.id) }
                 installed = result.installed
                 return
             } catch {

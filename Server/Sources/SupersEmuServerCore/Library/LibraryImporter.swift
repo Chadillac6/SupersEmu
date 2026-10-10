@@ -196,6 +196,14 @@ public final class LibraryImporter: @unchecked Sendable {
 
     // MARK: Processing
 
+    /// `Game.bin`, `Game (Track 1).bin`, `Game - Track 01.bin` belong to `Game.cue`; `Gameplay.bin` doesn't.
+    static func isTrackName(_ filename: String, of stem: String) -> Bool {
+        let name = (filename as NSString).deletingPathExtension.lowercased()
+        guard name.hasPrefix(stem) else { return false }
+        guard let next = name.dropFirst(stem.count).first else { return true }
+        return !next.isLetter && !next.isNumber
+    }
+
     func process(_ batch: Batch) throws {
         let byKey = Dictionary(batch.candidates.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         var consumed = Set<String>()
@@ -224,7 +232,7 @@ public final class LibraryImporter: @unchecked Sendable {
         for cue in batch.candidates where cue.ext == "cue" && !units.contains(where: { $0.primary.key == cue.key }) {
             let stem = (cue.filename as NSString).deletingPathExtension.lowercased()
             for track in batch.candidates where track.container == cue.container && ["bin", "img"].contains(track.ext)
-                && !consumed.contains(track.key) && track.filename.lowercased().hasPrefix(stem) {
+                && !consumed.contains(track.key) && Self.isTrackName(track.filename, of: stem) {
                 consumed.insert(track.key)
                 batch.record(.unsupported("\(track.label): track of unreadable cue sheet \(cue.filename)"), origins: [track.origin])
             }

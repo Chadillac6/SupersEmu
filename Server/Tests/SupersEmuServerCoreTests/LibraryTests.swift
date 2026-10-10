@@ -81,6 +81,8 @@ final class SystemDetectorTests: XCTestCase {
         mars.replaceSubrange(0x3C0..<0x3CF, with: Array("MARS CHECK MODE".utf8))
         XCTAssertEqual(detect("Doom.32X", Data(mars)), .system(.sega32x))
         XCTAssertEqual(detect("Doom.bin", Data(mars)), .system(.sega32x))
+        XCTAssertEqual(detect("Doom.smd", ROMFixtures.smd(from: Data(mars))), .system(.sega32x))
+        XCTAssertEqual(detect("Sonic.smd", ROMFixtures.smd(from: ROMFixtures.genesis())), .system(.genesis))
         guard case .needsReview = detect("Plain.32x", ROMFixtures.genesis(name: "SEGA GENESIS    ")) else { return XCTFail("ambiguous 32x") }
         guard case .needsReview = detect("Blank.32x", Data(count: 0x4000)) else { return XCTFail("blank 32x") }
         guard case .needsReview = detect("game.xyz", Data(count: 10)) else { return XCTFail("unknown ext") }

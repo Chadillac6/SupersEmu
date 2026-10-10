@@ -32,7 +32,7 @@ This spec is the Wave 0 contract every Milestone 2 track builds on.
   Sync runs after every library refresh, when a PS1/Sega CD detail opens, and before a disc game launches. Each file's SHA-256 is checked before it is written (atomically) under its exact canonical name; names that need sanitizing are rejected.
   Synced files are tracked in `System/.supersemu-bios.json`, so only files the app wrote are replaced or removed; user-placed files are left alone. Offline, files already on disk that still match their hash count as installed.
   A system counts as satisfied when any verified BIOS for it is installed. Matching a BIOS region to a game's region is **not implemented**.
-  Verified by `BIOSStoreTests` with synthetic bytes. **Unverified:** an end-to-end sync against the real `/v1/bios` routes, which the import track adds in parallel. The client calls `GET /v1/bios` and `GET /v1/bios/{sha256}` through the generic `APIClient.get`/`raw`, so no `APIClient` change is needed.
+  Verified by `BIOSStoreTests` with synthetic bytes. `BIOSCenter` fetches through the import track's `APIClient.bios()` and `biosData(sha256:)`. **Unverified:** an end-to-end client sync against a running server; the routes and the store are each tested separately.
 - BIOS checker: `supersemu bios status` and the Server mode UI list each system's BIOS as present, missing or wrong-hash.
 
 ## Import track: built and verified (server)
