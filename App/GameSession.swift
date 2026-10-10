@@ -176,13 +176,32 @@ final class GameSession {
             chordArmed = true
         }
         host.buttons = buttons
+        let frameStart = ContinuousClock.now
         host.runFrame()
         if let image = host.copyFrameImage() {
             displayLayer?.contents = image
         }
+        if Self.logsFrameTime { logFrameTime(ContinuousClock.now - frameStart) }
         if ContinuousClock.now - lastAutosave >= Self.autosaveInterval {
             autosave()
         }
+    }
+
+    /// `SUPERSEMU_LOG_FRAME_TIME=1`: prints the average emulate + present time every 300 frames.
+    private static let logsFrameTime = ProcessInfo.processInfo.environment["SUPERSEMU_LOG_FRAME_TIME"] == "1"
+    @ObservationIgnored private var frameTimeTotal = Duration.zero
+    @ObservationIgnored private var frameTimeCount = 0
+
+    private func logFrameTime(_ elapsed: Duration) {
+        frameTimeTotal += elapsed
+        frameTimeCount += 1
+        guard frameTimeCount == 300 else { return }
+        let ms = Double(frameTimeTotal.components.attoseconds) / 1e15 / Double(frameTimeCount)
+            + Double(frameTimeTotal.components.seconds) * 1000 / Double(frameTimeCount)
+        print(String(format: "SupersEmu frame time: %.2f ms/frame (%.0f fps max)", ms, 1000 / ms))
+        fflush(stdout)
+        frameTimeTotal = .zero
+        frameTimeCount = 0
     }
 
     func autosave() {

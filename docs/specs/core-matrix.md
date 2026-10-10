@@ -9,7 +9,7 @@
 | Sega CD | Genesis Plus GX | `genesis_plus_gx` | Non-commercial | **Core builds** (M2; macOS host tests with synthetic disc + iOS Simulator/device builds). Needs user BIOS. No real disc booted yet |
 | Sega 32X | PicoDrive | `picodrive` | MAME (non-commercial) | **Running** (M2; macOS tests with homebrew 32X ROM + iOS Simulator/device builds) |
 | PlayStation | Beetle PSX (mednafen_psx) | `beetle_psx` | GPLv2 | **Linked** (M2; macOS tests + iOS builds). Boots bundled OpenBIOS without a Sony BIOS; no commercial disc or real BIOS tested yet |
-| Nintendo 64 | Mupen64Plus-Next | | GPLv2 | **Risk**: builds for iOS arm64 (interpreter, no JIT); needs GPU rendering in host + device speed test |
+| Nintendo 64 | Mupen64Plus-Next | `mupen64plus_next` | GPLv2 | **Running** (M3; macOS host tests with homebrew N64 ROM + iOS Simulator). GLideN64 over libretro hardware rendering, cached interpreter. Real iPhone/iPad speed not measured |
 | Dreamcast | Flycast | | GPLv2 | Phase 2 |
 
 Alternates: bsnes (SNES accuracy), SameBoy (GB), SwanStation / PCSX ReARMed (PS1), ParaLLEl N64.
@@ -26,10 +26,11 @@ Each core is a git submodule under `Vendor/cores/`, pinned by `scripts/pin-cores
 | Genesis Plus GX | [libretro/Genesis-Plus-GX](https://github.com/libretro/Genesis-Plus-GX) | `393f70cd64c7334564c19a424c383f53986c13f4` | `LICENSE.txt` (non-commercial) | md, gen, smd, bin, mdx; Sega CD discs by console `segacd` |
 | PicoDrive | [libretro/picodrive](https://github.com/libretro/picodrive) | `1890c2932234c9d30f4cd3851d02228baae8f09e` | `COPYING` (MAME licence, non-commercial) | 32x |
 | Beetle PSX | [libretro/beetle-psx-libretro](https://github.com/libretro/beetle-psx-libretro) | `10e4b0c6ceae20daa65ddf436a4445dddd0982d2` | `COPYING` (GPLv2) | cue, chd, m3u (pbp not yet) |
+| Mupen64Plus-Next | [libretro/mupen64plus-libretro-nx](https://github.com/libretro/mupen64plus-libretro-nx) | `12edd2c74a517ff86dfa8cfc71ad75e4c10486d5` | `LICENSE` (GPLv2) | z64, n64, v64 |
 
 **Licensing.** Snes9x, Genesis Plus GX and PicoDrive (MAME licence: redistribution only
 non-commercially, with source) forbid commercial use, so SupersEmu must stay free:
-never sold, no ads, no paid tier. Gambatte and Beetle PSX are GPLv2 and mGBA is MPL 2.0; the app is planned
+never sold, no ads, no paid tier. Gambatte, Beetle PSX and Mupen64Plus-Next are GPLv2 and mGBA is MPL 2.0; the app is planned
 GPLv3 and ships each core's licence and source link. No ROMs or BIOS files are bundled.
 
 ## How cores are linked
@@ -46,8 +47,28 @@ Save metadata: `SELibretroHost.coreID` (e.g. `gambatte`) and `coreVersion` (core
 plus pinned short commit, e.g. `v0.5.0 (d9d6cd0)`).
 
 Build notes:
-- All cores are interpreters or software renderers: no JIT, no dynarec, no OpenGL. Builds for
-  macOS (arm64/x86_64), iOS device arm64 and iOS Simulator.
+- All cores are interpreters: no JIT, no dynarec. All but Mupen64Plus-Next are software renderers.
+  Builds for macOS (arm64/x86_64), iOS device arm64 and iOS Simulator.
+- Mupen64Plus-Next: GLideN64 renders through libretro hardware rendering (`RETRO_ENVIRONMENT_SET_HW_RENDER`
+  in `SELibretroHost.mm`): an offscreen OpenGL core-profile context (CGL, 4.1 on current macOS), an OpenGL ES 3 `EAGLContext`
+  on iOS. The core draws into a host FBO; each frame is blitted (flipped) into an IOSurface-backed
+  `CVPixelBuffer` texture and copied from the surface into the normal frame buffer, so `GameSession`/
+  `EmulatorScreen` present it like any software core (no `glReadPixels`). Core options are fixed by the host:
+  `gliden64` RDP, `hle` RSP, `cached_interpreter` CPU, no threaded renderer. On macOS GLideN64 frame buffer emulation is off
+  (`EnableFBEmulation=False`): with it on, only black reaches the host FBO (seen on a macOS VM, not yet
+  checked on a real Mac GPU), so games that need frame-buffer effects can draw wrongly until that is fixed.
+  iOS keeps the upstream default (on). The iOS Simulator can't back a GLES texture with an IOSurface
+  (`CVOpenGLESTextureCacheCreateTextureFromImage` fails), so there the host falls back to `glReadPixels`.
+  **Known gap:** in the iOS Simulator the test ROM's geometry is right but its colours are not (yellow
+  background, black cubes, where macOS shows coloured cubes on black). Unknown whether this is the
+  Simulator's GLES or GLideN64's GLES3 path; it needs a real iPhone/iPad to tell. HLE RSP only runs Nintendo microcode: current libdragon homebrew
+  (custom `rspq` microcode, open-source IPL3) shows a black screen, and cxd4 LLE times out on it. CPU: cached interpreter on
+  both platforms (`WITH_DYNAREC` unset): iOS forbids JIT, and upstream's own `platform=osx` build also
+  disables the dynarec, so macOS uses the same tested path. Not built: ParaLLEl-RDP/RSP (Vulkan via
+  MoltenVK: a later option for accuracy), angrylion, cxd4. Host test fixture: the
+  PeterLemon/N64 RDP cube demo (Unlicense; like most old homebrew it boots with Nintendo's IPL3). SDK zlib replaces the bundled copy;
+  `Host/CoreEntry/Mupen64PlusNext/` holds the `fp.h` shim libpng needs and the GL/GLES `glsym` switch.
+  Apple marks OpenGL/OpenGL ES deprecated; both still ship on macOS 26 / iOS 26.
 - mGBA's CMake-generated `flags.h` / `version.c` are replaced by `Host/CoreEntry/mgba/`
   (GB + GBA, `MINIMAL_CORE=2`, no threads, no scripting/debugger/SQLite/PNG/zip).
 - Genesis Plus GX: Sega CD built as upstream `Makefile.libretro` does (`HAVE_CHD`): `core/cd_hw`,
