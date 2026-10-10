@@ -329,6 +329,19 @@ extension LibraryTests {
         let out = sources.appendingPathComponent("out.bin")
         try archive.extract(archive.entries[0], to: out)
         XCTAssertEqual(try Data(contentsOf: out), big)
+        XCTAssertEqual(try archive.prefix(of: archive.entries[0], count: 0x8000), big.prefix(0x8000))
+        XCTAssertEqual(try archive.prefix(of: archive.entries[0], count: 4 << 20), big)
+    }
+
+    func testUnreadableCueInZipChecksTrackHeadersWithoutExtracting() async throws {
+        let zipSource = sources.appendingPathComponent("zipsrc", isDirectory: true)
+        try write(Data("garbage".utf8), "Game.cue", in: zipSource)
+        try write(ROMFixtures.genesis(seed: 90), "Game2.bin", in: zipSource)
+        try write(DiscFixtures.psxTrack(seed: 91), "Game01.bin", in: zipSource)
+        let archive = try zip("Game.zip", in: zipSource, files: ["Game.cue", "Game2.bin", "Game01.bin"])
+        let report = try await importer.importPaths([archive.path], auth: nil)
+        XCTAssertEqual(report.imported.map(\.title), ["Game2"])
+        XCTAssertEqual(report.unsupported.count, 2, "\(report.unsupported)")
     }
 
     // MARK: Messy library

@@ -234,8 +234,8 @@ public final class LibraryImporter: @unchecked Sendable {
             let stem = (cue.filename as NSString).deletingPathExtension.lowercased()
             for track in batch.candidates where track.container == cue.container && ["bin", "img"].contains(track.ext)
                 && !consumed.contains(track.key) && Self.isTrackName(track.filename, of: stem) {
-                if let file = try? examineFile(track, role: .disc, batch: batch), SystemDetector.detectDisc(header: file.header) == nil,
-                   case .system = SystemDetector.detect(filename: track.filename, header: file.header, size: file.size) {
+                if let (header, size) = try? headerAndSize(track), SystemDetector.detectDisc(header: header) == nil,
+                   case .system = SystemDetector.detect(filename: track.filename, header: header, size: size) {
                     continue
                 }
                 consumed.insert(track.key)
@@ -264,6 +264,19 @@ public final class LibraryImporter: @unchecked Sendable {
         var discs: [String: Disc] = [:]
         for unit in units { discs[unit.primary.key] = try examine(unit, batch: batch) }
         try commitDiscs(discs, units: units, playlists: playlists, batch: batch)
+    }
+
+    /// Header bytes for detection without copying or extracting the whole file.
+    private func headerAndSize(_ candidate: Candidate) throws -> (Data, Int64) {
+        switch candidate.source {
+        case .file(let url):
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let size = Int64((try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0)
+            return (try handle.read(upToCount: SystemDetector.headerLength) ?? Data(), size)
+        case .zip(let archive, let entry):
+            return (try archive.prefix(of: entry, count: SystemDetector.headerLength), Int64(entry.uncompressedSize))
+        }
     }
 
     private func readSmall(_ candidate: Candidate) throws -> Data {
