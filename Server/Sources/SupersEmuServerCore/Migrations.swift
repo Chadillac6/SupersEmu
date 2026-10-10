@@ -102,5 +102,6 @@ public enum ServerMigrations {
     static func registerTrackMigrations(_ migrator: inout DatabaseMigrator) {
         PairingMigrations.register(&migrator)
         LibraryMigrations.register(&migrator)
+        SaveMigrations.register(&migrator)
     }
 }

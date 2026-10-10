@@ -53,7 +53,14 @@ public struct APIClient: Sendable {
     }
 
     public func raw(_ method: String, _ path: String, body: Data? = nil, contentType: String = "application/json") async throws -> Data {
-        var request = URLRequest(url: baseURL.appending(path: path))
+        // `appending(path:)` percent-encodes "?", so split off any query first.
+        let parts = path.split(separator: "?", maxSplits: 1)
+        var url = baseURL.appending(path: String(parts[0]))
+        if parts.count == 2, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.percentEncodedQuery = String(parts[1])
+            url = components.url ?? url
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let body {
