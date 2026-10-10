@@ -9,6 +9,7 @@ func registerAdminLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: S
 
     group.post("admin/library/import") { request, context -> Response in
         let auth = try requireLibraryAdmin(context)
+        try requireLibraryAvailable(store)
         let body = try await request.decode(as: ImportRequest.self, context: context)
         guard !body.paths.isEmpty else { throw HTTPError(.badRequest, message: "paths is empty") }
         let report = try await importer.importPaths(body.paths, auth: auth)
@@ -19,6 +20,7 @@ func registerAdminLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: S
     // Body (an empty ImportRequest) is ignored: scan always reads the server's Incoming folder.
     group.post("admin/library/scan") { _, context -> Response in
         let auth = try requireLibraryAdmin(context)
+        try requireLibraryAvailable(store)
         let report = try await importer.scanIncoming(auth: auth)
         metadata?.enqueue()
         return try LibraryHTTP.json(report)
@@ -60,7 +62,7 @@ func registerAdminLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: S
 }
 
 @Sendable
-private func requireLibraryAdmin(_ context: SERequestContext) throws -> AuthContext {
+func requireLibraryAdmin(_ context: SERequestContext) throws -> AuthContext {
     let auth = try context.caller()
     try auth.requireAdmin()
     try auth.require(.libraryWrite)

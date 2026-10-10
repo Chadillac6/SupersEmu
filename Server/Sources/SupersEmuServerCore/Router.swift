@@ -41,6 +41,7 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil) ->
     registerLibraryRoutes(authed, store: store)
     registerBIOSRoutes(authed, store: store)
     registerAdminLibraryRoutes(authed, store: store, metadata: metadata)
+    registerAdminLibraryManagementRoutes(authed, store: store, metadata: metadata)
     registerAdminUserRoutes(authed, store: store)
     registerBackupRoutes(authed, store: store)
     registerPairingRoutes(public: router.group("v1"), authed: authed, store: store)

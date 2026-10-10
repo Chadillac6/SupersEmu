@@ -19,7 +19,7 @@ public final class LibraryImporter: @unchecked Sendable {
         self.knownBIOS = knownBIOS
     }
 
-    public var importedDirectory: URL { store.paths.root.appendingPathComponent("Imported", isDirectory: true) }
+    public var importedDirectory: URL { store.paths.imported }
     var stagingDirectory: URL { store.paths.games.appendingPathComponent(".staging", isDirectory: true) }
 
     enum Outcome {
@@ -75,8 +75,10 @@ public final class LibraryImporter: @unchecked Sendable {
             try importer.process(batch)
             let day = Self.dayFormatter.string(from: Date())
             for origin in batch.originOrder where batch.isSettled(origin) {
-                try importer.moveToImported(origin, incoming: incoming, day: day)
+                try importer.settle(origin, incoming: incoming, day: day)
             }
+            try importer.recordIssues(batch, incoming: incoming)
+            importer.pruneEmptyUploads(incoming)
             return Self.report(batch.outcomes)
         }
         try store.audit(auth, action: "library.scan", detail: Self.auditDetail(report, paths: ["Incoming"]))
@@ -92,7 +94,7 @@ public final class LibraryImporter: @unchecked Sendable {
         }
     }
 
-    private func run<T>(_ body: @escaping (LibraryImporter) throws -> T) async throws -> T {
+    func run<T>(_ body: @escaping (LibraryImporter) throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             Self.queue.async { continuation.resume(with: Result { try body(self) }) }
         }
@@ -150,6 +152,10 @@ public final class LibraryImporter: @unchecked Sendable {
         func isSettled(_ origin: URL) -> Bool {
             guard let outcomes = originOutcomes[origin] else { return false }
             return outcomes.allSatisfy(\.isSettled) && outcomes.contains { if case .ignored = $0 { return false } else { return true } }
+        }
+
+        var unsettled: [(origin: URL, outcomes: [Outcome])] {
+            originOrder.filter { !isSettled($0) }.map { ($0, originOutcomes[$0] ?? []) }
         }
 
         func cleanUp() { for url in staged { try? FileManager.default.removeItem(at: url) } }
@@ -364,7 +370,7 @@ public final class LibraryImporter: @unchecked Sendable {
     func promoteFromReview(sha: String, system: SystemID, staged: URL, filename: String, size: Int64, oldStoredPath: String) throws -> Outcome {
         let storedName = Self.safeFilename(filename)
         let newStoredPath = "games/\(sha)/\(storedName)"
-        let destination = store.paths.root.appendingPathComponent(newStoredPath)
+        let destination = store.paths.libraryFile(newStoredPath)
         let moved = newStoredPath != oldStoredPath
         if moved {
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -384,7 +390,7 @@ public final class LibraryImporter: @unchecked Sendable {
             throw error
         }
         if moved, !oldStoredPath.split(separator: "/").contains("..") {
-            try? FileManager.default.removeItem(at: store.paths.root.appendingPathComponent(oldStoredPath))
+            try? FileManager.default.removeItem(at: store.paths.libraryFile(oldStoredPath))
         }
         return .imported(GameSummary(id: sha, title: title, system: system, year: nil, genre: nil, coverPath: nil, totalSize: size))
     }

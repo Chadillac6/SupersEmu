@@ -68,13 +68,17 @@ public struct APIClient: Sendable {
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
         let (data, response) = try await session.data(for: request)
+        try Self.check(data, response)
+        return data
+    }
+
+    static func check(_ data: Data, _ response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse else { throw APIClientError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? SupersEmuJSON.decoder().decode(APIErrorBody.self, from: data))?.error
                 ?? (try? SupersEmuJSON.decoder().decode(HummingbirdErrorBody.self, from: data))?.error.message
             throw APIClientError.http(status: http.statusCode, message: message)
         }
-        return data
     }
 
     private struct Empty: Encodable {}

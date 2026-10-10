@@ -5,21 +5,31 @@ import SupersEmuKit
 
 public struct ServerPaths: Sendable {
     public var root: URL
+    /// Where games, BIOS, artwork, Incoming and Imported live. Defaults to `root`; Move Library points it elsewhere
+    /// (`storage.json`). The database, TLS identity, tokens and saves always stay in `root`.
+    public let storage: LibraryStorage
     public var database: URL { root.appendingPathComponent("library.sqlite") }
-    public var games: URL { root.appendingPathComponent("games", isDirectory: true) }
-    public var artwork: URL { root.appendingPathComponent("artwork", isDirectory: true) }
-    public var bios: URL { root.appendingPathComponent("bios", isDirectory: true) }
+    public var libraryRoot: URL { storage.root }
+    public var games: URL { libraryRoot.appendingPathComponent("games", isDirectory: true) }
+    public var artwork: URL { libraryRoot.appendingPathComponent("artwork", isDirectory: true) }
+    public var bios: URL { libraryRoot.appendingPathComponent("bios", isDirectory: true) }
     public var users: URL { root.appendingPathComponent("users", isDirectory: true) }
-    public var incoming: URL { root.appendingPathComponent("Incoming", isDirectory: true) }
+    public var incoming: URL { libraryRoot.appendingPathComponent("Incoming", isDirectory: true) }
+    public var imported: URL { libraryRoot.appendingPathComponent("Imported", isDirectory: true) }
     /// Downloaded libretro-database DATs (docs/specs/metadata-and-artwork.md).
     public var metadata: URL { root.appendingPathComponent("metadata", isDirectory: true) }
     public var adminToken: URL { root.appendingPathComponent("admin.token") }
+    public var storageConfig: URL { root.appendingPathComponent("storage.json") }
+
+    /// A library file recorded in the database (`games/…`, `bios/…`, `artwork/…`), relative to the library root.
+    public func libraryFile(_ storedPath: String) -> URL { libraryRoot.appendingPathComponent(storedPath) }
 
     /// Default for the launch daemon. Chad can point `--data-dir` at an external drive.
     public static let defaultRoot = URL(fileURLWithPath: "/Library/Application Support/SupersEmu Server", isDirectory: true)
 
-    public init(root: URL) {
+    public init(root: URL, libraryRoot: URL? = nil) {
         self.root = root
+        storage = LibraryStorage(root: libraryRoot ?? root)
     }
 
     public func userDirectory(_ userID: String) -> URL {
@@ -27,7 +37,16 @@ public struct ServerPaths: Sendable {
     }
 
     public func createDirectories() throws {
-        for url in [root, games, artwork, users, incoming] {
+        for url in [root, users] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        try createLibraryDirectories()
+    }
+
+    /// Never creates a moved library's folder: if its drive isn't mounted, that would fill the boot disk instead.
+    public func createLibraryDirectories() throws {
+        guard storage.isAvailable else { return }
+        for url in [games, artwork, incoming] {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
     }
@@ -49,7 +68,9 @@ public final class ServerStore: @unchecked Sendable {
     }
 
     public static func open(paths: ServerPaths) throws -> ServerStore {
+        try paths.storage.load(config: paths.storageConfig, dataRoot: paths.root)
         try paths.createDirectories()
+        paths.storage.shareIncomingWithAdmins(paths.incoming)
         return try ServerStore(db: DatabasePool(path: paths.database.path), paths: paths)
     }
 

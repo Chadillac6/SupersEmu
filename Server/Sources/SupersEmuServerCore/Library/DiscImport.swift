@@ -327,7 +327,10 @@ extension LibraryImporter {
         }
         if let existing {
             if (existing["needs_review"] as Int) == 0 { return .unsupported("\(label): \(reason)") }
-            return .review(ReviewItem(id: file.sha, filename: existing["filename"], reason: existing["review_reason"] ?? reason))
+            if existing["review_reason"] as String? != reason {
+                try store.db.write { try $0.execute(sql: "UPDATE games SET review_reason = ? WHERE id = ?", arguments: [reason, file.sha]) }
+            }
+            return .review(ReviewItem(id: file.sha, filename: existing["filename"], reason: reason))
         }
         let name = Self.safeFilename(file.candidate.filename)
         let directory = store.paths.games.appendingPathComponent(file.sha, isDirectory: true)
