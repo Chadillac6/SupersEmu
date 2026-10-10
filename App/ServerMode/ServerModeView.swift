@@ -11,7 +11,7 @@ struct ServerModeScene: Scene {
         Window("SupersEmu Server", id: Self.windowID) {
             ServerModeView()
         }
-        .defaultSize(width: 760, height: 860)
+        .defaultSize(width: 980, height: 820)
         .commands { ServerModeCommands() }
     }
 }
@@ -42,19 +42,79 @@ struct ServerModeCommands: Commands {
     }
 }
 
+/// Sidebar sections of the Server Mode window. Each is a self-contained view; add a case to add a section.
+enum ServerModeSection: String, CaseIterable, Identifiable {
+    case server, library, review, bios, storage
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .server: return "Server"
+        case .library: return "Add Games"
+        case .review: return "Review Needed"
+        case .bios: return "BIOS"
+        case .storage: return "Storage"
+        }
+    }
+    var systemImage: String {
+        switch self {
+        case .server: return "server.rack"
+        case .library: return "square.and.arrow.down.on.square"
+        case .review: return "exclamationmark.bubble"
+        case .bios: return "cpu"
+        case .storage: return "externaldrive"
+        }
+    }
+}
+
 struct ServerModeView: View {
     @State private var model = ServerModeModel()
+    @State private var library: LibraryManagerModel?
+    @State private var section: ServerModeSection? = .server
     @AppStorage(ServerModeLaunch.defaultsKey) private var openAtLaunch = false
 
     var body: some View {
+        NavigationSplitView {
+            List(ServerModeSection.allCases, selection: $section) { item in
+                Label(item.title, systemImage: item.systemImage)
+                    .badge(item == .review ? library?.issues.count ?? 0 : 0)
+                    .tag(item)
+            }
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190)
+        } detail: {
+            detail
+                .frame(minWidth: 620, minHeight: 600)
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let library, !urls.isEmpty, library.canImport else { return false }
+            if section != .bios { section = .library }
+            Task { await library.importItems(urls) }
+            return true
+        }
+        .task {
+            if library == nil { library = LibraryManagerModel(server: model) }
+        }
+    }
+
+    @ViewBuilder private var detail: some View {
+        switch (section ?? .server, library) {
+        case (.library, let library?): LibraryImportView(model: library, onReview: { section = .review })
+        case (.review, let library?): ReviewNeededView(model: library)
+        case (.bios, let library?): BIOSView(model: library)
+        case (.storage, let library?): StorageView(model: library)
+        default: overview
+        }
+    }
+
+    private var overview: some View {
         Form {
             serverSection
-            daemonSection
-            pairingSection
-            devicesSection
+            if model.isLocal {
+                daemonSection
+                pairingSection
+                devicesSection
+            }
         }
         .formStyle(.grouped)
-        .frame(minWidth: 620, minHeight: 600)
         .task {
             await model.refresh()
             while !Task.isCancelled {
@@ -67,7 +127,7 @@ struct ServerModeView: View {
     private var serverSection: some View {
         Section("Server") {
             Picker("Server", selection: $model.source) {
-                ForEach(ServerModeModel.Source.allCases) { Text($0.title).tag($0) }
+                ForEach(model.sources) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
             .onChange(of: model.source) { Task { await model.refresh() } }
@@ -82,9 +142,11 @@ struct ServerModeView: View {
                     }
                 }
             }
-            LabeledContent("Address", value: model.localURL.absoluteString)
-            LabeledContent("Data folder") {
-                Text(model.dataDirectory.path).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+            LabeledContent("Address", value: model.serverURL.absoluteString)
+            if model.isLocal {
+                LabeledContent("Data folder") {
+                    Text(model.dataDirectory.path).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                }
             }
             if let pin = model.certificateSHA256 {
                 LabeledContent("Certificate SHA-256") {

@@ -10,9 +10,15 @@ import SupersEmuKit
 @MainActor @Observable
 final class ServerModeModel {
     enum Source: String, CaseIterable, Identifiable {
-        case daemon, session
+        case daemon, session, paired
         var id: String { rawValue }
-        var title: String { self == .daemon ? "Boot daemon" : "This session" }
+        var title: String {
+            switch self {
+            case .daemon: return "Boot daemon"
+            case .session: return "This session"
+            case .paired: return "Paired server"
+            }
+        }
     }
 
     static let daemonPlistName = "com.chadillac6.supersemu.server.plist"
@@ -37,6 +43,11 @@ final class ServerModeModel {
     }
     private let daemon = SMAppService.daemon(plistName: ServerModeModel.daemonPlistName)
 
+    /// The server this Mac is paired with as a player, managed remotely when it's an admin device.
+    let pairedCredential = ServerSession.defaultStore().load()
+    var sources: [Source] { pairedCredential == nil ? [.daemon, .session] : Source.allCases }
+    var isLocal: Bool { source != .paired }
+
     init() {
         let status = daemon.status
         daemonStatus = status
@@ -47,7 +58,7 @@ final class ServerModeModel {
         switch source {
         case .daemon:
             return URL(fileURLWithPath: "/Library/Application Support/SupersEmu Server", isDirectory: true)
-        case .session:
+        case .session, .paired:
             return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("SupersEmu Server", isDirectory: true)
         }
@@ -55,6 +66,7 @@ final class ServerModeModel {
 
     var port: Int { source == .daemon ? Self.daemonPort : Self.sessionPort }
     var localURL: URL { URL(string: "https://127.0.0.1:\(port)")! }
+    var serverURL: URL { isLocal ? localURL : pairedCredential?.urls.first ?? localURL }
     static var daemonPlistEmbedded: Bool {
         FileManager.default.fileExists(atPath: Bundle.main.bundleURL
             .appendingPathComponent("Contents/Library/LaunchDaemons/\(daemonPlistName)").path)
@@ -63,7 +75,8 @@ final class ServerModeModel {
     var serverBinary: URL? { Bundle.main.url(forAuxiliaryExecutable: "supersemu-server") }
 
     var certificateSHA256: String? {
-        FileManager.default.contents(atPath: dataDirectory.appendingPathComponent("tls/server.cer").path).map(CertificatePin.sha256(ofDER:))
+        if !isLocal { return pairedCredential?.certificateSHA256 }
+        return FileManager.default.contents(atPath: dataDirectory.appendingPathComponent("tls/server.cer").path).map(CertificatePin.sha256(ofDER:))
     }
 
     var daemonStatusText: String {
@@ -78,17 +91,22 @@ final class ServerModeModel {
         }
     }
 
-    private func client(authenticated: Bool) throws -> APIClient {
+    func adminClient(timeout: TimeInterval = 15) throws -> APIClient { try client(authenticated: true, timeout: timeout) }
+
+    private func client(authenticated: Bool, timeout: TimeInterval = 4) throws -> APIClient {
         var token: String?
-        if authenticated {
+        if !isLocal {
+            guard let pairedCredential else { throw ServerModeError("This Mac isn't paired with a server.") }
+            token = authenticated ? pairedCredential.token : nil
+        } else if authenticated {
             let tokenURL = dataDirectory.appendingPathComponent("admin.token")
             guard let data = FileManager.default.contents(atPath: tokenURL.path) else {
                 throw ServerModeError("Can't read \(tokenURL.path). Start the server first (it bootstraps the admin token).")
             }
             token = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return APIClient(baseURL: localURL, token: token,
-                         session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256, timeout: 4))
+        return APIClient(baseURL: serverURL, token: token,
+                         session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256, timeout: timeout))
     }
 
     func refresh() async {
@@ -99,7 +117,7 @@ final class ServerModeModel {
             statusError = nil
         } catch {
             health = nil
-            statusError = "Not responding on \(localURL.absoluteString)"
+            statusError = "Not responding on \(serverURL.absoluteString)"
         }
         guard health != nil else { devices = []; devicesError = nil; return }
         do {

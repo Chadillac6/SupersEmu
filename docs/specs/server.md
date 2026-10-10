@@ -118,6 +118,9 @@ PUT  /v1/saves/{game}/{kind}?slot&parent&core&coreVersion  upload immutable revi
 GET  /v1/saves/{game}/revisions/{rev}  download one revision
 GET  /v1/events                     server-sent events: library.updated, save.synced, …
 admin: /v1/admin/users, /invites, /permissions, /library/import, /library/publish, /tokens
+       /v1/admin/library/upload?batch=&path= (stream one file), /library/upload/{batch}/finish (move batch into Incoming, scan)
+       /v1/admin/library/issues (Review Needed), /issues/{id}/system (pick console), DELETE /issues/{id}
+       /v1/admin/storage, /storage/move (Move Library)
 ```
 - Saves: same model as `save-and-resume.md`. The server stores immutable revisions per user. An upload
   whose parent isn't the current head becomes a branch, never an overwrite. "Synced" shows only
@@ -162,3 +165,20 @@ responsibility. SupersEmu ships no games or BIOS files.
 - Daemon starts at boot with no user logged in. API reachable on LAN and over Tailscale from an iPhone on cellular.
 - Pair an iPhone from a pairing QR. Revoke it and confirm the next request fails.
 - Download a 700 MB file over Tailscale with a resume after interruption.
+
+## Library management (M3, Server Mode)
+- **Uploads** (`admin` + `library:write`): each file streams to `Incoming/.uploads/<batch>/<path>` through a hidden
+  partial file; `finish` moves the batch to `Incoming/Uploads/<batch>` and scans Incoming. Paths must be relative and
+  made of visible names (no `..`, hidden components, `:` or `\`, at most 16 levels); batch ids are 1-64 letters, digits
+  or dashes. Limits: 4 GB per file and 512 MB free space left on the library volume (413 / 507). Settled uploads are
+  deleted (they're copies) instead of being kept in `Imported/`. Unfinished batches are dropped after a day.
+- **Review Needed**: each scan records what it left in Incoming (`import_issues`) with the reason. `issues` merges
+  those with the review queue. Picking a console is offered only for a single cartridge ROM that's unknown or
+  ambiguous; discs and unsupported formats never get one. Delete removes the queued copy and the Incoming file.
+- **Storage**: games, BIOS, artwork, Incoming and Imported live in the library root, which defaults to the data
+  folder; `storage.json` in the data folder points it elsewhere. The database, TLS identity, tokens and saves always
+  stay in the data folder. Move Library copies, verifies size and SHA-256 of every file, rewrites `storage.json`,
+  then removes the old copy; on any failure the partial copy is removed and nothing switches. If the library's drive
+  is missing at boot the server still starts, creates nothing in its place, reports `available: false`, and refuses
+  imports/uploads with 503 until the drive is back.
+
