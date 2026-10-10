@@ -21,3 +21,6 @@ pin Vendor/cores/gambatte        https://github.com/libretro/gambatte-libretro.g
 pin Vendor/cores/mgba            https://github.com/libretro/mgba.git              7a12d6d4b9acb14c0ae62c9166b6a2f3d08007f6
 pin Vendor/cores/genesis_plus_gx https://github.com/libretro/Genesis-Plus-GX.git   393f70cd64c7334564c19a424c383f53986c13f4
 pin Vendor/cores/beetle_psx      https://github.com/libretro/beetle-psx-libretro.git 10e4b0c6ceae20daa65ddf436a4445dddd0982d2
+pin Vendor/cores/picodrive       https://github.com/libretro/picodrive.git         1890c2932234c9d30f4cd3851d02228baae8f09e
+# PicoDrive's own submodules that the C-only build compiles (no Cyclone asm, no libchdr).
+git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
