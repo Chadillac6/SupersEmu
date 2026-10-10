@@ -1,5 +1,6 @@
 #import <XCTest/XCTest.h>
 #import "SELibretroHost.h"
+#include <algorithm>
 
 /// Per-core checks for every statically linked libretro core: loads, renders a non-blank
 /// frame, deterministic state round trip, and reports id/version for save metadata.
@@ -126,8 +127,15 @@ static NSString *describeDifference(NSData *a, NSData *b) {
         XCTAssertEqual(frame.length, (NSUInteger)host.frameWidth * host.frameHeight * 4, @"%@", fixture.rom);
         const uint32_t *pixels = static_cast<const uint32_t *>(frame.bytes);
         NSMutableSet *colors = [NSMutableSet set];
-        for (NSUInteger i = 0; i < frame.length / 4; i++) [colors addObject:@(pixels[i])];
+        uint32_t brightest = 0;
+        for (NSUInteger i = 0; i < frame.length / 4; i++) {
+            [colors addObject:@(pixels[i])];
+            uint32_t p = pixels[i];
+            brightest = std::max({brightest, (p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF});
+        }
         XCTAssertGreaterThan(colors.count, 1u, @"%@ frame is a single solid colour", fixture.rom);
+        // Catches cores whose pixel format is mis-scaled (e.g. 5-bit channels in XRGB8888).
+        XCTAssertGreaterThanOrEqual(brightest, 0xC0u, @"%@ frame is implausibly dark", fixture.rom);
         CGImageRef image = [host copyFrameImage];
         XCTAssertTrue(image != NULL, @"%@", fixture.rom);
         CGImageRelease(image);

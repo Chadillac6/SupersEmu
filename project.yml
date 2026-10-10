@@ -134,7 +134,7 @@ targets:
     settings:
       base:
         <<: *core_settings
-        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "HAVE_STDINT_H", "HAVE_INTTYPES_H"]
+        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "HAVE_STDINT_H", "HAVE_INTTYPES_H", "VIDEO_RGB565"]
         # GB::saveState serialises a stack SaveState whose unused fields are otherwise
         # uninitialised, which makes save states differ run to run.
         OTHER_CFLAGS: ["-ftrivial-auto-var-init=zero"]
