@@ -42,6 +42,7 @@ public func buildRouter(store: ServerStore) -> Router<SERequestContext> {
     registerBIOSRoutes(authed, store: store)
     registerAdminLibraryRoutes(authed, store: store)
     registerAdminUserRoutes(authed, store: store)
+    registerBackupRoutes(authed, store: store)
     registerPairingRoutes(public: router.group("v1"), authed: authed, store: store)
     registerSaveRoutes(authed, store: store)
     return router

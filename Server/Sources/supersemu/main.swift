@@ -16,6 +16,7 @@ struct SupersEmuCLI: AsyncParsableCommand {
             Tokens.self,
             Library.self,
             BIOS.self,
+            Backup.self,
         ])
 }
 

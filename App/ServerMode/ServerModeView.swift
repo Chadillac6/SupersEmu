@@ -52,6 +52,7 @@ struct ServerModeView: View {
             daemonSection
             pairingSection
             devicesSection
+            BackupsSection(model: model)
         }
         .formStyle(.grouped)
         .frame(minWidth: 620, minHeight: 600)
