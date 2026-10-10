@@ -14,6 +14,10 @@ enum CoreRegistry {
         Core(id: SECoreIDGambatte, systems: ["gb", "gbc"], extensions: ["gb", "gbc", "dmg"]),
         Core(id: SECoreIDMGBA, systems: ["gba"], extensions: ["gba"]),
         Core(id: SECoreIDGenesisPlusGX, systems: ["genesis"], extensions: ["md", "gen", "smd", "bin", "mdx"]),
+        // Sega CD discs: `.cue`/`.chd`/`.iso` aren't claimed by extension (PS1 uses them too), so the
+        // console decides. Needs bios_CD_U/E/J.bin in the system directory.
+        Core(id: SECoreIDGenesisPlusGX, systems: ["segacd"], extensions: []),
+        Core(id: SECoreIDPicoDrive, systems: ["sega32x"], extensions: ["32x"]),
     ]
 
     /// Every ROM extension some linked core can run (for library import filters).
