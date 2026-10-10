@@ -1,5 +1,8 @@
 # Google Drive permissions analysis
 
+> Superseded: per ADR 0004, users get games from the SupersEmu Server, not their own Drive.
+> Kept because Google Drive may return as a server backup target in Phase 2.
+
 | Scope | What the app can see | Sign-in experience | Fit |
 |---|---|---|---|
 | `drive.file` | Only files the app created or the user picked in Google Picker | Clean, no verification | Breaks "drop ROMs in a Drive folder and they appear" |

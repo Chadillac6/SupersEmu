@@ -1,6 +1,6 @@
 # ADR 0003: Cloud storage
 
-- Status: Accepted (owner decision, 2026-10-10)
+- Status: Superseded by ADR 0004 (home server) once that is approved. Kept for history.
 
 ## Decision
 - Phase 1: Google Drive with the full `https://www.googleapis.com/auth/drive` scope, so the app can

@@ -1,8 +1,20 @@
-# SupersEmu — Architecture Options & Spec-Driven Plan (v0.1, for owner review)
+# SupersEmu — Architecture Options & Spec-Driven Plan (v0.2, for owner review)
 
 Status: **DRAFT — awaiting owner decisions (Section 9).** No code written yet. Builds on `RETRO_GAMING_PLATFORM_DEVIN_PRD.md`.
 
 Legend: **[Verified]** = checked today against a primary source. **[Inference]** = my engineering judgement, to be proven in the M0 spike.
+
+## v0.2 change: Plex-style home server (ADR 0004, proposed)
+
+- Chad's Mac mini runs **SupersEmu Server**. He imports and organises games once, invites fewer than
+  10 friends, and chooses which games each person sees.
+- Friends sign in with an invite. Games download to their Mac/iPhone/iPad and **run locally**. Saves,
+  favourites and history are private per user and sync to the server.
+- LAN and remote (Tailscale) access from Phase 1. Server starts at boot. HTTP API + `supersemu` CLI
+  for bots such as OpenClaw.
+- Two phases only, no game streaming. Google Drive is no longer how users get games (ADR 0003 superseded).
+- Details: `docs/specs/server.md`. UI direction: `docs/specs/ui-direction.md`. Sections 2, 4 and 8
+  below are updated; the rest of v0.1 still stands.
 
 ---
 
@@ -45,7 +57,7 @@ SwiftUI app (macOS 15+, iOS/iPadOS 18+)        ← one multiplatform target
  ├─ Library (SQLite via GRDB)                   fast queries for 5k+ games, migrations
  ├─ Import pipeline (Swift actors)              unzip/7z → hash → identify → group discs → art
  ├─ Save coordinator                            native SRAM, autosave ring, manual slots
- ├─ Sync engine  → CloudProvider protocol       GoogleDriveProvider | iCloudProvider
+ ├─ Server client (pairing, library, downloads, per-user save sync)  → SupersEmu Server on the Mac mini
  ├─ Controllers (Apple GameController)          8BitDo etc., per-console/per-game maps
  └─ EmulatorHost (C/ObjC++)                     libretro frontend, Metal video, AVAudioEngine audio
       └─ Bundled, code-signed cores (.framework per core)
@@ -81,30 +93,10 @@ Licences **[Verified]** from libretro-core-info today. iOS arm64 builds **[Verif
 
 ---
 
-## 4. Cloud storage — the key product decision
+## 4. Storage and accounts (v0.2)
 
-### What I verified about Google Drive today
-- `drive.file` (non-sensitive, easy) only grants access to files **the app created** or the user **explicitly picked** in Google Picker. **[Verified]**
-- On iOS/macOS, Google Picker opens in the **system browser**, not inside the app, and "only the `drive.file` scope is permitted" for that flow. **[Verified]**
-- Full `drive` scope is **restricted**: needs Google verification + security assessment for a public app; "Backup and sync" apps are an allowed category. **[Verified]**
-- An OAuth app left in **Testing** mode has tokens that **expire every 7 days** → user re-signs in weekly. **[Verified]** For personal use we'd publish the OAuth app to "In production / unverified" (warning screen, ≤100 users) — behaviour to be confirmed in M0. **[Inference]**
-- Drive push notifications need a public HTTPS webhook; phones can't receive them → we sync on launch/foreground/periodic. **[PRD, cited]**
-
-### Options
-
-| | G1. Drive, `drive.file` | G2. Drive, full `drive` scope | G3. **iCloud Drive first**, Drive later |
-|---|---|---|---|
-| Sign-in | Google sign-in | Google sign-in + "unverified app" warning | **None** — uses the Apple ID already on the device |
-| Drop ROMs into a folder from a browser / Drive app | ❌ app can't see files it didn't create unless picked | ✅ | ✅ via Files app / Finder (`iCloud Drive/SupersEmu/Incoming`) |
-| Background sync | We implement it; iOS limits it | Same | **OS does it** (even when app closed) |
-| Friends | Easy (non-sensitive scope) | Hard (verification) | Easy if they're on Apple devices |
-| Storage cost | 15 GB free / Google One | Same | 5 GB free / iCloud+ (50 GB–2 TB) |
-| Requires Apple Developer Program | No (but you need it anyway for devices) | No | **Yes** (iCloud entitlement) |
-| Build effort | Medium | Medium | **Low** |
-
-**My recommendation:** keep the `CloudProvider` abstraction either way. If your ROM library already lives in Google Drive or you want non-Apple portability, pick **G2 for personal use** (full scope, unverified prod app) and add G1 mode for friends later. If not, **G3 (iCloud) is the more "just works" option** and gets cross-device sync working sooner.
-
----
+Replaced by the home-server model: see ADR 0004 and `docs/specs/server.md`. The v0.1 Google Drive
+analysis lives on in `docs/specs/google-drive.md` (superseded) for a possible Phase 2 backup target.
 
 ## 5. Saves & resume design (data safety first)
 
@@ -136,27 +128,26 @@ Each milestone: spec docs → implementation → tests → demo video/screens �
 
 | Milestone | Scope | Exit criteria |
 |---|---|---|
-| **M0 — Decision gate + spike** | Repo, ADRs, specs; SwiftUI → libretro host → SNES homebrew plays on Mac + iPhone sim; save/load state; return to library. Second spike: N64 test ROM FPS. Cloud auth spike for chosen provider | You approve architecture; spike video; measured numbers |
-| **M1 — Local library, "easy" consoles** | Netflix-style home/shelves/detail/search; local import; SNES, GB, GBC, GBA, Genesis; native saves + manual states; controller auto-map; Mac + iPhone + iPad | You play a game on your iPhone from a TestFlight/dev build |
-| **M2 — Cloud library + cross-device saves** | Provider, manifest, upload/download queue, autosave ring, Continue on another device, conflict branches | Quit on Mac → Continue on iPhone; airplane-mode + conflict tests |
-| **M3 — Smart import + disc systems** | Bulk messy import, hash ID, art, Review Needed; PS1 + Sega CD multi-disc + .m3u; BIOS checker | 200-file messy import fixture; 3-disc PS1 test set |
-| **M4 — Hard consoles + controller polish** | N64, 32X; per-game remapping UI; touch overlays | Per-console device test logs |
-| **M5 — Polish + friend-ready** | Visual polish, accessibility, onboarding, account isolation, docs | Someone new onboards with no help |
-| **Phase 2** | Dreamcast (only if no-JIT perf is acceptable), second cloud provider, Apple TV, shaders | — |
+| **M0 — Decision gate + spike** | Done: ADRs, specs, SNES on Mac + iPhone sim, save/load, N64 iOS build check | Merged (#1–#3) |
+| **M1 — Local player, "easy" consoles** | Netflix-style home/shelves/detail; local import (dev path); SNES, GB, GBC, GBA, Genesis; native saves + manual states; controllers; Mac + iPhone + iPad | You play a game on your iPhone from a TestFlight/dev build |
+| **M2 — Home server** | Server spike on the Mac mini, then daemon at boot, admin mode, server-side import, invites + device tokens, per-user permissions, LAN + Tailscale, downloads/cache, per-user save sync, CLI + scoped tokens | A friend on cellular signs in from an invite, plays, and their save shows on their iPad; your saves untouched |
+| **M3 — Smart import + disc systems** | Bulk messy import on the server, hash ID, art, Review Needed; PS1 + Sega CD multi-disc + .m3u; BIOS checker | 200-file messy import fixture; 3-disc PS1 test set |
+| **M4 — Hard consoles + controller polish** | N64, 32X; Retrolink/generic HID on Mac; per-game remapping UI | Per-console device test logs |
+| **Phase 2** | Polish: webhooks, OpenClaw skill on ClawHub, server backups, health/offline UX; Dreamcast if no-JIT speed allows; Apple TV; shaders | — |
 
-**Parallelism (per your preference):** M0 is a single blocking "Wave 0". From M1 on, independent tracks (UI shell, import pipeline, sync engine, controllers, per-console core bring-up) can run as parallel Devin sessions consolidated into one PR per milestone.
+**Parallelism (per your preference):** M0 is a single blocking "Wave 0". From M1 on, independent tracks (UI shell, server + API, import pipeline, client sync, controllers, per-console core bring-up) can run as parallel Devin sessions consolidated into one PR per milestone.
 
-## 9. Decisions needed from you
+## 9. Decisions needed from you (v0.2)
 
-1. **Architecture:** approve B (custom libretro host + SwiftUI)?
-2. **Cloud for MVP:** G2 Google Drive full-scope / G1 Google Drive `drive.file` / G3 iCloud first?
-3. **Audience:** just you (private repo), you + friends (TestFlight, open-source GPLv3), or public App Store eventually?
-4. **Apple Developer Program:** enrolled? ($99/yr; needed for TestFlight, iCloud, and installs that don't expire every 7 days.)
-5. **Repo:** please create an empty private repo (e.g. `Chadillac6/SupersEmu`) and add it to the Devin GitHub app — I can't create repos.
-6. **Your hardware:** which iPhone / iPad / Mac models, and which controller(s) (8BitDo SN30 Pro? which mode?).
-7. **Library size:** roughly how many games, and how many PS1 discs? (Drives storage plan and scan design.)
-8. **Minimum OS:** OK with iOS/iPadOS 18+ and macOS 15+ (my default)?
-9. **Name:** keep "SupersEmu"?
+Settled in v0.1: architecture B, GPLv3 + TestFlight for friends, repo, hardware, name SupersEmu.
+
+Open for the home server (defaults in bold, change any):
+1. Approve ADR 0004 (Mac mini server, local play, per-user saves, two phases, no streaming)?
+2. Remote access: **Tailscale with machine sharing** / Cloudflare Tunnel / LAN only at first.
+3. Admin: **one Mac app with Server and Player modes** / a separate admin app / a web admin page.
+4. Sign-in: **invite link + per-device token** / Sign in with Apple / username + password.
+5. Mac mini details: macOS version and storage size (sets the minimum macOS for the server).
+6. UI direction answers (`docs/specs/ui-direction.md`), coming from the side chat.
 
 ## 10. What I can and can't verify from my environment
 
