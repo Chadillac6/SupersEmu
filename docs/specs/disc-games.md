@@ -53,6 +53,7 @@ Verified by `(cd Server && swift test)` with generated fixtures (`DiscImportTest
 - Junk (`.txt`, `.nfo`, images, `.sfv`/`.md5`, `.sub`/`.sbi` sidecars, `.DS_Store`, `._*`) is skipped silently. Patches (`.ips`/`.bps`/`.ups`/`.xdelta`) are reported as unsupported.
 - BIOS: `KnownBIOS.all` matches by MD5 (+ size). Only files with a known BIOS size or name are MD5'd. A matching file is stored at `bios/<sha256>/<canonical name>` and listed in `ImportReport.bios`. A file named like a known BIOS but with a different hash is recorded as wrong-hash and is neither stored nor served.
 - Routes (`library:read`): `GET /v1/bios`, `GET /v1/bios/status` (`[BIOSStatus]`: present / missing / wrong-hash), and `GET /v1/bios/{sha256}` (Range/ETag/If-Range via the same helper as game files). Client: `APIClient.bios()`, `biosStatus()`, `biosData(sha256:)`, `biosPath(sha256:)`. CLI: `supersemu bios status [--json]`.
+- Access (Phase 1 decision): any paired client with `library:read` can list and download every verified BIOS, because Phase 1 has one user. Phase 2 open question: whether invited users get BIOS sync, and whether it is limited per user.
 
 Not verified: real PS1/Sega CD dumps and real BIOS files (only synthetic headers and a synthetic hash table are tested). The `KnownBIOS` MD5s are copied from the libretro docs and were not checked against real files. `.sbi` LibCrypt sidecars are skipped instead of being stored with the disc.
 
