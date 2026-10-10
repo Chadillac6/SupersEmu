@@ -65,6 +65,7 @@ Player devices (Mac, iPhone, iPad)
  ├─ library.sqlite          games, files, hashes, metadata, artwork refs, disc groups, permissions
  ├─ games/<sha256>/…        imported game files (content-addressed, originals never modified)
  ├─ artwork/…
+ ├─ metadata/               pinned libretro-database DATs (docs/specs/metadata-and-artwork.md)
  └─ users/<user-id>/
      ├─ saves/<game>/…      native saves, auto states, manual states (immutable, content-hashed)
      └─ profile.json        favourites, history, per-user settings

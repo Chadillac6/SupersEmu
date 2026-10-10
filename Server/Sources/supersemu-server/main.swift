@@ -31,6 +31,8 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
         var tailscaleHost: String?
         @Flag(help: "Don't advertise _supersemu._tcp over Bonjour.")
         var noBonjour = false
+        @Flag(help: "Don't match games against libretro-database or download artwork.")
+        var noMetadata = false
         @Flag(help: "Create the admin user and local admin token on first run if missing.")
         var bootstrap = false
         @Option(help: "Admin display name used by --bootstrap.")
@@ -54,6 +56,7 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
             }
             runOptions.tailscaleHost = tailscaleHost
             runOptions.bonjour = !noBonjour
+            runOptions.metadata = !noMetadata
             try await ServerLauncher.run(store: store, options: runOptions)
         }
     }

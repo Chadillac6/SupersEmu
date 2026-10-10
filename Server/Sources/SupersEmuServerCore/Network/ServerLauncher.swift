@@ -18,6 +18,8 @@ public struct ServerRunOptions: Sendable {
     /// Tailscale MagicDNS name, e.g. `mac-mini.tail1234.ts.net`, added after the LAN URLs.
     public var tailscaleHost: String?
     public var bonjour = true
+    /// Background libretro-database matching and thumbnail downloads after imports.
+    public var metadata = true
 
     public init() {}
 }
@@ -39,8 +41,10 @@ public enum ServerLauncher {
             ? LocalNetwork.advertisedURLs(scheme: scheme, port: options.port, tailscaleHost: options.tailscaleHost)
             : options.advertiseURLs
         let environment = PairingEnvironment(urls: urls, certificateSHA256: pin)
+        let metadata = options.metadata ? MetadataService(store: store) : nil
+        metadata?.startPeriodicRetry()
         let application = Application(
-            router: buildRouter(store: store), server: server,
+            router: buildRouter(store: store, metadata: metadata), server: server,
             configuration: .init(address: .hostname(options.hostname, port: options.port), serverName: "SupersEmu"),
             onServerRunning: onServerRunning)
         return (application, environment)
