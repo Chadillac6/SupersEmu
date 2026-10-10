@@ -50,24 +50,30 @@ struct PlayerView: View {
             } label: {
                 Label("Library", systemImage: "chevron.left")
             }
+            .fixedSize()
             .accessibilityIdentifier("exit-game")
             Spacer()
             Text(session.status)
                 .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.tail)
                 .foregroundStyle(.white.opacity(0.7))
                 .accessibilityIdentifier("session-status")
             Spacer()
             Button { session.saveManualState() } label: {
                 Label("Save", systemImage: "square.and.arrow.down")
             }
+            .fixedSize()
             .accessibilityIdentifier("save-state")
             Button { session.loadManualState() } label: {
                 Label("Load", systemImage: "arrow.counterclockwise")
             }
+            .fixedSize()
             .disabled(!session.hasManualState)
             .accessibilityIdentifier("load-state")
         }
         .buttonStyle(.borderless)
+        .lineLimit(1)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.black)
