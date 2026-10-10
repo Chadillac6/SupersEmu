@@ -92,12 +92,12 @@ public struct SaveStore: Sendable {
                              arguments: [revisionID, userID, gameID])
         }
         guard let row else { throw HTTPError(.notFound, message: "Save not found") }
-        if let deviceID, !(row["detached"] as Bool) {
-            try store.db.write { try Self.recordBase(db: $0, userID: userID, deviceID: deviceID, row: row) }
-        }
         let data = try Data(contentsOf: store.paths.root.appendingPathComponent(row["stored_path"] as String))
         guard Self.sha256(data) == row["sha256"] as String else {
             throw HTTPError(.internalServerError, message: "Stored save failed its integrity check")
+        }
+        if let deviceID, !(row["detached"] as Bool) {
+            try store.db.write { try Self.recordBase(db: $0, userID: userID, deviceID: deviceID, row: row) }
         }
         return data
     }
@@ -199,7 +199,14 @@ public struct SaveStore: Sendable {
             ORDER BY rowid DESC LIMIT -1 OFFSET ?
             """, arguments: [userID, gameID, userID, gameID, userID, gameID, configuration.autoRevisionsKept - 1])
         for row in rows {
-            try db.execute(sql: "DELETE FROM save_revisions WHERE id = ?", arguments: [row["id"] as String])
+            // Re-parent children onto the pruned revision's parent so every kept revision still traces back
+            // through `parentID` to the bases it descends from.
+            let id: String = row["id"]
+            try db.execute(sql: """
+                UPDATE save_revisions SET parent_id = (SELECT parent_id FROM save_revisions WHERE id = ?)
+                WHERE parent_id = ? AND user_id = ? AND game_id = ?
+                """, arguments: [id, id, userID, gameID])
+            try db.execute(sql: "DELETE FROM save_revisions WHERE id = ?", arguments: [id])
         }
         return rows.map { $0["stored_path"] }
     }
@@ -223,7 +230,7 @@ public struct SaveStore: Sendable {
             id: row["id"], gameID: row["game_id"], kind: SaveKind(rawValue: row["kind"]) ?? .manual, slot: row["slot"],
             parentID: row["parent_id"], sha256: row["sha256"], size: row["size"], coreID: row["core_id"],
             coreVersion: row["core_version"], deviceID: row["device_id"], createdAt: row["created_at"], isHead: row["is_head"],
-            deviceName: row["device_name"])
+            deviceName: row["device_name"], isBranchCopy: row["detached"])
     }
 
     public static func sha256(_ data: Data) -> String {

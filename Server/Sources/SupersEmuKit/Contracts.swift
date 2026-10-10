@@ -155,11 +155,15 @@ public struct SaveRevision: Codable, Sendable, Equatable, Identifiable {
     public var isHead: Bool
     /// Name of the uploading device, for "A newer save from <device> is available". Additive (save sync track).
     public var deviceName: String?
+    /// True for a copy kept only as a branch (`branch=1`); it never becomes a head. Additive (save sync track).
+    public var isBranchCopy: Bool?
     public init(id: String, gameID: String, kind: SaveKind, slot: String, parentID: String?, sha256: String, size: Int64,
-                coreID: String, coreVersion: String, deviceID: String?, createdAt: Date, isHead: Bool, deviceName: String? = nil) {
+                coreID: String, coreVersion: String, deviceID: String?, createdAt: Date, isHead: Bool, deviceName: String? = nil,
+                isBranchCopy: Bool? = nil) {
         self.id = id; self.gameID = gameID; self.kind = kind; self.slot = slot; self.parentID = parentID; self.sha256 = sha256
         self.size = size; self.coreID = coreID; self.coreVersion = coreVersion; self.deviceID = deviceID; self.createdAt = createdAt; self.isHead = isHead
         self.deviceName = deviceName
+        self.isBranchCopy = isBranchCopy
     }
 }
 

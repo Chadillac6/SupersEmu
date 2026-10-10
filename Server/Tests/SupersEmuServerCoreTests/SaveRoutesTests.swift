@@ -265,4 +265,33 @@ final class SaveRoutesTests: XCTestCase {
             _ = try await self.upload(client, token: self.iPhone.token, coreVersion: String(repeating: "1", count: 129), body: "s", expect: .badRequest)
         }
     }
+
+    func testRetentionKeepsAncestryFromAnAwayDevicesBase() async throws {
+        try await app(SaveConfiguration(autoRevisionsKept: 2)).test(.router) { client in
+            let a = try await self.upload(client, token: self.iPhone.token, body: "a")!.revision
+            var head = a.id
+            for body in ["b", "c", "d", "e"] { head = try await self.upload(client, token: self.mac.token, parent: head, body: body)!.revision.id }
+            let listed = try await self.list(client, token: self.iPhone.token)
+            var byID: [String: SaveRevision] = [:]
+            for revision in listed { byID[revision.id] = revision }
+            var cursor = byID[head]
+            var reachedA = false
+            while let current = cursor {
+                if current.id == a.id { reachedA = true; break }
+                cursor = current.parentID.flatMap { byID[$0] }
+            }
+            XCTAssertTrue(reachedA, "the head still traces back to the iPhone's base after pruning")
+            XCTAssertLessThan(listed.count, 5)
+            // A corrupt download doesn't move the device's base.
+            let headRow = try await self.store.db.read { try String.fetchOne($0, sql: "SELECT stored_path FROM save_revisions WHERE id = ?", arguments: [head])! }
+            try Data("corrupt".utf8).write(to: self.store.paths.root.appendingPathComponent(headRow))
+            _ = try await client.execute(uri: "/v1/saves/\(self.game)/revisions/\(head)", method: .get, headers: self.bearer(self.iPhone.token)) { response in
+                XCTAssertEqual(response.status, .internalServerError)
+            }
+            let base = try await self.store.db.read {
+                try String.fetchOne($0, sql: "SELECT revision_id FROM save_device_bases WHERE device_id = ? AND game_id = ?", arguments: [self.iPhone.deviceID, self.game])
+            }
+            XCTAssertEqual(base, a.id)
+        }
+    }
 }

@@ -258,10 +258,12 @@ public actor SaveSyncEngine {
             }
             if response.branched, line.conflict == nil, !item.detached {
                 // We uploaded on top of a stale base: another device moved this line while we were offline.
-                let others = (try? await client.saves(gameID: item.line.gameID).revisions) ?? []
-                line.conflict = others.last {
-                    $0.kind == item.line.kind && $0.slot == item.line.slot && $0.id != response.revision.id
-                        && $0.deviceID != response.revision.deviceID
+                // The conflicting save is the head just before ours (listing is in upload order; branch copies never head).
+                let lineHistory = ((try? await client.saves(gameID: item.line.gameID).revisions) ?? []).filter {
+                    $0.kind == item.line.kind && $0.slot == item.line.slot && $0.isBranchCopy != true
+                }
+                if let index = lineHistory.firstIndex(where: { $0.id == response.revision.id }), index > 0 {
+                    line.conflict = lineHistory[index - 1]
                 }
             }
             state.lines[key] = line
