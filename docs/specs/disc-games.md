@@ -48,7 +48,8 @@ This spec is the Wave 0 contract every Milestone 2 track builds on.
   Built: the host stores the legacy or EXT callbacks (a NULL interface clears them; they are reset on load and shutdown) and reports interface version 1.
   `insertDisk(_:error:)` opens the tray (unless it is already open), sets the index, and always closes the tray again, so a failed swap leaves the previous disc running. Labels come from `get_image_label` (EXT only).
   Verified by `Tests/HostTests/SEDiskControlTests.mm` against a stub three-disc core (`SELibretroHostRegisterCore` in `Host/SELibretroHost+Testing.h`).
-  **Unverified:** swapping with a real disc core (PS1/Sega CD cores land in parallel tracks).
+  Also verified with Beetle PSX: `SEBeetlePSXTests.testM3UPlaylistExposesBothDiscsAndSwaps` loads an `.m3u` of two synthetic cues (`diskCount` 2) and swaps to disc 2.
+  **Unverified:** swapping with a real PS1/Sega CD disc, and Sega CD swapping in general.
 - Player: the "Swap disc" button (Command-D, or L + R + Select on a controller) pauses the game and opens a "Disc N of M" picker.
   In the picker, up/down or the d-pad moves, Return / Start / the bottom face button inserts, and Esc / Select / the right face button cancels. Number keys 1-9 pick a disc directly.
   `SUPERSEMU_DEBUG_DISC_COUNT=N` (Debug builds only) fakes an N-disc game so the UI can be captured without a disc core.

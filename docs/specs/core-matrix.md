@@ -137,5 +137,5 @@ Not yet verified: running on a real iPhone/iPad, controller input, and full-spee
 device for any core. Sega CD: booting a real disc with a real BIOS, CHD images (libchdr is compiled
 but no CHD was loaded: no `chdman` here), OGG/WAV audio tracks and multi-disc `.m3u`. 32X: audio
 output and commercial-game compatibility. PS1: any commercial disc, a real Sony
-BIOS, `.chd`/`.pbp`/`.m3u` loading, audio output, memory cards and multi-disc swap. On macOS (arm64,
+BIOS, `.chd`/`.pbp` loading (`.m3u` is verified only with two synthetic cues, including a disc swap), audio output, memory cards and multi-disc swap. On macOS (arm64,
 software renderer) Beetle PSX ran 1800 OpenBIOS frames in about 2.5 s, roughly 12x real time.

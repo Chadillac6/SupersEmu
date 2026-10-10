@@ -100,6 +100,26 @@
     XCTAssertNil(SELibretroHost.activeHost);
 }
 
+/// An .m3u of two cues exposes both discs through the host's disk-control API, and swapping works.
+- (void)testM3UPlaylistExposesBothDiscsAndSwaps {
+    [self syntheticDiscNamed:@"Game (Disc 1)" sectors:300 writeTrack:YES];
+    [self syntheticDiscNamed:@"Game (Disc 2)" sectors:300 writeTrack:YES];
+    NSURL *m3u = [_tempDirectory URLByAppendingPathComponent:@"Game.m3u"];
+    [@"Game (Disc 1).cue\nGame (Disc 2).cue\n" writeToURL:m3u atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSError *error = nil;
+    SELibretroHost *host = [self hostForGame:m3u system:[self emptySystemDirectory] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:60];
+    XCTAssertEqual(host.diskCount, 2);
+    XCTAssertEqual(host.currentDisk, 0);
+    XCTAssertTrue([host insertDisk:1 error:&error], @"%@", error);
+    XCTAssertEqual(host.currentDisk, 1);
+    [host runFrames:60];
+    [host shutdown];
+    XCTAssertNil(SELibretroHost.activeHost);
+}
+
 /// need_fullpath cores never read the image in the host, but a missing file is still an error.
 - (void)testMissingDiscFileIsAnError {
     NSError *error = nil;
