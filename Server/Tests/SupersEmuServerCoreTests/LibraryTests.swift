@@ -451,3 +451,91 @@ final class LibraryTests: XCTestCase {
         }
     }
 }
+
+extension LibraryTests {
+    func testRecognizedReimportLeavesReviewQueue() async throws {
+        let bytes = ROMFixtures.snes(seed: 21)
+        let queued = try await importer.importPaths([try write(bytes, "Puzzle.xyz").path], auth: nil)
+        let id = try XCTUnwrap(queued.needsReview.first?.id)
+
+        let report = try await importer.importPaths([try write(bytes, "Puzzle_Game.sfc").path], auth: nil)
+        XCTAssertEqual(report.imported.map(\.title), ["Puzzle Game"])
+        XCTAssertEqual(report.needsReview, [])
+        XCTAssertEqual(try importer.reviewQueue(), [])
+        let gameDir = store.paths.games.appendingPathComponent(id)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: gameDir.path), ["Puzzle_Game.sfc"])
+        let storedPath = try await store.db.read { try String.fetchOne($0, sql: "SELECT stored_path FROM game_files WHERE game_id = ?", arguments: [id]) }
+        XCTAssertEqual(storedPath, "games/\(id)/Puzzle_Game.sfc")
+
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/games/\(id)", method: .get, headers: self.auth(self.adminToken)) {
+                XCTAssertEqual($0.status, .ok)
+                XCTAssertEqual(try self.decode(GameDetail.self, $0).game.system, .snes)
+            }
+        }
+    }
+
+    func testDeflateEntryWithNoCompressedBytesIsCorrupt() throws {
+        func le16(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF)] }
+        func le32(_ v: Int) -> [UInt8] { le16(v & 0xFFFF) + le16(v >> 16 & 0xFFFF) }
+        let name = Array("Game.sfc".utf8)
+        let local = le32(0x0403_4B50) + le16(20) + le16(0) + le16(8) + le32(0) + le32(0) + le32(0) + le32(0x8000)
+            + le16(name.count) + le16(0) + name
+        let central = le32(0x0201_4B50) + le16(20) + le16(20) + le16(0) + le16(8) + le32(0) + le32(0) + le32(0) + le32(0x8000)
+            + le16(name.count) + le16(0) + le16(0) + le16(0) + le16(0) + le32(0) + le32(0) + name
+        let eocd = le32(0x0605_4B50) + le16(0) + le16(0) + le16(1) + le16(1) + le32(central.count) + le32(local.count) + le16(0)
+        let url = try write(Data(local + central + eocd), "empty-deflate.zip")
+
+        let archive = try ZipArchive(url: url)
+        XCTAssertThrowsError(try archive.data(for: archive.entries[0])) {
+            XCTAssertEqual($0 as? ZipArchive.ZipError, .corrupt("Game.sfc"))
+        }
+    }
+
+    func testArtworkPathsCannotEscapeArtworkDirectory() async throws {
+        let artwork = ArtworkStore(store: store)
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        XCTAssertThrowsError(try artwork.setCover(gameID: "../escape", data: png, fileExtension: "png"))
+        XCTAssertThrowsError(try artwork.setCover(gameID: "nope", data: png, fileExtension: "png"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.paths.root.appendingPathComponent("escape").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.paths.artwork.appendingPathComponent("nope").path))
+
+        let id = try await importer.importPaths([try write(ROMFixtures.snes(seed: 22), "Escape.sfc").path], auth: nil).imported[0].id
+        let outside = try write(Data("secret".utf8), "secret.png")
+        let linkDir = store.paths.artwork.appendingPathComponent(id, isDirectory: true)
+        try FileManager.default.createDirectory(at: linkDir, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: linkDir.appendingPathComponent("cover.png"), withDestinationURL: outside)
+
+        for cover in [outside.path, "artwork/\(id)/cover.png", "library.sqlite"] {
+            try await store.db.write { try $0.execute(sql: "UPDATE games SET cover_artwork = ? WHERE id = ?", arguments: [cover, id]) }
+            try await app().test(.router) { client in
+                try await client.execute(uri: "/v1/games/\(id)/artwork/cover", method: .get, headers: self.auth(self.adminToken)) {
+                    XCTAssertEqual($0.status, .notFound, cover)
+                }
+            }
+        }
+    }
+
+    func testReplacedCoverChangesETag() async throws {
+        let id = try await importer.importPaths([try write(ROMFixtures.snes(seed: 23), "Cover.sfc").path], auth: nil).imported[0].id
+        let artwork = ArtworkStore(store: store)
+        try artwork.setCover(gameID: id, data: Data([1, 2, 3]), fileExtension: "png")
+        try await app().test(.router) { client in
+            let first = try await client.execute(uri: "/v1/games/\(id)/artwork/cover", method: .get, headers: self.auth(self.adminToken)) { response in
+                XCTAssertEqual(response.headers[.cacheControl], "private, no-cache")
+                return try XCTUnwrap(response.headers[.eTag])
+            }
+            var conditional = self.auth(self.adminToken)
+            conditional[.ifNoneMatch] = first
+            try await client.execute(uri: "/v1/games/\(id)/artwork/cover", method: .get, headers: conditional) {
+                XCTAssertEqual($0.status, .notModified)
+            }
+            try artwork.setCover(gameID: id, data: Data([4, 5, 6, 7]), fileExtension: "png")
+            try await client.execute(uri: "/v1/games/\(id)/artwork/cover", method: .get, headers: conditional) {
+                XCTAssertEqual($0.status, .ok)
+                XCTAssertNotEqual($0.headers[.eTag], first)
+                XCTAssertEqual(Data(buffer: $0.body), Data([4, 5, 6, 7]))
+            }
+        }
+    }
+}

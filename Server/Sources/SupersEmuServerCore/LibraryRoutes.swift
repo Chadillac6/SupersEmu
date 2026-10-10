@@ -1,7 +1,9 @@
+import CryptoKit
 import Foundation
 import GRDB
 import HTTPTypes
 import Hummingbird
+import NIOCore
 import SupersEmuKit
 
 // Track: server library. GET /v1/games/{id}, /v1/games/{id}/files/{file} (Range), artwork.
@@ -58,7 +60,7 @@ func registerLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: Server
         }
     }
 
-    group.get("games/:id/artwork/cover") { _, context -> Response in
+    group.get("games/:id/artwork/cover") { request, context -> Response in
         let auth = try context.caller()
         try auth.require(.libraryRead)
         let id = try context.parameters.require("id")
@@ -67,8 +69,15 @@ func registerLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: Server
             return try String.fetchOne(db, sql: "SELECT cover_artwork FROM games WHERE id = ? AND needs_review = 0", arguments: [id])
         }
         guard let url = artwork.coverFile(cover: cover) else { throw HTTPError(.notFound, message: "No cover artwork") }
-        let headers: HTTPFields = [.contentType: ArtworkStore.contentType(for: url), .cacheControl: "private, max-age=86400"]
-        return Response(status: .ok, headers: headers, body: try await fileIO.loadFile(path: url.path, context: context))
+        // Covers can be replaced in place (M2 scraping), so clients revalidate with the content-hash ETag.
+        let data = try Data(contentsOf: url)
+        let eTag = "\"" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() + "\""
+        var headers: HTTPFields = [.eTag: eTag, .cacheControl: "private, no-cache"]
+        let ifNoneMatch = request.headers[values: .ifNoneMatch].flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
+        if ifNoneMatch.contains(eTag) || ifNoneMatch.contains("*") { return Response(status: .notModified, headers: headers) }
+        headers[.contentType] = ArtworkStore.contentType(for: url)
+        headers[.contentLength] = String(data.count)
+        return Response(status: .ok, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: data)))
     }
 }
 

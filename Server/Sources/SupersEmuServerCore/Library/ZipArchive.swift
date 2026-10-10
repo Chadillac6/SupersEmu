@@ -101,12 +101,13 @@ public struct ZipArchive {
             output = compressed
         case 8:
             guard entry.uncompressedSize > 0 else { output = Data(); break }
+            guard !compressed.isEmpty else { throw ZipError.corrupt(entry.filename) }
             var buffer = Data(count: entry.uncompressedSize)
-            let written = buffer.withUnsafeMutableBytes { dst in
-                compressed.withUnsafeBytes { src in
-                    compression_decode_buffer(
-                        dst.bindMemory(to: UInt8.self).baseAddress!, entry.uncompressedSize,
-                        src.bindMemory(to: UInt8.self).baseAddress!, compressed.count, nil, COMPRESSION_ZLIB)
+            let written = buffer.withUnsafeMutableBytes { dst -> Int in
+                compressed.withUnsafeBytes { src -> Int in
+                    guard let dstBase = dst.bindMemory(to: UInt8.self).baseAddress,
+                          let srcBase = src.bindMemory(to: UInt8.self).baseAddress else { return -1 }
+                    return compression_decode_buffer(dstBase, entry.uncompressedSize, srcBase, compressed.count, nil, COMPRESSION_ZLIB)
                 }
             }
             guard written == entry.uncompressedSize else { throw ZipError.corrupt(entry.filename) }

@@ -179,10 +179,11 @@ public final class LibraryImporter: @unchecked Sendable {
 
         if let existing = try store.db.read({ db in
             try Row.fetchOne(db, sql: """
-                SELECT g.needs_review, g.review_reason, f.filename FROM games g JOIN game_files f ON f.game_id = g.id WHERE g.id = ? LIMIT 1
+                SELECT g.needs_review, g.review_reason, f.filename, f.stored_path FROM games g JOIN game_files f ON f.game_id = g.id WHERE g.id = ? LIMIT 1
                 """, arguments: [sha])
         }) {
             if (existing["needs_review"] as Int) == 1 {
+                if let system { return try promoteFromReview(sha: sha, system: system, staged: staged, filename: filename, size: size, oldStoredPath: existing["stored_path"]) }
                 return .review(ReviewItem(id: sha, filename: existing["filename"], reason: existing["review_reason"] ?? "Needs review"))
             }
             return .duplicate
@@ -206,6 +207,35 @@ public final class LibraryImporter: @unchecked Sendable {
         }
         if let reviewReason { return .review(ReviewItem(id: sha, filename: storedName, reason: reviewReason)) }
         return .imported(GameSummary(id: sha, title: title, system: system!, year: nil, genre: nil, coverPath: nil, totalSize: size))
+    }
+
+    /// Same bytes seen again under a name that detects cleanly: take the queued game out of review and store it under the new name.
+    func promoteFromReview(sha: String, system: SystemID, staged: URL, filename: String, size: Int64, oldStoredPath: String) throws -> Outcome {
+        let storedName = Self.safeFilename(filename)
+        let newStoredPath = "games/\(sha)/\(storedName)"
+        let destination = store.paths.root.appendingPathComponent(newStoredPath)
+        let moved = newStoredPath != oldStoredPath
+        if moved {
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
+            try FileManager.default.moveItem(at: staged, to: destination)
+        }
+        let title = TitleNormalizer.title(fromFilename: storedName)
+        do {
+            try store.db.write { db in
+                try db.execute(sql: "UPDATE games SET title = ?, system = ?, needs_review = 0, review_reason = NULL WHERE id = ?",
+                               arguments: [title, system.rawValue, sha])
+                try db.execute(sql: "UPDATE game_files SET filename = ?, stored_path = ? WHERE game_id = ?",
+                               arguments: [storedName, newStoredPath, sha])
+            }
+        } catch {
+            if moved { try? FileManager.default.removeItem(at: destination) }
+            throw error
+        }
+        if moved, !oldStoredPath.split(separator: "/").contains("..") {
+            try? FileManager.default.removeItem(at: store.paths.root.appendingPathComponent(oldStoredPath))
+        }
+        return .imported(GameSummary(id: sha, title: title, system: system, year: nil, genre: nil, coverPath: nil, totalSize: size))
     }
 
     func moveToImported(_ source: URL, incoming: URL, day: String) throws {
