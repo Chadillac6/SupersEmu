@@ -541,6 +541,9 @@ extension LibraryTests {
                 XCTAssertNotEqual($0.headers[.eTag], first)
                 XCTAssertEqual(Data(buffer: $0.body), Data([4, 5, 6, 7]))
             }
+            let files = try FileManager.default.contentsOfDirectory(atPath: self.store.paths.artwork.appendingPathComponent(id).path)
+            XCTAssertEqual(files.count, 1, "old cover removed")
+            XCTAssertTrue(files[0].hasPrefix("cover-") && files[0].hasSuffix(".png"))
         }
     }
 }

@@ -1,7 +1,8 @@
+import CryptoKit
 import Foundation
 import GRDB
 
-/// Artwork lives under `artwork/<gameID>/`; `games.cover_artwork` holds the path relative to the data dir.
+/// Artwork lives under `artwork/<gameID>/cover-<sha256>.<ext>`; `games.cover_artwork` holds the path relative to the data dir.
 /// M2 scraping calls `setCover` (the hook); serving only reads what's recorded here.
 public struct ArtworkStore: Sendable {
     let store: ServerStore
@@ -21,12 +22,26 @@ public struct ArtworkStore: Sendable {
         }
         let directory = store.paths.artwork.appendingPathComponent(gameID, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent("cover.\(ext)")
+        // Content-addressed name: a path never changes bytes, so the ETag (the hash) always matches what is streamed.
+        let name = "cover-\(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()).\(ext)"
+        let url = directory.appendingPathComponent(name)
         try data.write(to: url, options: .atomic)
         try store.db.write { db in
-            try db.execute(sql: "UPDATE games SET cover_artwork = ? WHERE id = ?", arguments: ["artwork/\(gameID)/cover.\(ext)", gameID])
+            try db.execute(sql: "UPDATE games SET cover_artwork = ? WHERE id = ?", arguments: ["artwork/\(gameID)/\(name)", gameID])
+        }
+        let others = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        for other in others where other != name && other.hasPrefix("cover") {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(other))
         }
         return url
+    }
+
+    /// The content hash embedded in a `cover-<sha256>.<ext>` filename, if present.
+    static func contentHash(of url: URL) -> String? {
+        let stem = url.deletingPathExtension().lastPathComponent
+        guard stem.hasPrefix("cover-") else { return nil }
+        let hash = String(stem.dropFirst("cover-".count))
+        return hash.count == 64 && hash.allSatisfy(\.isHexDigit) ? hash : nil
     }
 
     /// The cover file on disk, if one is recorded and present.

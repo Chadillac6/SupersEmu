@@ -66,8 +66,8 @@ func registerLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: Server
             return try String.fetchOne(db, sql: "SELECT cover_artwork FROM games WHERE id = ? AND needs_review = 0", arguments: [id])
         }
         guard let url = artwork.coverFile(cover: cover) else { throw HTTPError(.notFound, message: "No cover artwork") }
-        // Covers can be replaced in place (M2 scraping), so clients revalidate with the content-hash ETag.
-        let eTag = "\"\(try LibraryHTTP.sha256Hex(of: url))\""
+        // Covers can be replaced (M2 scraping), so clients revalidate with the content-hash ETag.
+        let eTag = "\"\(try ArtworkStore.contentHash(of: url) ?? LibraryHTTP.sha256Hex(of: url))\""
         var headers: HTTPFields = [.eTag: eTag, .cacheControl: "private, no-cache"]
         if LibraryHTTP.ifNoneMatch(request, matches: eTag) { return Response(status: .notModified, headers: headers) }
         headers[.contentType] = ArtworkStore.contentType(for: url)
