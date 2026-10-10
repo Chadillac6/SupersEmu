@@ -272,8 +272,11 @@ static __weak SELibretroHost *gActiveHost;
 
     retro_game_info game = {};
     game.path = romURL.fileSystemRepresentation;
-    game.data = romData.bytes;
-    game.size = romData.length;
+    // Disc cores (need_fullpath) open the image themselves; don't hand them hundreds of MB in memory.
+    if (!info.need_fullpath) {
+        game.data = romData.bytes;
+        game.size = romData.length;
+    }
     if (!core->load_game(&game)) {
         core->deinit();
         g.core = nullptr;
