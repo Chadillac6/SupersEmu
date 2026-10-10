@@ -18,4 +18,10 @@ app="${TARGET_BUILD_DIR}/${WRAPPER_NAME}"
 install -m 755 "$bin" "$app/Contents/MacOS/supersemu-server"
 mkdir -p "$app/Contents/Library/LaunchDaemons"
 install -m 644 "${SRCROOT}/Server/Resources/com.chadillac6.supersemu.server.plist" "$app/Contents/Library/LaunchDaemons/"
-codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" --timestamp=none "$app/Contents/MacOS/supersemu-server"
+identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
+sign=(--force --sign "$identity" --timestamp=none)
+# Release signing (scripts/release-mac.sh): notarization needs a secure timestamp and the hardened runtime.
+if [ "${ENABLE_HARDENED_RUNTIME:-NO}" = "YES" ] && [ "$identity" != "-" ]; then
+  sign=(--force --sign "$identity" --timestamp --options runtime)
+fi
+codesign "${sign[@]}" "$app/Contents/MacOS/supersemu-server"
