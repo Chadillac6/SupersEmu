@@ -29,6 +29,21 @@ public actor MetadataService {
                   providers: [LibretroMetadataProvider(catalog: catalog, cacheRoot: store.paths.metadata, http: http)])
     }
 
+    /// What the server runs: libretro and Wikipedia, plus IGDB and SteamGridDB once their keys are set (`MetadataKeys`).
+    public static func standard(store: ServerStore, fetcher: any MetadataFetching = URLSessionMetadataFetcher(),
+                                environment: [String: String] = ProcessInfo.processInfo.environment,
+                                minimumInterval: Duration = .seconds(1)) -> MetadataService {
+        let http = RateLimitedFetcher(fetcher, minimumInterval: minimumInterval)
+        let paths = store.paths
+        let keys: @Sendable () -> MetadataKeys = { MetadataKeys.load(paths: paths, environment: environment) }
+        return MetadataService(store: store, http: http, providers: [
+            LibretroMetadataProvider(cacheRoot: paths.metadata, http: http),
+            WikipediaMetadataProvider(http: http),
+            IGDBMetadataProvider(credentials: { keys().igdb }, http: http),
+            SteamGridDBMetadataProvider(key: { keys()[.steamGridDB] }, http: http),
+        ])
+    }
+
     /// Starts a background pass (or queues one more if a pass is running). Never blocks the caller.
     public nonisolated func enqueue() {
         Task { await self.runUntilIdle() }
@@ -58,7 +73,7 @@ public actor MetadataService {
     @discardableResult
     public func enrichPending() async -> Int {
         var changed = 0
-        for provider in providers {
+        for provider in providers where provider.isEnabled {
             do {
                 changed += try await enrich(with: provider)
             } catch {
@@ -72,11 +87,11 @@ public actor MetadataService {
         let pending = try await store.db.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT g.id, g.system, g.title, j.match_status, j.dataset_version, j.artwork_status, j.artwork_version,
-                    m.provider_ref FROM games g
+                    j.search_title, m.provider_ref FROM games g
                 LEFT JOIN metadata_jobs j ON j.game_id = g.id AND j.provider = ?
                 LEFT JOIN game_metadata m ON m.game_id = g.id AND m.provider = j.provider
                 WHERE g.needs_review = 0 AND (j.game_id IS NULL OR j.match_status IS NULL OR j.dataset_version IS NOT ?
-                    OR (j.match_status = 'matched'))
+                    OR j.match_status IN ('matched', 'unmatched', 'partial'))
                 ORDER BY g.created_at DESC
                 """, arguments: [provider.id, provider.version])
         }
@@ -87,8 +102,10 @@ public actor MetadataService {
             guard let system = SystemID(rawValue: row["system"]), !unavailable.contains(system) else { continue }
             let status: String? = row["match_status"]
             let previousRef: String? = row["provider_ref"]
-            if status == nil || (row["dataset_version"] as String?) != provider.version {
-                let game = MetadataLookup(gameID: id, system: system, title: row["title"], files: try candidateFiles(gameID: id))
+            let title = try await knownTitle(gameID: id, excluding: provider.id) ?? row["title"]
+            let betterTitle = status == "unmatched" && (row["search_title"] as String?) != title
+            if status == nil || status == "partial" || (row["dataset_version"] as String?) != provider.version || betterTitle {
+                let game = MetadataLookup(gameID: id, system: system, title: title, files: try candidateFiles(gameID: id))
                 let result = (try? await provider.lookup(game)) ?? .unavailable
                 switch result {
                 case .unavailable:
@@ -96,15 +113,17 @@ public actor MetadataService {
                     continue
                 case .unmatched:
                     try artwork.removeProviderArtwork(provider: provider.id, gameID: id)
-                    try await recordJob(id, provider, match: "unmatched", clearingRecord: true)
+                    try await recordJob(id, provider, match: "unmatched", searchTitle: title, clearingRecord: true)
                     changed += 1
                     continue
-                case .matched(let record):
+                case .matched(let record), .partial(let record):
+                    var complete = false
+                    if case .matched = result { complete = true }
                     if previousRef != nil, previousRef != record.providerRef {
                         try artwork.removeProviderArtwork(provider: provider.id, gameID: id)
                     }
                     try await store.db.write { db in try record.save(gameID: id, db: db) }
-                    try await recordJob(id, provider, match: "matched", clearingRecord: false)
+                    try await recordJob(id, provider, match: complete ? "matched" : "partial", searchTitle: title, clearingRecord: false)
                     logger.info("\(provider.id) matched \(id.prefix(12)) to \"\(record.providerRef ?? record.title ?? "?")\"")
                     changed += 1
                 }
@@ -117,15 +136,26 @@ public actor MetadataService {
         return changed
     }
 
-    private func recordJob(_ gameID: String, _ provider: any MetadataProvider, match: String, clearingRecord: Bool) async throws {
+    /// The highest-precedence title another provider found, so name-searching providers search the canonical title.
+    private func knownTitle(gameID: String, excluding provider: String) async throws -> String? {
+        try await store.db.read { db in
+            try Row.fetchAll(db, sql: "SELECT provider, title FROM game_metadata WHERE game_id = ? AND provider != ? AND title IS NOT NULL",
+                             arguments: [gameID, provider])
+                .min { MetadataMerge.rank($0["provider"]) < MetadataMerge.rank($1["provider"]) }?["title"]
+        }
+    }
+
+    private func recordJob(_ gameID: String, _ provider: any MetadataProvider, match: String, searchTitle: String,
+                           clearingRecord: Bool) async throws {
         try await store.db.write { db in
             if clearingRecord {
                 try db.execute(sql: "DELETE FROM game_metadata WHERE game_id = ? AND provider = ?", arguments: [gameID, provider.id])
             }
             try db.execute(sql: """
-                INSERT OR REPLACE INTO metadata_jobs (game_id, provider, match_status, artwork_status, dataset_version, updated_at)
-                VALUES (?, ?, ?, NULL, ?, ?)
-                """, arguments: [gameID, provider.id, match, provider.version, Date()])
+                INSERT OR REPLACE INTO metadata_jobs (game_id, provider, match_status, artwork_status, dataset_version,
+                    search_title, updated_at)
+                VALUES (?, ?, ?, NULL, ?, ?, ?)
+                """, arguments: [gameID, provider.id, match, provider.version, searchTitle, Date()])
         }
     }
 

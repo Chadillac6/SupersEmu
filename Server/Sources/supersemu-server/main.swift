@@ -9,7 +9,7 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "supersemu-server",
         abstract: "SupersEmu home server: library, users and saves for the SupersEmu apps.",
-        subcommands: [Run.self, Bootstrap.self],
+        subcommands: [Run.self, Bootstrap.self, Metadata.self],
         defaultSubcommand: Run.self)
 
     struct Options: ParsableArguments {
@@ -73,4 +73,57 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
             print("Admin \(admin.displayName) (\(admin.id)). Local CLI token written to \(options.paths.adminToken.path)")
         }
     }
+
+    struct Metadata: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "API keys for the optional metadata providers (IGDB, SteamGridDB). Kept on this server only.",
+            subcommands: [SetKey.self, ClearKey.self, Status.self])
+
+        struct SetKey: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Save a key. It's read from stdin (hidden when typed), so it never appears in shell history.")
+            @OptionGroup var options: Options
+            @Argument(help: "steamgriddb, igdb-client-id or igdb-client-secret.") var name: MetadataKeys.Name
+
+            func run() throws {
+                let value: String?
+                if isatty(STDIN_FILENO) == 1 {
+                    value = getpass("\(name.rawValue): ").map { String(cString: $0) }
+                } else {
+                    value = readLine(strippingNewline: true)
+                }
+                guard let key = value?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else {
+                    throw ValidationError("No key given.")
+                }
+                try MetadataKeys.set(name, to: key, paths: options.paths)
+                print("Saved \(name.rawValue). The server uses it from its next metadata pass.")
+            }
+        }
+
+        struct ClearKey: ParsableCommand {
+            static let configuration = CommandConfiguration(abstract: "Remove a saved key.")
+            @OptionGroup var options: Options
+            @Argument(help: "steamgriddb, igdb-client-id or igdb-client-secret.") var name: MetadataKeys.Name
+
+            func run() throws {
+                try MetadataKeys.set(name, to: nil, paths: options.paths)
+                print("Removed \(name.rawValue).")
+            }
+        }
+
+        struct Status: ParsableCommand {
+            static let configuration = CommandConfiguration(abstract: "Which providers are enabled. Never prints keys.")
+            @OptionGroup var options: Options
+
+            func run() throws {
+                let keys = MetadataKeys.load(paths: options.paths)
+                print("libretro     enabled (no key)")
+                print("wikipedia    enabled (no key)")
+                print("igdb         \(keys.igdb != nil ? "enabled" : "disabled: set igdb-client-id and igdb-client-secret")")
+                print("steamgriddb  \(keys[.steamGridDB] != nil ? "enabled" : "disabled: set steamgriddb")")
+            }
+        }
+    }
 }
+
+extension MetadataKeys.Name: ExpressibleByArgument {}

@@ -79,10 +79,14 @@ public struct GameSummary: Codable, Sendable, Equatable, Identifiable {
     public var criticScore: CriticScore?
     /// Wide hero art. Same form as `coverPath`.
     public var backdropPath: String?
+    /// Best wide art for a hero banner: the backdrop, else an in-game screenshot or title screen.
+    public var heroPath: String?
+    /// Transparent title logo.
+    public var logoPath: String?
 
     public init(id: String, title: String, system: SystemID, year: Int?, genre: String?, coverPath: String?, totalSize: Int64,
                 addedAt: Date? = nil, publisher: String? = nil, region: String? = nil, genres: [String]? = nil, players: Int? = nil,
-                criticScore: CriticScore? = nil, backdropPath: String? = nil) {
+                criticScore: CriticScore? = nil, backdropPath: String? = nil, heroPath: String? = nil, logoPath: String? = nil) {
         self.id = id
         self.title = title
         self.system = system
@@ -97,6 +101,8 @@ public struct GameSummary: Codable, Sendable, Equatable, Identifiable {
         self.players = players
         self.criticScore = criticScore
         self.backdropPath = backdropPath
+        self.heroPath = heroPath
+        self.logoPath = logoPath
     }
 }
 
@@ -141,9 +147,16 @@ public struct GameDetail: Codable, Sendable, Equatable {
     public var screenshotPaths: [String]?
     /// Where the metadata came from, for attribution.
     public var sources: [MetadataSource]?
+    /// Who wrote `summary`, when a provider did (e.g. Wikipedia).
+    public var summarySource: MetadataSource?
+    /// A short critical-reception summary, e.g. from Wikipedia's Reception section.
+    public var reception: ReceptionSummary?
+    /// Where to read full reviews, e.g. IGN.
+    public var reviewLink: ReviewLink?
 
     public init(game: GameSummary, summary: String?, files: [GameFileInfo], developer: String? = nil, logoPath: String? = nil,
-                titleScreenPath: String? = nil, screenshotPaths: [String]? = nil, sources: [MetadataSource]? = nil) {
+                titleScreenPath: String? = nil, screenshotPaths: [String]? = nil, sources: [MetadataSource]? = nil,
+                summarySource: MetadataSource? = nil, reception: ReceptionSummary? = nil, reviewLink: ReviewLink? = nil) {
         self.game = game
         self.summary = summary
         self.files = files
@@ -152,6 +165,33 @@ public struct GameDetail: Codable, Sendable, Equatable {
         self.titleScreenPath = titleScreenPath
         self.screenshotPaths = screenshotPaths
         self.sources = sources
+        self.summarySource = summarySource
+        self.reception = reception
+        self.reviewLink = reviewLink
+    }
+}
+
+/// A few sentences on how a game was received, quoted from `source` (which must be shown as attribution).
+public struct ReceptionSummary: Codable, Sendable, Equatable {
+    public var text: String
+    public var source: String
+    public var url: String?
+
+    public init(text: String, source: String, url: String? = nil) {
+        self.text = text
+        self.source = source
+        self.url = url
+    }
+}
+
+/// An outside page with full reviews, e.g. "IGN".
+public struct ReviewLink: Codable, Sendable, Equatable {
+    public var name: String
+    public var url: String
+
+    public init(name: String, url: String) {
+        self.name = name
+        self.url = url
     }
 }
 

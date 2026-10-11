@@ -53,4 +53,15 @@ enum MetadataMigrations {
             try db.execute(sql: "ALTER TABLE metadata_jobs ADD COLUMN artwork_version TEXT")
         }
     }
+
+    static func registerReviews(_ migrator: inout DatabaseMigrator) {
+        // Reviews (Wikipedia reception, IGDB/IGN link) and artwork URLs a provider found during lookup (SteamGridDB).
+        migrator.registerMigration("v5_metadata_reviews") { db in
+            for column in ["reception", "reception_source", "reception_url", "review_name", "review_url", "artwork_urls"] {
+                try db.execute(sql: "ALTER TABLE game_metadata ADD COLUMN \(column) TEXT")
+            }
+            // The title a name-searching provider looked up; an unmatched game is retried when a better title appears.
+            try db.execute(sql: "ALTER TABLE metadata_jobs ADD COLUMN search_title TEXT")
+        }
+    }
 }

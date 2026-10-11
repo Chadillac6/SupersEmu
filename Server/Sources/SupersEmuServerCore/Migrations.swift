@@ -103,5 +103,6 @@ public enum ServerMigrations {
         PairingMigrations.register(&migrator)
         LibraryMigrations.register(&migrator)
         SaveMigrations.register(&migrator)
+        MetadataMigrations.registerReviews(&migrator)
     }
 }

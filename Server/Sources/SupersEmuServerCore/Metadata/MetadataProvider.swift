@@ -4,14 +4,28 @@ import SupersEmuKit
 /// HTTP GET for datasets and artwork. Returns nil on 404; throws on network errors so the work is retried later.
 public protocol MetadataFetching: Sendable {
     func get(_ url: URL) async throws -> Data?
+    /// A request with headers or a body (keyed APIs). Same status handling as `get`.
+    func send(_ request: URLRequest) async throws -> Data?
+}
+
+public extension MetadataFetching {
+    func send(_ request: URLRequest) async throws -> Data? {
+        guard let url = request.url else { throw URLError(.badURL) }
+        return try await get(url)
+    }
 }
 
 public struct URLSessionMetadataFetcher: MetadataFetching {
     public init() {}
 
     public func get(_ url: URL) async throws -> Data? {
-        var request = URLRequest(url: url, timeoutInterval: 60)
-        request.setValue("SupersEmu-Server/\(ServerInfo.version)", forHTTPHeaderField: "User-Agent")
+        try await send(URLRequest(url: url))
+    }
+
+    public func send(_ request: URLRequest) async throws -> Data? {
+        var request = request
+        request.timeoutInterval = 60
+        request.setValue("SupersEmu-Server/\(ServerInfo.version) (+https://github.com/Chadillac6/SupersEmu)", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 404 { return nil }
@@ -32,12 +46,21 @@ public actor RateLimitedFetcher {
     }
 
     public func get(_ url: URL) async throws -> Data? {
+        await pace()
+        return try await fetcher.get(url)
+    }
+
+    public func send(_ request: URLRequest) async throws -> Data? {
+        await pace()
+        return try await fetcher.send(request)
+    }
+
+    private func pace() async {
         if let last {
             let wait = last + minimumInterval - ContinuousClock.now
             if wait > .zero { try? await Task.sleep(for: wait) }
         }
         last = ContinuousClock.now
-        return try await fetcher.get(url)
     }
 }
 
@@ -45,6 +68,7 @@ public actor RateLimitedFetcher {
 public struct MetadataLookup: Sendable {
     public var gameID: String
     public var system: SystemID
+    /// The best title known so far: another provider's canonical title, else the imported one.
     public var title: String
     /// ROM, or the data tracks of the first disc, resolved under the store root.
     public var files: [URL]
@@ -59,14 +83,18 @@ public struct ArtworkCandidate: Sendable, Equatable {
 
 public enum MetadataLookupResult: Sendable {
     case matched(MetadataRecord)
+    /// Matched, but an optional extra (e.g. Wikipedia reception) failed: saved now and looked up again next pass.
+    case partial(MetadataRecord)
     case unmatched
     /// The provider couldn't answer right now (dataset download failed, offline); retried on the next pass.
     case unavailable
 }
 
-/// A metadata source. Providers are keyless today (libretro); ones needing credentials would be configured by the admin.
+/// A metadata source. Keyed providers (IGDB, SteamGridDB) read their credentials server-side (`MetadataKeys`).
 public protocol MetadataProvider: Sendable {
     var id: String { get }
+    /// False when the provider needs a key that isn't set; the pass skips it and its games stay pending.
+    var isEnabled: Bool { get }
     /// Bump to rematch every game (e.g. a new pinned dataset).
     var version: String { get }
     func lookup(_ game: MetadataLookup) async throws -> MetadataLookupResult
@@ -76,5 +104,6 @@ public protocol MetadataProvider: Sendable {
 }
 
 public extension MetadataProvider {
+    var isEnabled: Bool { true }
     func artworkVersion(system: SystemID) -> String { version }
 }
