@@ -140,3 +140,49 @@ This section flags risks. It isn't legal advice. Get it reviewed before any **pu
 - **Mac Developer ID** distribution happens outside Apple's store terms, so the store-terms GPL point doesn't apply there. The non-commercial core terms still apply.
 
 Core licences in detail: `docs/specs/core-matrix.md`.
+
+## Automatic Mac updates (Sparkle)
+
+The Mac app embeds Sparkle 2.10.0. One feed is used, with no beta/stable channels:
+`https://github.com/Chadillac6/SupersEmu/releases/latest/download/appcast.xml`.
+Release apps check hourly, download automatically, and normally install when the app quits.
+“Check for Updates…” is also available in the SupersEmu menu. Debug builds never
+start the updater, so a published release cannot replace an in-progress local experiment.
+
+`Config/Updates.xcconfig` contains the feed and public Ed25519 key. Its private key
+is held only in the Mac mini's login Keychain under account `com.chadillac6.supersemu`.
+Keep that Keychain backed up. `Config/Updates.local.xcconfig` is ignored by Git and
+can override settings for isolated update tests. Never commit an exported private key.
+Downloaded archives are verified before extraction; anonymous profiling is disabled.
+
+After a Sparkle update, a registered boot server is marked for restart. On the next
+launch of `/Applications/SupersEmu.app`, the app offers to refresh the firewall entry
+and restart the daemon through a macOS administrator dialog. Choosing Later or cancelling
+keeps the restart pending; use “Restart Updated Server…” to retry. A privileged helper
+would be needed to make this daemon step completely silent. Client-only Macs do not
+need this restart. Games and saves live outside the app bundle.
+
+To publish a tested release:
+
+1. Restore a valid Developer ID Application signing certificate and configure the Apple
+   release credentials described above.
+2. Build with `scripts/release-mac.sh` (its output has a unique increasing build number).
+3. Run `scripts/publish-mac-update.sh build/release-mac/<build> <tag> <tested-commit>`.
+   It verifies the exported app, generates a signed appcast, uploads both assets to a draft,
+   then publishes the draft as the latest GitHub release. Do not publish a release with a
+   newer “latest” designation unless it also includes the Mac ZIP and appcast.
+
+`prepare-mac-appcast.sh` performs step 3 without uploading or publishing anything.
+Use `SPARKLE_GENERATE_APPCAST` to point at the tool in another derived-data directory.
+For CI, `SPARKLE_ED_KEY_FILE` can point at a privately supplied signing key file;
+never upload that file as a release asset. `generate_appcast` checks archive signatures
+against the public key embedded in the app.
+
+To undo a release, rebuild the desired older commit with a **new, higher build number**
+and publish it as the latest release. Checking out an old PR alone does not downgrade
+an installed app, and Sparkle intentionally ignores lower build numbers.
+
+Initial rollout still requires installing one Sparkle-enabled release. Existing apps
+without Sparkle cannot discover or install that first update. Test a real older-to-newer
+signed/notarized pair before relying on unattended installs. iOS continues to update
+through TestFlight, independently of Sparkle.

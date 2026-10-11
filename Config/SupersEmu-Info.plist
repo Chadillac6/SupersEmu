@@ -33,5 +33,19 @@
 	<array>
 		<string>_supersemu._tcp</string>
 	</array>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>$(SUPERSEMU_UPDATE_FEED_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(SUPERSEMU_UPDATE_PUBLIC_KEY)</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

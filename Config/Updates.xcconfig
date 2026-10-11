@@ -1,0 +1,5 @@
+// One release feed for this personal app. Archives must be signed with the matching Keychain key.
+// xcconfig requires an escaped URL separator.
+SUPERSEMU_UPDATE_FEED_URL = https:/$()/github.com/Chadillac6/SupersEmu/releases/latest/download/appcast.xml
+SUPERSEMU_UPDATE_PUBLIC_KEY = YUhwmahNRI/etp1BCwhOoe3pRcixCtkk3lfTTgOZr7k=
+#include? "Updates.local.xcconfig"

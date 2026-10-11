@@ -16,6 +16,9 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     CLANG_CXX_LANGUAGE_STANDARD: gnu++17
 packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
   SupersEmuServer:
     path: Server
 
@@ -806,6 +809,8 @@ targets:
       - sdk: libz.tbd
       - package: SupersEmuServer
         product: SupersEmuKit
+      - package: Sparkle
+        platforms: [macOS]
       - sdk: AVFoundation.framework
       - sdk: CoreVideo.framework
       - sdk: GameController.framework
@@ -836,6 +841,13 @@ targets:
       properties:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        SUFeedURL: $(SUPERSEMU_UPDATE_FEED_URL)
+        SUPublicEDKey: $(SUPERSEMU_UPDATE_PUBLIC_KEY)
+        SUEnableAutomaticChecks: true
+        SUAutomaticallyUpdate: true
+        SUScheduledCheckInterval: 3600
+        SUEnableSystemProfiling: false
+        SUVerifyUpdateBeforeExtraction: true
         NSBonjourServices: ["_supersemu._tcp"]
         CFBundleURLTypes:
           - CFBundleURLName: com.chadillac6.supersemu.pair

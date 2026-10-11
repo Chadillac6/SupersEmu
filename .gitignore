@@ -8,3 +8,5 @@ Tests/Fixtures/local/
 # Local signing team (see Config/Signing.xcconfig) and App Store Connect keys
 Config/Signing.local.xcconfig
 *.p8
+
+Config/Updates.local.xcconfig
