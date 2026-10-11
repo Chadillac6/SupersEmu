@@ -15,7 +15,7 @@ Until the notarized Mac build exists (in progress), build it from source:
 git clone https://github.com/Chadillac6/SupersEmu.git && cd SupersEmu
 git submodule update --init --depth 1
 ./scripts/build.sh
-cp -R build/mac/Build/Products/Debug/SupersEmu.app /Applications/
+ditto build/mac/Build/Products/Debug/SupersEmu.app /Applications/SupersEmu.app
 ```
 
 ## 3. Turn on the server
@@ -23,6 +23,7 @@ cp -R build/mac/Build/Products/Debug/SupersEmu.app /Applications/
 2. To try it right away, click **Start Server for This Session** (port 8488). It stops when you quit the app.
 3. To keep it running, click **Register Boot Daemon**, then **Open Login Items Settings** and allow it. The server then runs on port 8487 at boot, even before anyone logs in. **[untested]**
 4. Server data lives in `/Library/Application Support/SupersEmu Server`.
+5. A **SupersEmu Server** icon appears in the menu bar and shows the server status. Use it to open the Server window or jump straight to its Add Games, Review Needed, BIOS and Storage sections. Hide or show the icon from the Server window.
 
 ## 4. Remote access with Tailscale
 1. Install Tailscale on the Mac mini and sign in. Use the standalone download from tailscale.com, not the Mac App Store
@@ -111,6 +112,10 @@ replaces its data, and comes back up. Paired devices keep working because the ce
 restored too. Saves made after that backup are replaced; the data the restore replaced is kept in
 `<data folder>/.pre-restore` until the next restore. On a fresh Mac mini, set the destination to
 the drive first, then `backup list` and `backup restore`.
+
+## Updating
+- **Mac [untested]:** Run `./scripts/update-mac.sh` to pull the latest code, rebuild and replace the app, restart the boot server if it is registered, and reopen SupersEmu. Games, saves and settings are kept outside the app.
+- **iPhone/iPad:** Plug in the device, open the project in Xcode, select the device, and press Run. Data is kept.
 
 ## What to send back
 Whether each **[untested]** step worked, plus how your Retrolink and 8BitDo pads behave and whether games run at full speed.

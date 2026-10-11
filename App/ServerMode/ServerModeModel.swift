@@ -147,6 +147,7 @@ final class ServerModeModel {
     func registerDaemon() async {
         do {
             try daemon.register()
+            UserDefaults.standard.set(true, forKey: ServerStatusMonitor.showIconDefaultsKey)
             message = "Daemon registered."
         } catch {
             message = "Register failed: \(error.localizedDescription)"
@@ -188,6 +189,7 @@ final class ServerModeModel {
             process.standardError = log
             try process.run()
             self.process = process
+            UserDefaults.standard.set(true, forKey: ServerStatusMonitor.showIconDefaultsKey)
             for _ in 0..<40 {
                 try await Task.sleep(nanoseconds: 250_000_000)
                 await refresh()
