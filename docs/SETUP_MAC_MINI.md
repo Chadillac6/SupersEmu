@@ -114,7 +114,7 @@ restored too. Saves made after that backup are replaced; the data the restore re
 the drive first, then `backup list` and `backup restore`.
 
 ## Updating
-- **Mac [untested]:** Run `./scripts/update-mac.sh` to pull the latest code, rebuild and replace the app, restart the boot server if it is registered, and reopen SupersEmu. Games, saves and settings are kept outside the app.
+- **Mac [untested]:** Run `./scripts/update-mac.sh` to pull the latest code, rebuild and replace the app, restart the boot server if it is registered, and reopen SupersEmu. This script is only for source-built (Debug) installs; update the notarized release build with the newer release .dmg instead. macOS may ask you to approve the boot server again in Login Items after an update. Games, saves and settings are kept outside the app.
 - **iPhone/iPad:** Plug in the device, open the project in Xcode, select the device, and press Run. Data is kept.
 
 ## What to send back

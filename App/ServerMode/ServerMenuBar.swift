@@ -77,8 +77,9 @@ final class ServerStatusMonitor {
 
     private func refresh() async {
         await model.refresh()
-        if model.source == .session && model.daemonStatus == .enabled {
-            model.source = .daemon
+        let desired: ServerModeModel.Source = model.daemonStatus == .enabled ? .daemon : .session
+        if model.source != desired {
+            model.source = desired
             await model.refresh()
         }
     }
