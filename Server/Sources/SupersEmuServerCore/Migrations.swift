@@ -104,5 +104,6 @@ public enum ServerMigrations {
         LibraryMigrations.register(&migrator)
         SaveMigrations.register(&migrator)
         MetadataMigrations.registerReviews(&migrator)
+        LibraryRevisionMigrations.register(&migrator)
     }
 }

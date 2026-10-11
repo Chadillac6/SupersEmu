@@ -260,6 +260,85 @@ final class LibraryTests: XCTestCase {
         XCTAssertNotEqual(try store.libraryRevision(), before)
     }
 
+    func testLibraryRevisionStaysStableWithoutChanges() throws {
+        let first = try store.libraryRevision()
+        XCTAssertEqual(try store.libraryRevision(), first)
+    }
+
+    func testLibraryRevisionChangesWhenOldArtworkIsRemoved() async throws {
+        let id = try await importer.importPaths([try write(ROMFixtures.snes(seed: 27), "ArtworkRevision.sfc").path], auth: nil)
+            .imported[0].id
+        let artwork = ArtworkStore(store: store)
+        try artwork.setProviderArtwork(.cover, provider: "test", gameID: id, data: Data([0x89, 0x50, 0x4E, 0x47]),
+                                       fileExtension: "png")
+        try await store.db.write {
+            try $0.execute(sql: "UPDATE game_artwork SET updated_at = ? WHERE game_id = ?",
+                           arguments: [Date(timeIntervalSince1970: 1), id])
+        }
+        let beforeRemoval = try store.libraryRevision()
+
+        try artwork.removeProviderArtwork(provider: "test", gameID: id)
+
+        XCTAssertNotEqual(try store.libraryRevision(), beforeRemoval)
+    }
+
+    func testLibraryRevisionChangesWhenGameGrantsAndGroupVisibilityChange() async throws {
+        let id = try await importer.importPaths([try write(ROMFixtures.snes(seed: 28), "PermissionRevision.sfc").path], auth: nil)
+            .imported[0].id
+        let player = try store.createUser(displayName: "Revision Player", role: .player)
+        try await store.db.write { db in
+            try db.execute(sql: "INSERT INTO groups (id, name) VALUES ('revision-group', 'Revision Group')")
+        }
+        let beforeGrant = try store.libraryRevision()
+        try await store.db.write { db in
+            try db.execute(sql: """
+                INSERT INTO game_permissions (game_id, principal_type, principal_id) VALUES (?, 'user', ?)
+                """, arguments: [id, player.id])
+        }
+        let afterGrant = try store.libraryRevision()
+        XCTAssertNotEqual(afterGrant, beforeGrant)
+        try await store.db.write {
+            try $0.execute(sql: "DELETE FROM game_permissions WHERE game_id = ? AND principal_type = 'user' AND principal_id = ?",
+                            arguments: [id, player.id])
+        }
+        let afterGrantRemoval = try store.libraryRevision()
+        XCTAssertNotEqual(afterGrantRemoval, afterGrant)
+
+        try await store.db.write {
+            try $0.execute(sql: "INSERT INTO game_permissions (game_id, principal_type, principal_id) VALUES (?, 'group', 'revision-group')",
+                            arguments: [id])
+        }
+        let beforeMembership = try store.libraryRevision()
+        try await store.db.write {
+            try $0.execute(sql: "INSERT INTO group_members (group_id, user_id) VALUES ('revision-group', ?)", arguments: [player.id])
+        }
+        let afterMembership = try store.libraryRevision()
+        XCTAssertNotEqual(afterMembership, beforeMembership)
+        try await store.db.write {
+            try $0.execute(sql: "DELETE FROM group_members WHERE group_id = 'revision-group' AND user_id = ?", arguments: [player.id])
+        }
+        XCTAssertNotEqual(try store.libraryRevision(), afterMembership)
+    }
+
+    func testMetadataRetryTimestampDoesNotChangeLibraryRevision() async throws {
+        let id = try await importer.importPaths([try write(ROMFixtures.snes(seed: 29), "MetadataRevision.sfc").path], auth: nil)
+            .imported[0].id
+        try await store.db.write {
+            try $0.execute(sql: """
+                INSERT INTO metadata_jobs (game_id, provider, match_status, updated_at)
+                VALUES (?, 'test', 'unmatched', ?)
+                """, arguments: [id, Date()])
+        }
+        let before = try store.libraryRevision()
+
+        try await store.db.write {
+            try $0.execute(sql: "UPDATE metadata_jobs SET updated_at = ? WHERE game_id = ? AND provider = 'test'",
+                            arguments: [Date(timeIntervalSince1970: 2), id])
+        }
+
+        XCTAssertEqual(try store.libraryRevision(), before)
+    }
+
     func testImportsFoldersOfMixedSystems() async throws {
         try write(ROMFixtures.gameBoy(), "Handheld/Tetris.gb")
         try write(ROMFixtures.gba(), "Handheld/Adv/Advance_Game.gba")

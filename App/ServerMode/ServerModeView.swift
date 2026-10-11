@@ -191,9 +191,18 @@ struct ServerModeView: View {
         if navigation.generatePairingCode {
             navigation.generatePairingCode = false
             Task {
-                if model.pairing?.expiresAt ?? .distantPast <= Date() {
-                    await model.createPairingCode()
+                await model.refresh()
+                let localSource: ServerModeModel.Source = model.daemonStatus == .enabled ? .daemon : .session
+                if model.source != localSource {
+                    model.source = localSource
                 }
+                await model.refresh()
+                if model.health == nil, model.source == .daemon {
+                    model.source = .session
+                    await model.refresh()
+                }
+                guard model.health != nil else { return }
+                await model.createPairingCode()
             }
         }
     }
@@ -230,6 +239,10 @@ struct ServerModeView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Scan with the SupersEmu app, or enter the code:").foregroundStyle(.secondary)
                         Text(Self.grouped(pairing.code)).font(.system(size: 40, weight: .semibold, design: .monospaced)).textSelection(.enabled)
+                        if let pin = pairing.payload.certificateSHA256 ?? model.certificateSHA256,
+                           let fingerprint = PairingFingerprint.short(certificateSHA256: pin) {
+                            Text("Server fingerprint: \(fingerprint)").font(.callout.monospaced())
+                        }
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             let remaining = max(0, Int(pairing.expiresAt.timeIntervalSince(context.date)))
                             Text(remaining > 0 ? "Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60)) · one-time use" : "Expired")

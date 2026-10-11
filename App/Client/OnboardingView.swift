@@ -21,6 +21,9 @@ struct OnboardingView: View {
     @State private var selectedServer: DiscoveredServer?
     @State private var selectedServerAddress: URL?
     @State private var resolvingServerID: String?
+    @State private var fingerprintConfirmationPayload: PairingPayload?
+    @State private var fingerprintConfirmationValue: String?
+    @State private var showFingerprintConfirmation = false
     #if os(macOS)
     @State private var localServer = ServerModeModel()
     #endif
@@ -83,6 +86,21 @@ struct OnboardingView: View {
         #if os(macOS)
         .task { await localServer.refresh() }
         #endif
+        .alert("Verify the server fingerprint", isPresented: $showFingerprintConfirmation) {
+            Button("Cancel", role: .cancel) {
+                fingerprintConfirmationPayload = nil
+                fingerprintConfirmationValue = nil
+            }
+            Button("The fingerprint matches") {
+                guard let payload = fingerprintConfirmationPayload,
+                      let fingerprint = fingerprintConfirmationValue else { return }
+                fingerprintConfirmationPayload = nil
+                fingerprintConfirmationValue = nil
+                Task { await completePairing(payload, confirmedCertificateSHA256: fingerprint) }
+            }
+        } message: {
+            Text(fingerprintConfirmationMessage)
+        }
     }
 
     private var header: some View {
@@ -246,11 +264,38 @@ struct OnboardingView: View {
     #endif
 
     private func pair(_ payload: PairingPayload) async {
+        if payload.certificateSHA256 == nil,
+           let url = payload.urls.first(where: { $0.scheme?.lowercased() == "https" }) {
+            isPairing = true
+            errorMessage = nil
+            do {
+                let fingerprint = try await server.presentedCertificateSHA256(at: url)
+                fingerprintConfirmationPayload = payload
+                fingerprintConfirmationValue = fingerprint
+                showFingerprintConfirmation = true
+            } catch {
+                errorMessage = "Couldn't verify \(payload.serverName): \(error.localizedDescription)"
+            }
+            isPairing = false
+            return
+        }
+        await completePairing(payload)
+    }
+
+    private var fingerprintConfirmationMessage: String {
+        guard let fingerprint = fingerprintConfirmationValue,
+              let short = PairingFingerprint.short(certificateSHA256: fingerprint) else {
+            return "The server's certificate fingerprint is unavailable."
+        }
+        return "Compare this with the fingerprint shown in Server Mode. Server fingerprint: \(short). The pairing code is sent only after you confirm."
+    }
+
+    private func completePairing(_ payload: PairingPayload, confirmedCertificateSHA256: String? = nil) async {
         isPairing = true
         errorMessage = nil
         defer { isPairing = false }
         do {
-            try await server.pair(payload)
+            try await server.pair(payload, confirmedCertificateSHA256: confirmedCertificateSHA256)
         } catch let error as APIClientError {
             switch error {
             case .http(let status, let message) where status == 400 || status == 401 || status == 404 || status == 410:

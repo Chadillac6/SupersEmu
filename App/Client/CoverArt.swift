@@ -1,9 +1,18 @@
 import SwiftUI
+import Observation
 #if os(macOS)
 import AppKit
 #else
 import UIKit
 #endif
+
+@MainActor @Observable
+final class ArtworkRevision {
+    static let shared = ArtworkRevision()
+    private(set) var value = 0
+
+    func increment() { value &+= 1 }
+}
 
 /// Cover art from the server (authenticated), cached on disk for offline use, with a generated fallback tile.
 struct CoverArt: View {
@@ -99,13 +108,16 @@ enum ArtworkCache {
 
     /// Reruns artwork tasks on reconnect, so art that couldn't load offline appears.
     @MainActor static func taskID(_ path: String?, _ server: ServerSession) -> String {
-        "\(path ?? "")|\(server.isOnline)"
+        "\(path ?? "")|\(server.isOnline)|\(ArtworkRevision.shared.value)"
     }
 
     @MainActor private static var revalidated = Set<String>()
 
     /// Pull to refresh: art is fetched again as views next load it.
-    @MainActor static func revalidateAll() { revalidated.removeAll() }
+    @MainActor static func revalidateAll() {
+        revalidated.removeAll()
+        ArtworkRevision.shared.increment()
+    }
 
     /// The disk copy straight away (works offline), then once per launch the server's, as replaced art keeps its path.
     @MainActor static func load(_ path: String?, key: String, server: ServerSession, show: (Image?) -> Void) async {

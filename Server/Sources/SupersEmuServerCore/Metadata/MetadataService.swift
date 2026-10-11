@@ -152,10 +152,20 @@ public actor MetadataService {
                 try db.execute(sql: "DELETE FROM game_metadata WHERE game_id = ? AND provider = ?", arguments: [gameID, provider.id])
             }
             try db.execute(sql: """
-                INSERT OR REPLACE INTO metadata_jobs (game_id, provider, match_status, artwork_status, dataset_version,
-                    search_title, updated_at)
-                VALUES (?, ?, ?, NULL, ?, ?, ?)
-                """, arguments: [gameID, provider.id, match, provider.version, searchTitle, Date()])
+                INSERT INTO metadata_jobs (game_id, provider, match_status, artwork_status, dataset_version,
+                    artwork_version, search_title, updated_at)
+                VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
+                ON CONFLICT (game_id, provider) DO UPDATE SET
+                    match_status = excluded.match_status,
+                    artwork_status = NULL,
+                    dataset_version = excluded.dataset_version,
+                    artwork_version = NULL,
+                    search_title = excluded.search_title,
+                    updated_at = excluded.updated_at
+                WHERE metadata_jobs.match_status IS NOT excluded.match_status
+                    OR metadata_jobs.dataset_version IS NOT excluded.dataset_version
+                    OR metadata_jobs.search_title IS NOT excluded.search_title
+                """, arguments: [gameID, provider.id, match, provider.version, nil as String?, searchTitle, Date()])
         }
     }
 
