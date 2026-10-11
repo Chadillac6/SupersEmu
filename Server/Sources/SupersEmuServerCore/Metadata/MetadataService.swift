@@ -136,8 +136,9 @@ public actor MetadataService {
                 .map(MetadataRecord.init(row:))
         }
         guard let record else { return }
+        var deferred = false
         for candidate in provider.artwork(for: record, system: system) {
-            var found = false
+            var found = false, invalid = false
             for url in candidate.urls {
                 let data: Data?
                 do {
@@ -147,16 +148,20 @@ public actor MetadataService {
                     return
                 }
                 guard let data else { continue }
-                guard let ext = Self.imageExtension(data) else { break }
+                guard let ext = Self.imageExtension(data) else { invalid = true; continue }
                 try artwork.setProviderArtwork(candidate.kind, position: candidate.position, provider: provider.id, gameID: gameID,
                                                data: data, fileExtension: ext, sourceURL: url.absoluteString)
                 found = true
                 break
             }
-            if !found {
+            if !found && invalid {
+                logger.info("Artwork for \(gameID.prefix(12)) deferred: \(candidate.kind.rawValue) wasn't an image")
+                deferred = true
+            } else if !found {
                 try artwork.removeProviderArtwork(provider: provider.id, gameID: gameID, kind: candidate.kind, position: candidate.position)
             }
         }
+        if deferred { return }
         try await store.db.write { db in
             try db.execute(sql: """
                 UPDATE metadata_jobs SET artwork_status = 'done', artwork_version = ?, updated_at = ? WHERE game_id = ? AND provider = ?
