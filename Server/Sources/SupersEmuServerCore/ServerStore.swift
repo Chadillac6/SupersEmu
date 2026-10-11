@@ -76,6 +76,20 @@ public final class ServerStore: @unchecked Sendable {
 
     public func close() throws { try db.close() }
 
+    public func libraryRevision() throws -> String {
+        try db.read { db in
+            try String.fetchOne(db, sql: """
+                SELECT
+                    CAST((SELECT COUNT(*) FROM games) AS TEXT) || ':' ||
+                    CAST((SELECT COUNT(*) FROM games WHERE needs_review = 0) AS TEXT) || ':' ||
+                    COALESCE(CAST((SELECT MAX(COALESCE(updated_at, created_at)) FROM games) AS TEXT), '') || ':' ||
+                    COALESCE(CAST((SELECT MAX(updated_at) FROM metadata_jobs) AS TEXT), '') || ':' ||
+                    COALESCE(CAST((SELECT MAX(updated_at) FROM game_metadata) AS TEXT), '') || ':' ||
+                    COALESCE(CAST((SELECT MAX(updated_at) FROM game_artwork) AS TEXT), '')
+                """) ?? "0"
+        }
+    }
+
     public static func inMemory(root: URL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)) throws -> ServerStore {
         let paths = ServerPaths(root: root)
         try paths.createDirectories()

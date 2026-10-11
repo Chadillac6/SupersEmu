@@ -50,12 +50,17 @@ final class LibraryManagerModel {
         do {
             do {
                 try await body(try server.adminClient())
-            } catch is URLError where !server.isLocal {
+            } catch let error as URLError where !server.isLocal && error.code != .cancelled {
                 await server.resolvePairedURL()
                 try await body(try server.adminClient())
             }
             error = nil
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
+            guard !Task.isCancelled else { return }
             self.error = Self.describe(error)
         }
     }

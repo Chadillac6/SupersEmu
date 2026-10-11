@@ -18,7 +18,11 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil) ->
     router.add(middleware: LogRequestsMiddleware(.info))
 
     router.group("v1").get("health") { _, _ in
-        HealthResponse(status: "ok", serverName: store.serverName, serverVersion: ServerInfo.version)
+        HealthResponse(
+            status: "ok",
+            serverName: store.serverName,
+            serverVersion: ServerInfo.version,
+            libraryRevision: try store.libraryRevision())
     }
 
     let authed = router.group("v1").add(middleware: TokenAuthMiddleware(store: store))

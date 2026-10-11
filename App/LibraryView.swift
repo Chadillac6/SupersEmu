@@ -35,7 +35,7 @@ struct LibraryView: View {
                         ConnectionBanner()
                         if !query.isEmpty {
                             searchResults
-                        } else if all.letters.isEmpty {
+                        } else if all.allGames.isEmpty {
                             emptyState
                         } else {
                             SystemSelectorBar(theme: theme, systems: all.systems, selection: Binding(
@@ -47,14 +47,14 @@ struct LibraryView: View {
                             if !home.currentlyPlaying.isEmpty {
                                 CurrentlyPlayingRow(items: home.currentlyPlaying, select: open)
                             }
-                            AlphabetGrid(sections: home.letters, select: open)
+                            AlphabetGrid(games: home.allGames, letterAnchors: home.letterAnchors, select: open)
                         }
                     }
                     .padding(.vertical, 16)
                 }
                 .overlay(alignment: .trailing) {
-                    if query.isEmpty, !home.letters.isEmpty {
-                        JumpRail(available: Set(home.letters.map(\.id))) { letter, animated in
+                    if query.isEmpty, !home.allGames.isEmpty {
+                        JumpRail(available: Set(home.letterAnchors.keys)) { letter, animated in
                             if animated {
                                 withAnimation(.snappy) { proxy.scrollTo("letter-\(letter)", anchor: .top) }
                             } else {

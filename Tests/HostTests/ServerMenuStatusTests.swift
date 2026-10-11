@@ -40,6 +40,15 @@ final class ServerMenuStatusTests: XCTestCase {
         XCTAssertEqual(status.title, "SupersEmu Server: Off")
     }
 
+    func testUnexpectedSessionExitIsNotRespondingAndCanRestart() {
+        let status = makeStatus(daemonStatus: .notRegistered, sessionStoppedUnexpectedly: true)
+
+        XCTAssertEqual(status.state, .notRunning)
+        XCTAssertEqual(status.title, "SupersEmu Server: Not responding")
+        XCTAssertEqual(status.detail, "Server stopped unexpectedly")
+        XCTAssertTrue(status.sessionStoppedUnexpectedly)
+    }
+
     private var health: HealthResponse {
         HealthResponse(status: "ok", serverName: "SupersEmu", serverVersion: "1.0")
     }
@@ -48,13 +57,15 @@ final class ServerMenuStatusTests: XCTestCase {
         daemonStatus: SMAppService.Status,
         sessionRunning: Bool = false,
         health: HealthResponse? = nil,
-        deviceCount: Int = 0
+        deviceCount: Int = 0,
+        sessionStoppedUnexpectedly: Bool = false
     ) -> ServerMenuStatus {
         ServerMenuStatus(
             daemonStatus: daemonStatus,
             sessionRunning: sessionRunning,
             health: health,
-            deviceCount: deviceCount
+            deviceCount: deviceCount,
+            sessionStoppedUnexpectedly: sessionStoppedUnexpectedly
         )
     }
 }

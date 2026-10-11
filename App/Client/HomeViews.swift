@@ -160,30 +160,24 @@ struct CurrentlyPlayingRow: View {
     }
 }
 
-/// "All Games A-Z": one cover grid per letter, each a scroll target for the jump rail.
+/// "All Games A-Z": one continuous cover grid with letter anchors for the jump rail.
 struct AlphabetGrid: View {
     @Environment(DownloadCenter.self) private var downloads
-    let sections: [LetterSection]
+    let games: [LibraryItem]
+    let letterAnchors: [String: String]
     let select: (LibraryItem) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("All Games A–Z").font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier("shelf-all")
-            LazyVStack(alignment: .leading, spacing: 18) {
-                ForEach(sections) { section in
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(section.id).font(.headline).foregroundStyle(.secondary)
-                            .accessibilityIdentifier("letter-header-\(section.id)")
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 16)], spacing: 20) {
-                            ForEach(section.items) { item in
-                                Button { select(item) } label: { GameCard(item: item, state: downloads.states[item.id]) }
-                                    .buttonStyle(.plain)
-                                    .accessibilityIdentifier("game-card")
-                                    .accessibilityLabel(item.title)
-                            }
-                        }
-                    }
-                    .id("letter-\(section.id)")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 16)], spacing: 20) {
+                ForEach(games) { item in
+                    let letter = LibraryShelves.letter(for: item.title)
+                    Button { select(item) } label: { GameCard(item: item, state: downloads.states[item.id]) }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("game-card")
+                        .accessibilityLabel(item.title)
+                        .id(letterAnchors[letter] == item.id ? "letter-\(letter)" : item.id)
                 }
             }
             .padding(.leading, 20)

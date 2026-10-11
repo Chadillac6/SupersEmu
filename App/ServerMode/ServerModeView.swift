@@ -184,9 +184,18 @@ struct ServerModeView: View {
     }
 
     private func consumeNavigationRequest() {
-        guard let requested = navigation.requested else { return }
-        section = requested
-        navigation.requested = nil
+        if let requested = navigation.requested {
+            section = requested
+            navigation.requested = nil
+        }
+        if navigation.generatePairingCode {
+            navigation.generatePairingCode = false
+            Task {
+                if model.pairing?.expiresAt ?? .distantPast <= Date() {
+                    await model.createPairingCode()
+                }
+            }
+        }
     }
 
     private var daemonSection: some View {

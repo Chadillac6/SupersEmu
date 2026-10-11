@@ -32,6 +32,7 @@ final class ServerSession {
     @ObservationIgnored private let snapshotURL: URL
     @ObservationIgnored private var urlSession: URLSession?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var libraryRevision: String?
     /// Bumped on pair/sign-out so responses for a previous connection are dropped.
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var monitor: ConnectionMonitor
@@ -103,6 +104,7 @@ final class ServerSession {
                 refreshTask = nil
                 urlSession = nil
                 self.credential = credential
+                libraryRevision = nil
                 activeURL = url
                 self.trust = nil
                 monitor.paired()
@@ -194,7 +196,16 @@ final class ServerSession {
     private func heartbeat() async {
         guard connection.isConnected, refreshTask == nil, let credential, let url = activeURL else { return }
         let client = APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
-        if (try? await client.health()) == nil { await refresh() }
+        do {
+            let health = try await client.health()
+            guard let revision = health.libraryRevision else { return }
+            guard revision != libraryRevision else { return }
+            libraryRevision = revision
+            ArtworkCache.revalidateAll()
+            await refresh()
+        } catch {
+            await refresh()
+        }
     }
 
     private func publish() {
@@ -258,6 +269,7 @@ final class ServerSession {
         urlSession = nil
         trust = nil
         credential = nil
+        libraryRevision = nil
         activeURL = nil
         games = []
         firstSeen = [:]

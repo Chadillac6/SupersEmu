@@ -1,4 +1,5 @@
 import Foundation
+import SupersEmuKit
 
 /// Minimal cue sheet reader: the `FILE` lines (and whether each file holds a data track), enough to group,
 /// identify and launch a disc. See docs/specs/disc-games.md.
