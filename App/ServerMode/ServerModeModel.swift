@@ -46,8 +46,6 @@ final class ServerModeModel {
             pairing = nil
             pairingError = nil
             pairRequests = []
-            requestPollTask?.cancel()
-            requestPollTask = nil
         }
     }
     private var pairingRequestGeneration = 0
@@ -73,7 +71,6 @@ final class ServerModeModel {
         set { SessionServerProcess.shared.process = newValue }
     }
     private let daemon = SMAppService.daemon(plistName: ServerModeModel.daemonPlistName)
-    private var requestPollTask: Task<Void, Never>?
     private var lastLANProbeAt: Date?
     private static let notifiedRequestsDefaultsKey = "notifiedPairRequestIDs"
     private static var notifiedRequestIDs: Set<UUID> {
@@ -178,11 +175,8 @@ final class ServerModeModel {
             pairRequests = []
             lanReachability = .unknown
             firewallBlocksServer = nil
-            requestPollTask?.cancel()
-            requestPollTask = nil
             return
         }
-        startPairRequestPolling()
         do {
             devices = try await client(authenticated: true).devices()
             devicesError = nil
@@ -191,7 +185,6 @@ final class ServerModeModel {
         } catch {
             devicesError = "Couldn't load devices: \(error)"
         }
-        await refreshPairRequests()
         if isLocal { await probeLANReachability() }
     }
 
@@ -293,17 +286,6 @@ final class ServerModeModel {
         } catch {
             guard request.matches(generation: pairingRequestGeneration, source: source.rawValue) else { return }
             pairingError = "\(error)"
-        }
-    }
-
-    private func startPairRequestPolling() {
-        guard isLocal, requestPollTask == nil else { return }
-        requestPollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
-                guard !Task.isCancelled, let self else { return }
-                await self.refreshPairRequests()
-            }
         }
     }
 

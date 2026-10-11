@@ -41,6 +41,7 @@ final class ServerStatusMonitor {
 
     let model: ServerModeModel
     private var pollingTask: Task<Void, Never>?
+    private var lastStatusRefreshAt: Date?
 
     var status: ServerMenuStatus {
         ServerMenuStatus(
@@ -65,11 +66,18 @@ final class ServerStatusMonitor {
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                if UserDefaults.standard.bool(forKey: Self.showIconDefaultsKey) {
+                let showIcon = UserDefaults.standard.bool(forKey: Self.showIconDefaultsKey)
+                let statusRefreshIsDue = self.lastStatusRefreshAt.map {
+                    Date().timeIntervalSince($0) >= 10
+                } ?? true
+                if self.model.health == nil || (showIcon && statusRefreshIsDue) {
                     await refresh()
                 }
+                if model.isLocal && model.health != nil {
+                    await model.refreshPairRequests()
+                }
                 do {
-                    try await Task.sleep(for: .seconds(10))
+                    try await Task.sleep(for: .seconds(3))
                 } catch {
                     return
                 }
@@ -81,13 +89,15 @@ final class ServerStatusMonitor {
         if visible { Task { await refresh() } }
     }
 
+    func setLocalSource(_ source: ServerModeModel.Source) {
+        guard source != .paired, model.source != source else { return }
+        model.source = source
+        Task { await refresh() }
+    }
+
     private func refresh() async {
         await model.refresh()
-        let desired: ServerModeModel.Source = model.daemonStatus == .enabled ? .daemon : .session
-        if model.source != desired {
-            model.source = desired
-            await model.refresh()
-        }
+        lastStatusRefreshAt = Date()
     }
 }
 

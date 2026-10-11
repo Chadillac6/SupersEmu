@@ -28,6 +28,8 @@ struct OnboardingView: View {
     @State private var showCodeForm = false
     @State private var pendingRequestMessage: String?
     @State private var requestTask: Task<Void, Never>?
+    @State private var requestFlowIdentity: PairingFlowIdentity?
+    @State private var isRequestCancelling = false
     @State private var diagnostics = ""
     @State private var copiedDiagnostics = false
     #if os(macOS)
@@ -42,15 +44,18 @@ struct OnboardingView: View {
                 DisclosureGroup("Scan a QR code instead") {
                     QRScannerPanel(paused: isPairing) { scanned in Task { await pair(link: scanned) } }
                 }
+                .disabled(isPairing)
                 #else
                 if localServer.health != nil {
                     Button("Use This Mac's Server") { Task { await pairWithThisMac() } }
                         .buttonStyle(.borderedProminent)
+                        .disabled(isPairing)
                         .frame(maxWidth: .infinity)
                         .accessibilityIdentifier("pair-local-server")
                 }
                 codeForm
                 DisclosureGroup("Use a pairing link instead") { linkForm }
+                    .disabled(isPairing)
                 #endif
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
@@ -59,17 +64,15 @@ struct OnboardingView: View {
                         .accessibilityIdentifier("pairing-error")
                 }
                 if let pendingRequestMessage {
-                    VStack(spacing: 12) {
-                        Text(pendingRequestMessage).multilineTextAlignment(.center)
-                        Button("Cancel Request", role: .cancel) {
-                            requestTask?.cancel()
-                            requestTask = nil
-                            self.pendingRequestMessage = nil
-                            isPairing = false
-                        }
-                    }
+                    Text(pendingRequestMessage).multilineTextAlignment(.center)
                 } else if isPairing {
                     ProgressView("Connecting…")
+                }
+                if requestFlowIdentity != nil {
+                    Button(isRequestCancelling ? "Cancelling…" : "Cancel Request", role: .cancel) {
+                        cancelRequestFlow()
+                    }
+                    .disabled(isRequestCancelling)
                 }
                 if !diagnostics.isEmpty {
                     Button(copiedDiagnostics ? "Diagnostics Copied" : "Copy Diagnostics") {
@@ -82,10 +85,12 @@ struct OnboardingView: View {
                         copiedDiagnostics = true
                     }
                     .buttonStyle(.borderless)
+                    .disabled(isPairing)
                 }
                 if let onSkip {
                     Button("Not now — play games on this device", action: onSkip)
                         .buttonStyle(.borderless)
+                        .disabled(isPairing)
                         .accessibilityIdentifier("skip-onboarding")
                 }
             }
@@ -150,16 +155,18 @@ struct OnboardingView: View {
             HStack {
                 TextField("supersemu://pair?d=…", text: $link)
                     .textFieldStyle(.roundedBorder)
+                    .disabled(isPairing)
                     .accessibilityIdentifier("pairing-link")
                     .onSubmit { Task { await pair(link: link) } }
                 Button("Paste") {
                     if let text = NSPasteboard.general.string(forType: .string) { link = text }
                 }
+                .disabled(isPairing)
                 .accessibilityIdentifier("paste-link")
             }
             Button("Connect with Link") { Task { await pair(link: link) } }
                 .buttonStyle(.borderedProminent)
-                .disabled(link.isEmpty)
+                .disabled(link.isEmpty || isPairing)
                 .accessibilityIdentifier("connect-link")
         }
     }
@@ -185,7 +192,7 @@ struct OnboardingView: View {
                         }
                     }
                     .buttonStyle(.bordered)
-                    .disabled(resolvingServerID != nil)
+                    .disabled(resolvingServerID != nil || isPairing)
                     .accessibilityIdentifier("discovered-server-\(server.id)")
                 }
             }
@@ -193,6 +200,7 @@ struct OnboardingView: View {
             TextField("mac-mini.local", text: $address)
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
+                .disabled(isPairing)
                 #if os(iOS)
                 .textInputAutocapitalization(.never)
                 .keyboardType(.URL)
@@ -200,18 +208,20 @@ struct OnboardingView: View {
                 .accessibilityIdentifier("server-address")
             Button("Request to Connect") { beginRequestToConnect() }
                 .buttonStyle(.borderedProminent)
-                .disabled(address.isEmpty || isPairing)
+                .disabled(address.isEmpty || isPairing || resolvingServerID != nil)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityIdentifier("request-to-connect")
             Button(showCodeForm ? "Hide pairing-code entry" : "Have a pairing code?") {
                 showCodeForm.toggle()
             }
             .buttonStyle(.borderless)
+            .disabled(isPairing)
             if showCodeForm {
             Text("Pairing code").font(.headline).padding(.top, 6)
             TextField("123456", text: $code)
                 .textFieldStyle(.roundedBorder)
                 .font(.title3.monospacedDigit())
+                .disabled(isPairing)
                 #if os(iOS)
                 .keyboardType(.numberPad)
                 #endif
@@ -219,7 +229,7 @@ struct OnboardingView: View {
                 .accessibilityIdentifier("pairing-code")
             Button("Connect") { Task { await pairWithCode() } }
                 .buttonStyle(.borderedProminent)
-                .disabled(address.isEmpty || code.count != 6)
+                .disabled(address.isEmpty || code.count != 6 || isPairing)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityIdentifier("connect-code")
             }
@@ -227,30 +237,28 @@ struct OnboardingView: View {
     }
 
     private func beginRequestToConnect() {
+        guard !isPairing, requestFlowIdentity == nil, resolvingServerID == nil else { return }
         guard let endpoint = endpointURL else {
             errorMessage = "Enter a server address or choose one from Servers on your network."
             return
         }
-        requestTask?.cancel()
-        requestTask = Task { await requestToConnect(endpoint) }
+        let identity = PairingFlowIdentity()
+        requestFlowIdentity = identity
+        isRequestCancelling = false
+        isPairing = true
+        errorMessage = nil
+        requestTask = Task { await requestToConnect(endpoint, identity: identity) }
     }
 
     private var endpointURL: URL? {
-        let raw = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return nil }
-        return URL(string: raw.contains("://") ? raw : "https://\(raw)")
+        PairingLinkParser.serverURL(fromAddress: address)
     }
 
-    private func requestToConnect(_ endpoint: URL) async {
-        isPairing = true
-        errorMessage = nil
-        defer {
-            isPairing = false
-            pendingRequestMessage = nil
-            requestTask = nil
-        }
+    private func requestToConnect(_ endpoint: URL, identity: PairingFlowIdentity) async {
+        defer { finishRequestFlow(identity) }
         do {
             let fingerprint = try await server.presentedCertificateSHA256(at: endpoint)
+            guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
             let secretBytes = (0..<32).map { _ in UInt8.random(in: .min ... .max) }
             let secret = secretBytes.map { String(format: "%02x", $0) }.joined()
             let claimHash = SHA256.hash(data: Data(secretBytes)).map { String(format: "%02x", $0) }.joined()
@@ -258,24 +266,33 @@ struct OnboardingView: View {
                                    session: PinnedCertificateDelegate.session(certificateSHA256: fingerprint))
             let created = try await client.createPairRequest(PairRequestCreate(
                 deviceName: pairingDeviceName, platform: pairingPlatform, claimHash: claimHash))
+            guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
             let matchCode = PairingMatchCode.compute(certificateSHA256: fingerprint, requestID: created.requestID,
                                                      claimHash: claimHash)
             let discoveredName = selectedServerAddress == endpoint ? selectedServer?.serverName : nil
             let serverName = discoveredName ?? endpoint.host ?? "SupersEmu Server"
             pendingRequestMessage = "Waiting for approval on \(serverName). Check that it shows code \(matchCode)."
-            while !Task.isCancelled {
+            while !Task.isCancelled, requestFlowIsCurrent(identity) {
                 do {
-                    switch try await client.claimPairRequest(id: created.requestID, claimSecret: secret) {
+                    let claim = try await client.claimPairRequest(id: created.requestID, claimSecret: secret)
+                    guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
+                    switch claim {
                     case .pending:
                         try await Task.sleep(for: .seconds(2))
                     case .paired(let response):
-                        try await server.pair(response: response, at: endpoint, certificateSHA256: fingerprint)
+                        guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
+                        try await server.pair(
+                            response: response, at: endpoint, certificateSHA256: fingerprint,
+                            shouldCommit: { requestFlowIsCurrent(identity) && !Task.isCancelled }
+                        )
                         return
                     }
                 } catch APIClientError.http(status: 403, _) {
+                    guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
                     errorMessage = "This connection request was denied."
                     return
                 } catch APIClientError.http(status: 410, _) {
+                    guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
                     errorMessage = "This connection request expired. Start a new request."
                     return
                 }
@@ -283,8 +300,28 @@ struct OnboardingView: View {
         } catch is CancellationError {
             return
         } catch {
+            guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
             recordDiagnostic(error, endpoint: endpoint)
         }
+    }
+
+    private func cancelRequestFlow() {
+        guard requestFlowIdentity != nil, !isRequestCancelling else { return }
+        isRequestCancelling = true
+        requestTask?.cancel()
+    }
+
+    private func requestFlowIsCurrent(_ identity: PairingFlowIdentity) -> Bool {
+        identity.matches(current: requestFlowIdentity)
+    }
+
+    private func finishRequestFlow(_ identity: PairingFlowIdentity) {
+        guard requestFlowIsCurrent(identity) else { return }
+        requestFlowIdentity = nil
+        isRequestCancelling = false
+        pendingRequestMessage = nil
+        requestTask = nil
+        isPairing = false
     }
 
     private var pairingDeviceName: String {
@@ -333,6 +370,7 @@ struct OnboardingView: View {
     }
 
     private func pair(link: String) async {
+        guard !isPairing else { return }
         guard let payload = PairingLinkParser.payload(fromLink: link) else {
             errorMessage = "That isn't a SupersEmu pairing link."
             return
@@ -341,6 +379,7 @@ struct OnboardingView: View {
     }
 
     private func pairWithCode() async {
+        guard !isPairing, resolvingServerID == nil else { return }
         if let selectedServer, let selectedServerAddress, address == selectedServerAddress.absoluteString {
             await pair(selectedServer.pairingPayload(at: selectedServerAddress, code: code))
             return
@@ -353,6 +392,7 @@ struct OnboardingView: View {
     }
 
     private func select(_ server: DiscoveredServer) async {
+        guard !isPairing else { return }
         resolvingServerID = server.id
         errorMessage = nil
         defer { resolvingServerID = nil }
@@ -368,6 +408,10 @@ struct OnboardingView: View {
 
     #if os(macOS)
     private func pairWithThisMac() async {
+        guard !isPairing else { return }
+        isPairing = true
+        errorMessage = nil
+        defer { isPairing = false }
         await localServer.refresh()
         if localServer.health == nil {
             for candidate in [ServerModeModel.Source.daemon, .session] where candidate != localServer.source {
@@ -386,9 +430,6 @@ struct OnboardingView: View {
             errorMessage = "This Mac's server certificate is unavailable. Enter a pairing code below instead."
             return
         }
-        isPairing = true
-        errorMessage = nil
-        defer { isPairing = false }
         do {
             let client = try LocalServerAdminClient.make(
                 dataDirectory: localServer.dataDirectory,
@@ -416,6 +457,7 @@ struct OnboardingView: View {
     #endif
 
     private func pair(_ payload: PairingPayload) async {
+        guard !isPairing else { return }
         if payload.certificateSHA256 == nil,
            let url = payload.urls.first(where: { $0.scheme?.lowercased() == "https" }) {
             isPairing = true
@@ -443,6 +485,7 @@ struct OnboardingView: View {
     }
 
     private func completePairing(_ payload: PairingPayload, confirmedCertificateSHA256: String? = nil) async {
+        guard !isPairing else { return }
         isPairing = true
         errorMessage = nil
         defer { isPairing = false }

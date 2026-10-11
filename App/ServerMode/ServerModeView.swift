@@ -99,9 +99,13 @@ struct ServerModeView: View {
         }
         .onChange(of: model.source) {
             library?.reset()
+            if model.isLocal { ServerStatusMonitor.shared.setLocalSource(model.source) }
             Task { await model.refresh(); await library?.refreshAll() }
         }
-        .onAppear(perform: consumeNavigationRequest)
+        .onAppear {
+            if model.isLocal { ServerStatusMonitor.shared.setLocalSource(model.source) }
+            consumeNavigationRequest()
+        }
         .onChange(of: navigation.requested) { _, _ in consumeNavigationRequest() }
         .onChange(of: showServerMenuBarIcon) { _, visible in
             ServerStatusMonitor.shared.setMenuBarIconVisible(visible)
@@ -116,6 +120,10 @@ struct ServerModeView: View {
         case (.storage, let library?): StorageView(model: library)
         default: overview
         }
+    }
+
+    private var pairingRequestsModel: ServerModeModel {
+        ServerStatusMonitor.shared.model
     }
 
     private var overview: some View {
@@ -246,7 +254,9 @@ struct ServerModeView: View {
                     .disabled(model.health == nil)
                 Spacer()
             }
-            if let error = model.pairingError { Text(error).foregroundStyle(.red).font(.callout) }
+            if let error = model.pairingError ?? pairingRequestsModel.pairingError {
+                Text(error).foregroundStyle(.red).font(.callout)
+            }
             if let pairing = model.pairing {
                 HStack(alignment: .top, spacing: 24) {
                     QRCodeImage(text: pairing.qrURL).frame(width: 220, height: 220)
@@ -270,28 +280,30 @@ struct ServerModeView: View {
                 }
                 .padding(.vertical, 6)
             }
-            ForEach(model.pairRequests) { request in
+            ForEach(pairingRequestsModel.pairRequests) { request in
                 VStack(alignment: .leading, spacing: 8) {
                     Text("\(request.deviceName) (\(request.platform)) wants to connect · Code \(request.matchCode)")
-                    if model.adminUsers.count > 1 {
+                    if pairingRequestsModel.adminUsers.count > 1 {
                         Picker("Assign to", selection: Binding(
-                            get: { selectedPairingUserID ?? model.adminUsers.first?.id ?? "" },
+                            get: { selectedPairingUserID ?? pairingRequestsModel.adminUsers.first?.id ?? "" },
                             set: { selectedPairingUserID = $0 }
                         )) {
-                            ForEach(model.adminUsers) { user in
+                            ForEach(pairingRequestsModel.adminUsers) { user in
                                 Text(user.displayName).tag(user.id)
                             }
                         }
                         Button("Approve") {
                             Task {
-                                await model.approvePairRequest(
-                                    request.id, userID: selectedPairingUserID ?? model.adminUsers.first?.id)
+                                await pairingRequestsModel.approvePairRequest(
+                                    request.id, userID: selectedPairingUserID ?? pairingRequestsModel.adminUsers.first?.id)
                             }
                         }
                     } else {
-                        Button("Approve") { Task { await model.approvePairRequest(request.id) } }
+                        Button("Approve") { Task { await pairingRequestsModel.approvePairRequest(request.id) } }
                     }
-                    Button("Deny", role: .destructive) { Task { await model.denyPairRequest(request.id) } }
+                    Button("Deny", role: .destructive) {
+                        Task { await pairingRequestsModel.denyPairRequest(request.id) }
+                    }
                 }
                 .padding(.vertical, 4)
             }

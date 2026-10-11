@@ -133,7 +133,13 @@ final class ServerSession {
         throw lastError
     }
 
-    func pair(response: PairResponse, at url: URL, certificateSHA256: String) async throws {
+    func pair(
+        response: PairResponse,
+        at url: URL,
+        certificateSHA256: String,
+        shouldCommit: () -> Bool
+    ) async throws {
+        guard shouldCommit() else { throw CancellationError() }
         let credential = ServerCredential(serverName: response.serverName, urls: [url],
                                           certificateSHA256: certificateSHA256, token: response.token,
                                           deviceID: response.deviceID, user: response.user)
