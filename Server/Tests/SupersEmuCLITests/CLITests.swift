@@ -104,7 +104,8 @@ final class CLIConfigTests: XCTestCase {
         let adminToken = dir.appendingPathComponent("admin.token")
         try "from-admin-file\n".write(to: adminToken, atomically: true, encoding: .utf8)
         func resolve(_ args: [String], env: [String: String] = [:], configURL: URL? = nil) throws -> Connection.Resolved {
-            try connection(args).resolve(environment: env, configURL: configURL ?? config, localAdminTokenPath: adminToken.path)
+            try connection(args).resolve(environment: env, configURL: configURL ?? config, localAdminTokenPath: adminToken.path,
+                                         localCertificatePath: dir.appendingPathComponent("server.cer").path)
         }
 
         XCTAssertEqual(try resolve([]), .init(server: URL(string: "http://mini:8487")!, token: "from-config"))

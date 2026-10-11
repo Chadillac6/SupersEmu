@@ -22,11 +22,12 @@ struct CoverArt: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 14)
-            .fill(LinearGradient(colors: ArtworkCache.palette(item.id), startPoint: .topLeading, endPoint: .bottomTrailing))
-            .aspectRatio(3 / 4, contentMode: .fit)
+            .fill(LinearGradient(colors: ArtworkCache.palette(item.id).map { $0.opacity(0.22) }, startPoint: .topLeading, endPoint: .bottomTrailing))
+            .aspectRatio(4 / 3, contentMode: .fit)
             .overlay {
                 if let image {
-                    image.resizable().scaledToFill()
+                    image.resizable().scaledToFit()
+                        .padding(6)
                 } else {
                     VStack(spacing: 8) {
                         Image(systemName: "gamecontroller.fill").font(.system(size: 34))
@@ -36,6 +37,7 @@ struct CoverArt: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 14))
+            .contentShape(RoundedRectangle(cornerRadius: 14))
             .task(id: ArtworkCache.taskID(item.coverPath, server)) {
                 await ArtworkCache.load(item.coverPath, key: item.id, server: server) { image = $0 }
             }
@@ -63,6 +65,8 @@ struct WideArt: View {
                 }
             }
             .clipped()
+            // Clipping the pixels alone does not clip SwiftUI mouse hit testing.
+            .contentShape(Rectangle())
             .task(id: ArtworkCache.taskID(item.heroPath ?? item.coverPath, server)) {
                 await ArtworkCache.load(item.heroPath, key: ArtworkCache.key(item.id, item.heroPath), server: server) { hero = $0 }
                 if hero == nil { await ArtworkCache.load(item.coverPath, key: item.id, server: server) { cover = $0 } }

@@ -55,8 +55,10 @@ final fallback. The manual cover beats every provider cover. Adding a provider m
    games mostly get title and region. Neither DAT has descriptions or critic scores; those come from Wikipedia and IGDB (below).
 3. Artwork. `Named_Boxarts` becomes `cover`, `Named_Titles` becomes `title`, and `Named_Snaps` becomes `screenshot/0`.
    Files come from `raw.githubusercontent.com/libretro-thumbnails/<System>/<commit>/…`, named by the DAT name with
-   `&*/:\`<>?\|"` replaced by `_`. Multi-disc sets also try the name without " (Disc N)". libretro has no backdrops. The artwork version is the
-   system's thumbnail commit, so bumping a thumbnail pin refetches art only.
+   `&*/:\`<>?\|"` replaced by `_`. Multi-disc sets also try the name without " (Disc N)". Revision tags such as " (Rev 1)"
+   are then omitted as a fallback, keeping region and language tags intact. Exact names always take precedence.
+   libretro has no backdrops. The artwork version combines the system's thumbnail commit with the name-fallback
+   algorithm version, so either change retries completed artwork jobs without rematching ROMs.
 4. Background. `MetadataService` runs after every import or scan, at launch, and every 30 minutes after that. All
    requests share one rate limiter (at most one request a second). Network errors leave the job pending for the next
    pass. `supersemu-server run --no-metadata` turns the service off.

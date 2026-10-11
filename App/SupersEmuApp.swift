@@ -10,6 +10,7 @@ struct SupersEmuApp: App {
     #if os(macOS)
     init() {
         ServerStatusMonitor.shared.startPolling()
+        _ = AppUpdater.shared
     }
     #endif
 
@@ -23,8 +24,16 @@ struct SupersEmuApp: App {
                 .preferredColorScheme(.dark)
                 #if os(macOS)
                 .serverModeLaunchHook()
+                .task { AppUpdater.shared.finishServerUpdateIfNeeded() }
                 #endif
         }
+        #if os(macOS)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                UpdateMenu(updater: AppUpdater.shared)
+            }
+        }
+        #endif
         #if os(macOS)
         ServerModeScene()
         ServerMenuBar()

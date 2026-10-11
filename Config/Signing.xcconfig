@@ -10,3 +10,5 @@ CODE_SIGN_STYLE = $(_SE_UNSIGNED_STYLE_$(SUPERSEMU_TEAM_ID):default=Automatic)
 CODE_SIGN_IDENTITY = $(_SE_UNSIGNED_IDENTITY_$(SUPERSEMU_TEAM_ID):default=Apple Development)
 
 #include? "Signing.local.xcconfig"
+
+#include "Updates.xcconfig"

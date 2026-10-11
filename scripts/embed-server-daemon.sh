@@ -11,7 +11,7 @@ swiftpm() { # arch, extra args...
     # Clean environment so Xcode's SDK/arch settings don't leak into SwiftPM.
     env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin" DEVELOPER_DIR="${DEVELOPER_DIR}" \
         xcrun swift build --package-path "${SRCROOT}/Server" --scratch-path "${PROJECT_TEMP_DIR}/supersemu-server-swiftpm-$arch" \
-        -c "$config" --product supersemu-server --triple "$arch-apple-macosx${MACOSX_DEPLOYMENT_TARGET:-15.0}" "$@"
+        -c "$config" --skip-update --product supersemu-server --triple "$arch-apple-macosx${MACOSX_DEPLOYMENT_TARGET:-15.0}" "$@"
 }
 # One slice per app architecture, so a universal Release app gets a universal server.
 slices=()

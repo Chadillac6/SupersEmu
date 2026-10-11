@@ -161,6 +161,14 @@ public enum CanonicalName {
         String(name.map { "&*/:`<>?\\|\"".contains($0) ? "_" : $0 })
     }
 
+    /// Try exact artwork first, then omit dump revision tags while preserving region and language.
+    public static func thumbnailCandidates(_ name: String) -> [String] {
+        let revisionless = name.replacingOccurrences(of: #" \(Rev [^)]+\)"#, with: "", options: .regularExpression)
+        let candidates = [name, withoutDiscNumber(name), revisionless, withoutDiscNumber(revisionless)].compactMap { $0 }
+        var seen = Set<String>()
+        return candidates.map(thumbnailName).filter { seen.insert($0).inserted }
+    }
+
     /// "Final Fantasy VII (USA) (Disc 1)" -> "Final Fantasy VII (USA)", for thumbnails named per set.
     public static func withoutDiscNumber(_ name: String) -> String? {
         guard let range = name.range(of: #" \(Disc [0-9]+\)"#, options: .regularExpression) else { return nil }

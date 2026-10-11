@@ -71,7 +71,8 @@ struct Connection: ParsableArguments {
 
     func resolve(environment: [String: String] = ProcessInfo.processInfo.environment,
                  configURL: URL? = nil,
-                 localAdminTokenPath: String = Connection.localAdminTokenPath) throws -> Resolved {
+                 localAdminTokenPath: String = Connection.localAdminTokenPath,
+                 localCertificatePath: String = Connection.localCertificatePath) throws -> Resolved {
         let explicitServer = nonEmpty(server) ?? nonEmpty(environment["SUPERSEMU_SERVER"])
         var resolvedToken = nonEmpty(token) ?? nonEmpty(environment["SUPERSEMU_TOKEN"])
         // The config file is only read when it can supply something, so a broken one never blocks explicit flags.
@@ -94,7 +95,7 @@ struct Connection: ParsableArguments {
         let pinConfig = config ?? (try? CLIConfigFile.load(from: configURL ?? CLIConfigFile.defaultURL(environment: environment))) ?? nil
         let savedPin = pinConfig.flatMap { Self.sameServer($0.server, serverString) ? nonEmpty($0.certificateSHA256) : nil }
         let pin = nonEmpty(certificateSHA256) ?? nonEmpty(environment["SUPERSEMU_CERT_SHA256"]) ?? savedPin
-            ?? (Self.isLocalDefaultServer(url) ? FileManager.default.contents(atPath: Self.localCertificatePath).map(CertificatePin.sha256(ofDER:)) : nil)
+            ?? (Self.isLocalDefaultServer(url) ? FileManager.default.contents(atPath: localCertificatePath).map(CertificatePin.sha256(ofDER:)) : nil)
         return Resolved(server: url, token: resolvedToken, certificateSHA256: pin)
     }
 

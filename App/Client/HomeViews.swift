@@ -60,10 +60,14 @@ struct HomeHero: View {
 
     var body: some View {
         WideArt(item: item)
+            // Scaled artwork can extend beyond its clipped frame and intercept selector clicks.
+            .allowsHitTesting(false)
             .frame(height: height)
             .overlay {
                 LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .center, endPoint: .bottom)
+                    .allowsHitTesting(false)
                 LinearGradient(colors: [.black.opacity(0.55), .clear], startPoint: .leading, endPoint: .trailing)
+                    .allowsHitTesting(false)
             }
             .overlay(alignment: .bottomLeading) {
                 VStack(alignment: .leading, spacing: 10) {
@@ -93,6 +97,7 @@ struct HomeHero: View {
                 .padding(24)
             }
             .clipShape(RoundedRectangle(cornerRadius: 22))
+            .contentShape(RoundedRectangle(cornerRadius: 22))
             .padding(.leading, 20)
             .padding(.trailing, JumpRail.inset)
             .accessibilityElement(children: .contain)
@@ -170,14 +175,24 @@ struct AlphabetGrid: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("All Games A–Z").font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier("shelf-all")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 16)], spacing: 20) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 20) {
                 ForEach(games) { item in
                     let letter = LibraryShelves.letter(for: item.title)
                     Button { select(item) } label: { GameCard(item: item, state: downloads.states[item.id]) }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("game-card")
                         .accessibilityLabel(item.title)
-                        .id(letterAnchors[letter] == item.id ? "letter-\(letter)" : item.id)
+                        // A letter anchor must not replace the game's identity: changing filters
+                        // otherwise reuses a lazy-grid tile for a different game.
+                        .id(item.id)
+                        .background(alignment: .top) {
+                            if letterAnchors[letter] == item.id {
+                                Color.clear.frame(width: 1, height: 1)
+                                    .id("letter-\(letter)")
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                 }
             }
             .padding(.leading, 20)
