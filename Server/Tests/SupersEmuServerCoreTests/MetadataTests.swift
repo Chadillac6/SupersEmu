@@ -243,6 +243,37 @@ let pass1 = await service(catalog).enrichPending()
         XCTAssertEqual(fetcher.requests.count, before)
     }
 
+    func testRevisionArtworkFallbackRetriesPreviouslyCompletedJobs() async throws {
+        let rom = ROMFixtures.snes(seed: 44)
+        let name = "Mega Man X (USA) (Rev 1)"
+        let catalog = catalog([.snes: ("Nintendo - Super Nintendo Entertainment System", "no-intro", [
+            "source": DatFixtures.entry(name, rom: rom, romName: "Mega Man X.sfc"),
+        ])])
+        let id = try await importROM(rom, "Mega Man X.sfc")
+        _ = await service(catalog).enrichPending()
+        // A previous server marked missing artwork done using only the pinned thumbnail commit.
+        try await store.db.write { db in
+            try db.execute(sql: "UPDATE metadata_jobs SET artwork_version = ? WHERE game_id = ?",
+                           arguments: ["thumbs1", id])
+        }
+        let url = catalog.thumbnailURL(catalog.systems[.snes]!, kind: "Named_Boxarts", name: "Mega Man X (USA)")
+        fetcher.set(url, DatFixtures.png)
+        _ = await service(catalog).enrichPending()
+        let summary = try LibraryQueries.visibleGames(for: try XCTUnwrap(store.authenticate(token: adminToken)), store: store)[0]
+        XCTAssertNotNil(summary.coverPath)
+        let before = fetcher.requests.count
+        _ = await service(catalog).enrichPending()
+        XCTAssertEqual(fetcher.requests.count, before, "completed jobs must not repeatedly download artwork")
+    }
+
+    func testThumbnailCandidatesPreserveRegionAndPreferExactRevision() {
+        XCTAssertEqual(CanonicalName.thumbnailCandidates("Game (USA) (En,Fr) (Rev 2) (Disc 1)"), [
+            "Game (USA) (En,Fr) (Rev 2) (Disc 1)", "Game (USA) (En,Fr) (Rev 2)",
+            "Game (USA) (En,Fr) (Disc 1)", "Game (USA) (En,Fr)",
+        ])
+        XCTAssertEqual(CanonicalName.thumbnailCandidates("Game (Japan)"), ["Game (Japan)"])
+    }
+
     func testOfflineKeepsImportedTitleAndRetries() async throws {
         let rom = ROMFixtures.snes(seed: 44)
         let catalog = catalog([.snes: ("Nintendo - Super Nintendo Entertainment System", "no-intro", [

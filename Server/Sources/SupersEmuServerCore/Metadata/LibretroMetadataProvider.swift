@@ -50,14 +50,14 @@ public actor LibretroMetadataProvider: MetadataProvider {
 
     public nonisolated func artwork(for record: MetadataRecord, system: SystemID) -> [ArtworkCandidate] {
         guard let set = catalog.systems[system], let name = record.providerRef else { return [] }
-        let names = [name, CanonicalName.withoutDiscNumber(name)].compactMap { $0 }.map(CanonicalName.thumbnailName)
+        let names = CanonicalName.thumbnailCandidates(name)
         return Self.thumbnailFolders.map { kind, folder in
             ArtworkCandidate(kind: kind, position: 0, urls: names.map { catalog.thumbnailURL(set, kind: folder, name: $0) })
         }
     }
 
     public nonisolated func artworkVersion(system: SystemID) -> String {
-        catalog.systems[system]?.thumbnailsCommit ?? version
+        (catalog.systems[system]?.thumbnailsCommit ?? version) + ":name-fallback-v2"
     }
 
     /// Every pinned DAT must load, or the lookup is retried later rather than matching with missing fields.
