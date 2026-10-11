@@ -89,14 +89,13 @@ final class ServerStatusMonitor {
         if visible { Task { await refresh() } }
     }
 
-    func setLocalSource(_ source: ServerModeModel.Source) {
-        guard source != .paired, model.source != source else { return }
-        model.source = source
-        Task { await refresh() }
-    }
-
     private func refresh() async {
         await model.refresh()
+        let desiredSource: ServerModeModel.Source = model.daemonStatus == .enabled ? .daemon : .session
+        if model.source != desiredSource {
+            model.source = desiredSource
+            await model.refresh()
+        }
         lastStatusRefreshAt = Date()
     }
 }

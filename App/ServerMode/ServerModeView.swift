@@ -99,11 +99,9 @@ struct ServerModeView: View {
         }
         .onChange(of: model.source) {
             library?.reset()
-            if model.isLocal { ServerStatusMonitor.shared.setLocalSource(model.source) }
             Task { await model.refresh(); await library?.refreshAll() }
         }
         .onAppear {
-            if model.isLocal { ServerStatusMonitor.shared.setLocalSource(model.source) }
             consumeNavigationRequest()
         }
         .onChange(of: navigation.requested) { _, _ in consumeNavigationRequest() }
