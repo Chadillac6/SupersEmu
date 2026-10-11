@@ -116,10 +116,15 @@ final class AdminUserRoutesTests: XCTestCase {
             }
             return created
         }
-        let audit = try store.db.read { try Row.fetchAll($0, sql: "SELECT * FROM audit_log") }
-        XCTAssertEqual(audit.map { $0["action"] as String }, ["token.create"])
-        XCTAssertEqual(audit.first?["actor_credential"] as String?, "device:\(adminDevice.deviceID)")
-        XCTAssertFalse((audit.first?["detail"] as String? ?? "").contains(created.token ?? "-"))
+        let audit = try await store.db.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM audit_log").map { row in
+                (action: row["action"] as String, actor: row["actor_credential"] as String?,
+                 detail: row["detail"] as String?)
+            }
+        }
+        XCTAssertEqual(audit.map(\.action), ["token.create"])
+        XCTAssertEqual(audit.first?.actor, "device:\(adminDevice.deviceID)")
+        XCTAssertFalse((audit.first?.detail ?? "").contains(created.token ?? "-"))
     }
 
     func testCreateTokenValidation() async throws {
