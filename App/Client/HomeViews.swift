@@ -182,7 +182,17 @@ struct AlphabetGrid: View {
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("game-card")
                         .accessibilityLabel(item.title)
-                        .id(letterAnchors[letter] == item.id ? "letter-\(letter)" : item.id)
+                        // A letter anchor must not replace the game's identity: changing filters
+                        // otherwise reuses a lazy-grid tile for a different game.
+                        .id(item.id)
+                        .background(alignment: .top) {
+                            if letterAnchors[letter] == item.id {
+                                Color.clear.frame(width: 1, height: 1)
+                                    .id("letter-\(letter)")
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                 }
             }
             .padding(.leading, 20)
