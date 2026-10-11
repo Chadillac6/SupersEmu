@@ -1,3 +1,4 @@
+import CryptoKit
 import SupersEmuKit
 import SwiftUI
 #if os(iOS)
@@ -24,28 +25,22 @@ struct OnboardingView: View {
     @State private var fingerprintConfirmationPayload: PairingPayload?
     @State private var fingerprintConfirmationValue: String?
     @State private var showFingerprintConfirmation = false
+    @State private var showCodeForm = false
+    @State private var pendingRequestMessage: String?
+    @State private var requestTask: Task<Void, Never>?
+    @State private var diagnostics = ""
+    @State private var copiedDiagnostics = false
     #if os(macOS)
     @State private var localServer = ServerModeModel()
     #endif
-    #if os(iOS)
-    @State private var mode: Mode = .scan
-    enum Mode: String, CaseIterable { case scan = "Scan QR Code", code = "Enter Code" }
-    #endif
-
     var body: some View {
         ScrollView {
             VStack(spacing: 22) {
                 header
                 #if os(iOS)
-                Picker("Pairing method", selection: $mode) {
-                    ForEach(Mode.allCases, id: \.self) { Text($0.rawValue) }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("pairing-mode")
-                if mode == .scan {
+                codeForm
+                DisclosureGroup("Scan a QR code instead") {
                     QRScannerPanel(paused: isPairing) { scanned in Task { await pair(link: scanned) } }
-                } else {
-                    codeForm
                 }
                 #else
                 if localServer.health != nil {
@@ -54,9 +49,8 @@ struct OnboardingView: View {
                         .frame(maxWidth: .infinity)
                         .accessibilityIdentifier("pair-local-server")
                 }
-                linkForm
-                HStack { line; Text("or").foregroundStyle(.secondary); line }
                 codeForm
+                DisclosureGroup("Use a pairing link instead") { linkForm }
                 #endif
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
@@ -64,7 +58,31 @@ struct OnboardingView: View {
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("pairing-error")
                 }
-                if isPairing { ProgressView("Connecting…") }
+                if let pendingRequestMessage {
+                    VStack(spacing: 12) {
+                        Text(pendingRequestMessage).multilineTextAlignment(.center)
+                        Button("Cancel Request", role: .cancel) {
+                            requestTask?.cancel()
+                            requestTask = nil
+                            self.pendingRequestMessage = nil
+                            isPairing = false
+                        }
+                    }
+                } else if isPairing {
+                    ProgressView("Connecting…")
+                }
+                if !diagnostics.isEmpty {
+                    Button(copiedDiagnostics ? "Diagnostics Copied" : "Copy Diagnostics") {
+                        #if os(iOS)
+                        UIPasteboard.general.string = diagnostics
+                        #else
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(diagnostics, forType: .string)
+                        #endif
+                        copiedDiagnostics = true
+                    }
+                    .buttonStyle(.borderless)
+                }
                 if let onSkip {
                     Button("Not now — play games on this device", action: onSkip)
                         .buttonStyle(.borderless)
@@ -75,7 +93,6 @@ struct OnboardingView: View {
             .padding(28)
             .frame(maxWidth: .infinity)
         }
-        .disabled(isPairing)
         .task {
             let browser = ServerBrowser()
             for await servers in browser.servers() {
@@ -84,7 +101,13 @@ struct OnboardingView: View {
             }
         }
         #if os(macOS)
-        .task { await localServer.refresh() }
+        .task {
+            await localServer.refresh()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                await localServer.refresh()
+            }
+        }
         #endif
         .alert("Verify the server fingerprint", isPresented: $showFingerprintConfirmation) {
             Button("Cancel", role: .cancel) {
@@ -114,13 +137,11 @@ struct OnboardingView: View {
 
     private var instructions: String {
         #if os(iOS)
-        "On your Mac mini, open SupersEmu in Server mode and choose Pair a Device. Scan the QR code, or type the address and 6-digit code."
+        "Choose a server on your network or enter its address to request approval. You can also scan a QR code."
         #else
-        "On your Mac mini, open SupersEmu in Server mode and choose Pair a Device. Paste the pairing link, or type the address and 6-digit code."
+        "Choose a server on your network or enter its address to request approval. You can also use a pairing code or link."
         #endif
     }
-
-    private var line: some View { Rectangle().fill(.secondary.opacity(0.3)).frame(height: 1) }
 
     #if os(macOS)
     private var linkForm: some View {
@@ -177,6 +198,16 @@ struct OnboardingView: View {
                 .keyboardType(.URL)
                 #endif
                 .accessibilityIdentifier("server-address")
+            Button("Request to Connect") { beginRequestToConnect() }
+                .buttonStyle(.borderedProminent)
+                .disabled(address.isEmpty || isPairing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityIdentifier("request-to-connect")
+            Button(showCodeForm ? "Hide pairing-code entry" : "Have a pairing code?") {
+                showCodeForm.toggle()
+            }
+            .buttonStyle(.borderless)
+            if showCodeForm {
             Text("Pairing code").font(.headline).padding(.top, 6)
             TextField("123456", text: $code)
                 .textFieldStyle(.roundedBorder)
@@ -191,7 +222,114 @@ struct OnboardingView: View {
                 .disabled(address.isEmpty || code.count != 6)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityIdentifier("connect-code")
+            }
         }
+    }
+
+    private func beginRequestToConnect() {
+        guard let endpoint = endpointURL else {
+            errorMessage = "Enter a server address or choose one from Servers on your network."
+            return
+        }
+        requestTask?.cancel()
+        requestTask = Task { await requestToConnect(endpoint) }
+    }
+
+    private var endpointURL: URL? {
+        let raw = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        return URL(string: raw.contains("://") ? raw : "https://\(raw)")
+    }
+
+    private func requestToConnect(_ endpoint: URL) async {
+        isPairing = true
+        errorMessage = nil
+        defer {
+            isPairing = false
+            pendingRequestMessage = nil
+            requestTask = nil
+        }
+        do {
+            let fingerprint = try await server.presentedCertificateSHA256(at: endpoint)
+            let secretBytes = (0..<32).map { _ in UInt8.random(in: .min ... .max) }
+            let secret = secretBytes.map { String(format: "%02x", $0) }.joined()
+            let claimHash = SHA256.hash(data: Data(secretBytes)).map { String(format: "%02x", $0) }.joined()
+            let client = APIClient(baseURL: endpoint, token: nil,
+                                   session: PinnedCertificateDelegate.session(certificateSHA256: fingerprint))
+            let created = try await client.createPairRequest(PairRequestCreate(
+                deviceName: pairingDeviceName, platform: pairingPlatform, claimHash: claimHash))
+            let matchCode = PairingMatchCode.compute(certificateSHA256: fingerprint, requestID: created.requestID,
+                                                     claimHash: claimHash)
+            let discoveredName = selectedServerAddress == endpoint ? selectedServer?.serverName : nil
+            let serverName = discoveredName ?? endpoint.host ?? "SupersEmu Server"
+            pendingRequestMessage = "Waiting for approval on \(serverName). Check that it shows code \(matchCode)."
+            while !Task.isCancelled {
+                do {
+                    switch try await client.claimPairRequest(id: created.requestID, claimSecret: secret) {
+                    case .pending:
+                        try await Task.sleep(for: .seconds(2))
+                    case .paired(let response):
+                        try await server.pair(response: response, at: endpoint, certificateSHA256: fingerprint)
+                        return
+                    }
+                } catch APIClientError.http(status: 403, _) {
+                    errorMessage = "This connection request was denied."
+                    return
+                } catch APIClientError.http(status: 410, _) {
+                    errorMessage = "This connection request expired. Start a new request."
+                    return
+                }
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            recordDiagnostic(error, endpoint: endpoint)
+        }
+    }
+
+    private var pairingDeviceName: String {
+        #if os(iOS)
+        UIDevice.current.name
+        #else
+        Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+        #endif
+    }
+
+    private var pairingPlatform: String {
+        #if os(iOS)
+        "iOS"
+        #else
+        "macOS"
+        #endif
+    }
+
+    private func recordDiagnostic(_ error: Error, endpoint: URL) {
+        let diagnosis = ConnectionDiagnosis.from(error: error)
+        errorMessage = diagnosis.message
+        let nsError = error as NSError
+        let httpStatus: String
+        if let clientError = error as? APIClientError, case .http(let status, _) = clientError {
+            httpStatus = "\(status)"
+        } else {
+            httpStatus = "none"
+        }
+        let info = Bundle.main.infoDictionary ?? [:]
+        var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
+        components?.user = nil
+        components?.password = nil
+        components?.path = ""
+        components?.query = nil
+        components?.fragment = nil
+        let safeEndpoint = components?.string ?? "\(endpoint.scheme ?? "https")://\(endpoint.host ?? "unknown")"
+        diagnostics = """
+        timestamp: \(ISO8601DateFormatter().string(from: Date()))
+        app: \(info["CFBundleShortVersionString"] ?? "unknown") (\(info["CFBundleVersion"] ?? "unknown"))
+        endpoint: \(safeEndpoint)
+        discovery source: \(selectedServerAddress == endpoint ? "Bonjour" : "manual")
+        diagnosis: \(diagnosis)
+        error: \(nsError.domain) \(nsError.code)
+        HTTP status: \(httpStatus)
+        """
     }
 
     private func pair(link: String) async {
@@ -224,12 +362,25 @@ struct OnboardingView: View {
             selectedServerAddress = resolvedAddress
             address = resolvedAddress.absoluteString
         } catch {
-            errorMessage = "Couldn't resolve \(server.serverName). Try entering its address manually."
+            recordDiagnostic(error, endpoint: URL(string: "https://\(server.name).local")!)
         }
     }
 
     #if os(macOS)
     private func pairWithThisMac() async {
+        await localServer.refresh()
+        if localServer.health == nil {
+            for candidate in [ServerModeModel.Source.daemon, .session] where candidate != localServer.source {
+                localServer.source = candidate
+                await localServer.refresh()
+                if localServer.health != nil { break }
+            }
+        }
+        guard localServer.health != nil else {
+            address = localServer.localURL.absoluteString
+            errorMessage = "No local server is running. Start one in Server Mode, or enter another server address below."
+            return
+        }
         guard let pin = localServer.certificateSHA256 else {
             address = localServer.localURL.absoluteString
             errorMessage = "This Mac's server certificate is unavailable. Enter a pairing code below instead."
@@ -255,10 +406,11 @@ struct OnboardingView: View {
             try await server.pair(payload)
         } catch {
             address = localServer.localURL.absoluteString
-            let description = String(describing: error)
-            errorMessage = description.contains("admin.token")
-                ? "Couldn't read this Mac's admin token. You can still enter a pairing code below."
-                : "Couldn't pair with this Mac's server: \(description)"
+            if String(describing: error).contains("admin.token") {
+                errorMessage = "Couldn't read this Mac's admin token. You can still enter a pairing code below."
+            } else {
+                recordDiagnostic(error, endpoint: localServer.localURL)
+            }
         }
     }
     #endif
@@ -274,7 +426,7 @@ struct OnboardingView: View {
                 fingerprintConfirmationValue = fingerprint
                 showFingerprintConfirmation = true
             } catch {
-                errorMessage = "Couldn't verify \(payload.serverName): \(error.localizedDescription)"
+                recordDiagnostic(error, endpoint: url)
             }
             isPairing = false
             return
@@ -296,15 +448,8 @@ struct OnboardingView: View {
         defer { isPairing = false }
         do {
             try await server.pair(payload, confirmedCertificateSHA256: confirmedCertificateSHA256)
-        } catch let error as APIClientError {
-            switch error {
-            case .http(let status, let message) where status == 400 || status == 401 || status == 404 || status == 410:
-                errorMessage = message ?? "That code didn't work. It may have expired; make a new one on the server."
-            default:
-                errorMessage = error.description
-            }
         } catch {
-            errorMessage = "Couldn't reach \(payload.serverName). Check that you're on the same network (or Tailscale)."
+            recordDiagnostic(error, endpoint: payload.urls.first ?? URL(string: "https://unknown")!)
         }
     }
 }

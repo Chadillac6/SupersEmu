@@ -133,6 +133,24 @@ final class ServerSession {
         throw lastError
     }
 
+    func pair(response: PairResponse, at url: URL, certificateSHA256: String) async throws {
+        let credential = ServerCredential(serverName: response.serverName, urls: [url],
+                                          certificateSHA256: certificateSHA256, token: response.token,
+                                          deviceID: response.deviceID, user: response.user)
+        try store.save(credential)
+        generation += 1
+        refreshTask?.cancel()
+        refreshTask = nil
+        urlSession = nil
+        self.credential = credential
+        libraryRevision = nil
+        activeURL = url
+        trust = nil
+        monitor.paired()
+        publish()
+        await refresh()
+    }
+
     /// Retry button: skips the remaining backoff.
     func retryNow() async {
         monitor.networkChanged()

@@ -7,10 +7,14 @@ import Synchronization
 
 extension PairingCode: ResponseEncodable {}
 extension PairResponse: ResponseEncodable {}
+extension PairRequestCreated: ResponseEncodable {}
+extension PendingPairRequest: ResponseEncodable {}
+extension PairRequestActionResponse: ResponseEncodable {}
 
 // Track: pairing + network. POST /v1/admin/pairing-codes, POST /v1/pair.
 func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, authed: RouterGroup<SERequestContext>, store: ServerStore) {
     let service = PairingService(store: store)
+    let requests = PairRequestService(store: store, pairing: service)
 
     authed.post("admin/pairing-codes") { request, context in
         let auth = try context.caller()
@@ -28,6 +32,60 @@ func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, au
         }
         let body = try await request.decode(as: PairRequest.self, context: context)
         return try service.pair(body, client: client)
+    }
+
+    publicGroup.post("pair/requests") { request, context in
+        let client = context.remoteAddress ?? "unknown"
+        guard service.limiter.allowAttempt(client: client) else {
+            throw HTTPError(.tooManyRequests, message: "Too many pairing requests. Wait a minute and try again.")
+        }
+        let body = try await request.decode(as: PairRequestCreate.self, context: context)
+        let created = try await requests.create(body, remoteAddress: client)
+        service.limiter.recordFailure(client: client)
+        return EditedResponse(status: .created, response: created)
+    }
+
+    publicGroup.post("pair/requests/:id/claim") { request, context in
+        let id = UUID(uuidString: try context.parameters.require("id"))
+        guard let id else { throw HTTPError(.notFound, message: "No such pairing request") }
+        let body = try await request.decode(as: PairRequestClaim.self, context: context)
+        switch try await requests.claim(id: id, claimSecret: body.claimSecret) {
+        case .pending:
+            return try LibraryHTTP.json(PairRequestPending(), status: .accepted)
+        case .paired(let response):
+            return try LibraryHTTP.json(response)
+        }
+    }
+
+    @Sendable func adminCaller(_ context: SERequestContext) throws -> AuthContext {
+        let auth = try context.caller()
+        try auth.requireAdmin()
+        try auth.require(.usersAdmin)
+        return auth
+    }
+
+    authed.get("admin/pair-requests") { _, context in
+        _ = try adminCaller(context)
+        return await requests.pending()
+    }
+
+    authed.post("admin/pair-requests/:id/approve") { request, context in
+        let auth = try adminCaller(context)
+        guard let id = UUID(uuidString: try context.parameters.require("id")) else {
+            throw HTTPError(.notFound, message: "No such pairing request")
+        }
+        let body = try await request.decode(as: PairRequestApproval.self, context: context)
+        try await requests.approve(id: id, userID: body.userID, caller: auth)
+        return PairRequestActionResponse(status: "approved")
+    }
+
+    authed.post("admin/pair-requests/:id/deny") { _, context in
+        let auth = try adminCaller(context)
+        guard let id = UUID(uuidString: try context.parameters.require("id")) else {
+            throw HTTPError(.notFound, message: "No such pairing request")
+        }
+        try await requests.deny(id: id, caller: auth)
+        return PairRequestActionResponse(status: "denied")
     }
 }
 
@@ -102,17 +160,12 @@ public final class PairingService: Sendable {
             guard let row = rows.first(where: { Self.hash(code, salt: $0["salt"]) == $0["code_hash"] }) else { return nil }
             let codeID: String = row["code_id"]
             let user = ServerStore.user(from: row)
-            let token = ServerStore.newToken(prefix: "sed_")
-            let deviceID = UUID().uuidString.lowercased()
-            try db.execute(sql: "UPDATE pairing_codes SET used_at = ?, device_platform = ?, device_id = ? WHERE id = ? AND used_at IS NULL",
-                           arguments: [at, platform, deviceID, codeID])
+            try db.execute(sql: "UPDATE pairing_codes SET used_at = ?, device_platform = ? WHERE id = ? AND used_at IS NULL",
+                           arguments: [at, platform, codeID])
             guard db.changesCount == 1 else { return nil }
-            try db.execute(sql: "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-                           arguments: [deviceID, user.id, deviceName, ServerStore.hash(token), at])
-            let actor = AuthContext(user: user, credential: .device(id: deviceID))
-            try db.execute(sql: "INSERT INTO audit_log (at, actor_user_id, actor_credential, action, detail) VALUES (?, ?, ?, ?, ?)",
-                           arguments: [at, user.id, actor.credentialID, "pairing.device_paired", "device=\(deviceName) platform=\(platform)"])
-            return (user, deviceID, token)
+            let device = try Self.mintDevice(db: db, user: user, deviceName: deviceName, platform: platform, at: at)
+            try db.execute(sql: "UPDATE pairing_codes SET device_id = ? WHERE id = ?", arguments: [device.deviceID, codeID])
+            return (user, device.deviceID, device.token)
         }
         guard let paired else {
             limiter.recordFailure(client: client)
@@ -128,6 +181,180 @@ public final class PairingService: Sendable {
 
     static func hash(_ code: String, salt: String) -> String {
         SHA256.hash(data: Data("\(salt):\(code)".utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    func pairApprovedDevice(userID: String?, request: PendingPairRequest, caller: AuthContext) throws -> PairResponse {
+        let user: UserInfo
+        if let userID {
+            guard let row = try store.db.read({ db in
+                try Row.fetchOne(db, sql: "SELECT * FROM users WHERE id = ? AND revoked_at IS NULL", arguments: [userID])
+            }) else { throw HTTPError(.notFound, message: "No such user") }
+            user = ServerStore.user(from: row)
+        } else {
+            let ownerID = requestOwnerID
+            guard let row = try store.db.read({ db in
+                try Row.fetchOne(db, sql: "SELECT * FROM users WHERE id = ? AND revoked_at IS NULL", arguments: [ownerID])
+            }) else { throw HTTPError(.notFound, message: "No owner user") }
+            user = ServerStore.user(from: row)
+        }
+        let at = now()
+        let device = try store.db.write { db in
+            let device = try Self.mintDevice(db: db, user: user, deviceName: request.deviceName, platform: request.platform, at: at)
+            try db.execute(sql: "INSERT INTO audit_log (at, actor_user_id, actor_credential, action, detail) VALUES (?, ?, ?, ?, ?)",
+                           arguments: [at, caller.user.id, caller.credentialID, "pairing.request_approved", "id=\(request.id) user=\(user.id)"])
+            return device
+        }
+        return PairResponse(token: device.token, deviceID: device.deviceID, user: user, serverName: store.serverName)
+    }
+
+    private var requestOwnerID: String {
+        (try? store.db.read { db in
+            try String.fetchOne(db, sql: "SELECT id FROM users WHERE role = 'admin' AND revoked_at IS NULL ORDER BY created_at LIMIT 1")
+        }) ?? ""
+    }
+
+    private static func mintDevice(db: Database, user: UserInfo, deviceName: String, platform: String, at: Date) throws
+        -> (deviceID: String, token: String) {
+        let token = ServerStore.newToken(prefix: "sed_")
+        let deviceID = UUID().uuidString.lowercased()
+        try db.execute(sql: "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+                       arguments: [deviceID, user.id, deviceName, ServerStore.hash(token), at])
+        let actor = AuthContext(user: user, credential: .device(id: deviceID))
+        try db.execute(sql: "INSERT INTO audit_log (at, actor_user_id, actor_credential, action, detail) VALUES (?, ?, ?, ?, ?)",
+                       arguments: [at, user.id, actor.credentialID, "pairing.device_paired", "device=\(deviceName) platform=\(platform)"])
+        return (deviceID, token)
+    }
+}
+
+actor PairRequestService {
+    private enum State {
+        case waiting
+        case approved(PairResponse)
+        case denied
+        case expired
+        case consumed
+    }
+
+    private struct Entry {
+        var request: PendingPairRequest
+        var claimHash: String
+        var state: State
+    }
+
+    private let store: ServerStore
+    private let pairing: PairingService
+    private let now: @Sendable () -> Date
+    private let lifetime: TimeInterval
+    private let maximumPending: Int
+    private var entries: [UUID: Entry] = [:]
+
+    init(store: ServerStore, pairing: PairingService, now: @escaping @Sendable () -> Date = { Date() },
+         lifetime: TimeInterval = 5 * 60, maximumPending: Int = 5) {
+        self.store = store
+        self.pairing = pairing
+        self.now = now
+        self.lifetime = lifetime
+        self.maximumPending = maximumPending
+    }
+
+    func create(_ body: PairRequestCreate, remoteAddress: String) throws -> PairRequestCreated {
+        let name = body.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 100,
+              !body.platform.isEmpty, body.platform.count <= 40,
+              body.claimHash.count == 64, body.claimHash.allSatisfy(\.isHexDigit) else {
+            throw HTTPError(.badRequest, message: "Invalid pairing request")
+        }
+        let created = now()
+        entries = entries.filter { $0.value.request.expiresAt.addingTimeInterval(60 * 60) > created }
+        let pending = entries.values.filter { if case .waiting = $0.state { return $0.request.expiresAt > created }; return false }
+        if pending.count >= maximumPending, let oldest = pending.min(by: { $0.request.createdAt < $1.request.createdAt }) {
+            entries[oldest.request.id]?.state = .expired
+        }
+        let id = UUID()
+        let expires = created.addingTimeInterval(lifetime)
+        let certificate = PairingEnvironment.resolve(for: store).certificateSHA256 ?? ""
+        let publicRequest = PendingPairRequest(
+            id: id, deviceName: name, platform: String(body.platform.prefix(40)), remoteAddress: remoteAddress,
+            matchCode: PairingMatchCode.compute(certificateSHA256: certificate, requestID: id, claimHash: body.claimHash),
+            createdAt: created, expiresAt: expires)
+        entries[id] = Entry(request: publicRequest, claimHash: body.claimHash.lowercased(), state: .waiting)
+        try store.audit(nil, action: "pairing.request_created", detail: "id=\(id) device=\(name) platform=\(body.platform) address=\(remoteAddress)")
+        return PairRequestCreated(requestID: id, expiresAt: expires)
+    }
+
+    func pending() -> [PendingPairRequest] {
+        let at = now()
+        return entries.values.compactMap { entry in
+            guard case .waiting = entry.state, entry.request.expiresAt > at else { return nil }
+            return entry.request
+        }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    func claim(id: UUID, claimSecret: String) throws -> PairRequestClaimResult {
+        guard var entry = entries[id] else { throw HTTPError(.notFound, message: "No such pairing request") }
+        let secretBytes = Self.decodeHex(claimSecret)
+        guard let secretBytes else { throw HTTPError(.notFound, message: "No such pairing request") }
+        let suppliedHash = SHA256.hash(data: secretBytes).map { String(format: "%02x", $0) }.joined()
+        guard Self.constantTimeEquals(entry.claimHash, suppliedHash) else {
+            throw HTTPError(.notFound, message: "No such pairing request")
+        }
+        if entry.request.expiresAt <= now() {
+            entry.state = .expired
+            entries[id] = entry
+        }
+        switch entry.state {
+        case .waiting:
+            return .pending
+        case .approved(let response):
+            entry.state = .consumed
+            entries[id] = entry
+            return .paired(response)
+        case .denied:
+            throw HTTPError(.forbidden, message: "Pairing request denied")
+        case .expired, .consumed:
+            throw HTTPError(.gone, message: "Pairing request expired or already claimed")
+        }
+    }
+
+    func approve(id: UUID, userID: String?, caller: AuthContext) throws {
+        guard var entry = entries[id] else { throw HTTPError(.notFound, message: "No such pairing request") }
+        guard entry.request.expiresAt > now() else { throw HTTPError(.gone, message: "Pairing request expired") }
+        guard case .waiting = entry.state else { throw HTTPError(.gone, message: "Pairing request is no longer pending") }
+        let response = try pairing.pairApprovedDevice(userID: userID, request: entry.request, caller: caller)
+        entry.state = .approved(response)
+        entries[id] = entry
+    }
+
+    func deny(id: UUID, caller: AuthContext) throws {
+        guard var entry = entries[id] else { throw HTTPError(.notFound, message: "No such pairing request") }
+        guard entry.request.expiresAt > now() else { throw HTTPError(.gone, message: "Pairing request expired") }
+        guard case .waiting = entry.state else { throw HTTPError(.gone, message: "Pairing request is no longer pending") }
+        entry.state = .denied
+        entries[id] = entry
+        try store.audit(caller, action: "pairing.request_denied", detail: "id=\(id)")
+    }
+
+    private static func decodeHex(_ value: String) -> Data? {
+        guard value.count == 64, value.allSatisfy(\.isHexDigit) else { return nil }
+        var result = Data()
+        var index = value.startIndex
+        while index < value.endIndex {
+            let next = value.index(index, offsetBy: 2)
+            guard let byte = UInt8(value[index..<next], radix: 16) else { return nil }
+            result.append(byte)
+            index = next
+        }
+        return result
+    }
+
+    private static func constantTimeEquals(_ lhs: String, _ rhs: String) -> Bool {
+        let left = Array(lhs.utf8)
+        let right = Array(rhs.utf8)
+        var difference = UInt8(left.count ^ right.count)
+        for index in 0..<max(left.count, right.count) {
+            difference |= (index < left.count ? left[index] : 0) ^ (index < right.count ? right[index] : 0)
+        }
+        return difference == 0
     }
 }
 
@@ -162,6 +389,10 @@ public final class PairingRateLimiter: Sendable {
     }
 
     public func recordFailure(client: String) {
+        recordAttempt(client: client)
+    }
+
+    public func recordAttempt(client: String) {
         let at = now()
         failures.withLock { $0[client, default: []].append(at) }
     }
