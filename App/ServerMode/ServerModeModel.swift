@@ -37,7 +37,15 @@ final class ServerModeModel {
     static let daemonPort = 8487
     static let sessionPort = 8488
 
-    var source: Source
+    var source: Source {
+        didSet {
+            guard oldValue != source else { return }
+            pairingRequestGeneration += 1
+            pairing = nil
+            pairingError = nil
+        }
+    }
+    private var pairingRequestGeneration = 0
     private(set) var daemonStatus: SMAppService.Status
     private(set) var sessionRunning = false
     private(set) var sessionStoppedUnexpectedly = false
@@ -245,10 +253,15 @@ final class ServerModeModel {
     // MARK: Pairing
 
     func createPairingCode() async {
+        pairingRequestGeneration += 1
+        let request = PairingRequestIdentity(generation: pairingRequestGeneration, source: source.rawValue)
         do {
-            pairing = try await client(authenticated: true).createPairingCode()
+            let newPairing = try await client(authenticated: true).createPairingCode()
+            guard request.matches(generation: pairingRequestGeneration, source: source.rawValue) else { return }
+            pairing = newPairing
             pairingError = nil
         } catch {
+            guard request.matches(generation: pairingRequestGeneration, source: source.rawValue) else { return }
             pairingError = "\(error)"
         }
     }

@@ -3,7 +3,7 @@ import SupersEmuKit
 import XCTest
 
 final class ConnectionBonjourTests: XCTestCase {
-    func testDiscoveredServerBuildsPinnedPairingPayload() throws {
+    func testDiscoveredServerDoesNotTrustAdvertisedFingerprintForPairing() throws {
         let endpoint = NWEndpoint.service(
             name: "supers-emu",
             type: SupersEmuBonjour.serviceType,
@@ -21,7 +21,7 @@ final class ConnectionBonjourTests: XCTestCase {
 
         XCTAssertEqual(payload.serverName, "Mac mini")
         XCTAssertEqual(payload.urls, [address])
-        XCTAssertEqual(payload.certificateSHA256, String(repeating: "a", count: 64))
+        XCTAssertNil(payload.certificateSHA256)
         XCTAssertEqual(payload.code, "123456")
     }
 }

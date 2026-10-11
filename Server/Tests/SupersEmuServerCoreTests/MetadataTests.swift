@@ -49,6 +49,20 @@ enum DatFixtures {
     static let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 9, 9, 9])
 }
 
+private struct PartialArtworkProvider: MetadataProvider {
+    let artworkURL: URL
+    var id: String { "test-artwork" }
+    var version: String { "stable" }
+
+    func lookup(_ game: MetadataLookup) async throws -> MetadataLookupResult {
+        .partial(MetadataRecord(provider: id, providerRef: "same-game", title: "Same Game"))
+    }
+
+    func artwork(for record: MetadataRecord, system: SystemID) -> [ArtworkCandidate] {
+        [ArtworkCandidate(kind: .cover, position: 0, urls: [artworkURL])]
+    }
+}
+
 final class MetadataTests: XCTestCase {
     var store: ServerStore!
     var adminToken: String!
@@ -268,13 +282,46 @@ let pass3 = await service.enrichPending()
 let pass4 = await service.enrichPending()
         XCTAssertEqual(pass4, 1, "matched from the cached DAT while offline")
         let status = try await store.db.read { try String.fetchOne($0, sql: "SELECT artwork_status FROM metadata_jobs WHERE game_id = ?", arguments: [id]) }
-        XCTAssertNil(status)
+        XCTAssertEqual(status, "failed")
 
         fetcher.offline = false
         fetcher.set(catalog.thumbnailURL(catalog.systems[.gba]!, kind: "Named_Boxarts", name: name), DatFixtures.png)
         await service.enrichPending()
         let cover = try await store.db.read { try String.fetchOne($0, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND kind = 'cover'", arguments: [id]) }
         XCTAssertNotNil(cover)
+    }
+
+    func testArtworkURLChangeRefetchesForTheSameMatch() async throws {
+        let id = try await importROM(ROMFixtures.gba(seed: 71), "same-game.gba")
+        let oldURL = URL(string: "https://art.example/old.png")!
+        let newURL = URL(string: "https://art.example/new.png")!
+        fetcher.set(oldURL, DatFixtures.png)
+        let oldProvider = PartialArtworkProvider(artworkURL: oldURL)
+        let firstService = MetadataService(store: store, http: RateLimitedFetcher(fetcher, minimumInterval: .zero),
+                                           providers: [oldProvider])
+        await firstService.enrichPending()
+        let original = try await store.db.read {
+            (
+                try String.fetchOne($0, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND kind = 'cover'", arguments: [id]),
+                try String.fetchOne($0, sql: "SELECT record_hash FROM metadata_jobs WHERE game_id = ?", arguments: [id])
+            )
+        }
+
+        fetcher.set(newURL, DatFixtures.png + Data([2]))
+        let newProvider = PartialArtworkProvider(artworkURL: newURL)
+        let secondService = MetadataService(store: store, http: RateLimitedFetcher(fetcher, minimumInterval: .zero),
+                                            providers: [newProvider])
+        await secondService.enrichPending()
+        let updated = try await store.db.read {
+            (
+                try String.fetchOne($0, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND kind = 'cover'", arguments: [id]),
+                try String.fetchOne($0, sql: "SELECT record_hash FROM metadata_jobs WHERE game_id = ?", arguments: [id]),
+                try String.fetchOne($0, sql: "SELECT source_url FROM game_artwork WHERE game_id = ? AND kind = 'cover'", arguments: [id])
+            )
+        }
+        XCTAssertNotEqual(updated.0, original.0)
+        XCTAssertNotEqual(updated.1, original.1)
+        XCTAssertEqual(updated.2, newURL.absoluteString)
     }
 
     func testUnmatchedHomebrewAndBadChecksums() async throws {

@@ -78,6 +78,23 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(destination, scratch.appendingPathComponent("drive").path)
     }
 
+    func testRestoreChangesLibraryRevisionEpoch() async throws {
+        try addGame("before-restore")
+        let backup = try await store.backups.create()
+        let backupRevision = try store.libraryRevision()
+        try addGame("after-backup")
+        let changedRevision = try store.libraryRevision()
+        let paths = store.paths
+        try store.close()
+
+        _ = try BackupManager.applyRestore(folder: URL(fileURLWithPath: backup.path), to: paths)
+        store = try ServerStore.open(paths: paths)
+
+        let restoredRevision = try store.libraryRevision()
+        XCTAssertNotEqual(restoredRevision, backupRevision)
+        XCTAssertNotEqual(restoredRevision, changedRevision)
+    }
+
     func testRestoreReplacesSettingsAddedAfterTheBackup() async throws {
         let backup = try await store.backups.create()
         try write("{}", "options.json")

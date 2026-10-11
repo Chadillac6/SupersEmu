@@ -81,20 +81,33 @@ final class ServerSession {
         return APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
     }
 
-    func pair(_ payload: PairingPayload) async throws {
+    func presentedCertificateSHA256(at url: URL) async throws -> String {
+        guard url.scheme?.lowercased() == "https", let host = url.host else { throw PairingError.fingerprintUnavailable }
+        let trust = PinnedCertificateDelegate(certificateSHA256: nil, trustOnFirstUse: true, expectedHost: host)
+        let pairingSession = URLSession(configuration: Self.configuration, delegate: trust, delegateQueue: nil)
+        defer { pairingSession.finishTasksAndInvalidate() }
+        _ = try await APIClient(baseURL: url, token: nil, session: pairingSession).health()
+        guard let fingerprint = trust.observedSHA256 else { throw PairingError.fingerprintUnavailable }
+        return fingerprint
+    }
+
+    func pair(_ payload: PairingPayload, confirmedCertificateSHA256: String? = nil) async throws {
         let request = PairRequest(code: payload.code, deviceName: Self.deviceName, platform: Self.platform)
         // Device tokens are bearer secrets: only pair over HTTPS (plain HTTP is allowed for loopback dev servers).
         let urls = payload.urls.filter { $0.scheme == "https" || ($0.scheme == "http" && Self.isLoopback($0)) }
         guard !urls.isEmpty else { throw PairingError.insecureAddress }
+        let pin = payload.certificateSHA256 ?? confirmedCertificateSHA256
+        guard !urls.contains(where: { $0.scheme?.lowercased() == "https" }) || pin != nil else {
+            throw PairingError.fingerprintConfirmationRequired
+        }
         var lastError: Error = APIClientError.invalidResponse
         for url in urls {
-            let trust = PinnedCertificateDelegate(certificateSHA256: payload.certificateSHA256, trustOnFirstUse: true, expectedHost: url.host)
+            let trust = PinnedCertificateDelegate(certificateSHA256: pin)
             let pairingSession = URLSession(configuration: Self.configuration, delegate: trust, delegateQueue: nil)
             defer { pairingSession.finishTasksAndInvalidate() }
             let client = APIClient(baseURL: url, token: nil, session: pairingSession)
             do {
                 let response = try await client.pair(request)
-                let pin = payload.certificateSHA256 ?? (url.scheme == "https" ? trust.observedSHA256 : nil)
                 let credential = ServerCredential(
                     serverName: response.serverName, urls: urls, certificateSHA256: pin,
                     token: response.token, deviceID: response.deviceID, user: response.user)
@@ -356,10 +369,14 @@ final class ServerSession {
 
 enum PairingError: LocalizedError {
     case insecureAddress
+    case fingerprintUnavailable
+    case fingerprintConfirmationRequired
 
     var errorDescription: String? {
         switch self {
         case .insecureAddress: return "Use an https:// server address to pair."
+        case .fingerprintUnavailable: return "Couldn't read the server's TLS certificate fingerprint."
+        case .fingerprintConfirmationRequired: return "Confirm the server's TLS fingerprint before pairing."
         }
     }
 }

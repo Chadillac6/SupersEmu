@@ -63,7 +63,7 @@ public struct DiscoveredServer: Sendable, Hashable, Identifiable {
     public var scheme: String { txt["scheme"] ?? "https" }
 
     public func pairingPayload(at address: URL, code: String) -> PairingPayload {
-        PairingPayload(serverName: serverName, urls: [address], certificateSHA256: certificateSHA256, code: code)
+        PairingPayload(serverName: serverName, urls: [address], certificateSHA256: nil, code: code)
     }
 
     /// True when this advertisement is the server pinned in `profile`.
