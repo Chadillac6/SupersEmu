@@ -4,8 +4,15 @@
 # restarts the boot server if it's registered, and reopens the app. Games, saves and settings live outside the app.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [ -d /Applications/SupersEmu.app ] &&
-  codesign -dv --verbose=2 /Applications/SupersEmu.app 2>&1 | grep -q 'Authority=Developer ID Application'; then
+APP=/Applications/SupersEmu.app
+NEW=/Applications/.SupersEmu.app.new
+OLD=/Applications/.SupersEmu.app.old
+if [ ! -d "$APP" ] && [ -d "$OLD" ]; then
+  mv "$OLD" "$APP"
+  echo "Recovered SupersEmu.app from an interrupted update."
+fi
+if [ -d "$APP" ] &&
+  codesign -dv --verbose=2 "$APP" 2>&1 | grep -q 'Authority=Developer ID Application'; then
   echo "This Mac has the notarized release build; update it with the newer release .dmg instead. This script is for apps built from source."
   exit 1
 fi
@@ -15,9 +22,6 @@ git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpico
 xcodegen generate
 xcodebuild build -project SupersEmu.xcodeproj -scheme SupersEmu-macOS -destination 'platform=macOS' -derivedDataPath build/mac
 
-APP=/Applications/SupersEmu.app
-NEW=/Applications/.SupersEmu.app.new
-OLD=/Applications/.SupersEmu.app.old
 rm -rf "$NEW" "$OLD"
 ditto build/mac/Build/Products/Debug/SupersEmu.app "$NEW"
 codesign --verify --deep "$NEW"
