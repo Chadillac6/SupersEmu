@@ -199,7 +199,7 @@ struct LibraryView: View {
             if results.isEmpty {
                 Text("No games match \u{201C}\(query)\u{201D}").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 80)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 18)], spacing: 22) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 18)], spacing: 22) {
                     ForEach(results) { item in
                         Button { open(item) } label: { GameCard(item: item, state: downloads.states[item.id]) }
                             .buttonStyle(.plain)

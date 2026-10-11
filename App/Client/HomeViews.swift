@@ -175,7 +175,7 @@ struct AlphabetGrid: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("All Games A–Z").font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier("shelf-all")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 16)], spacing: 20) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 20) {
                 ForEach(games) { item in
                     let letter = LibraryShelves.letter(for: item.title)
                     Button { select(item) } label: { GameCard(item: item, state: downloads.states[item.id]) }

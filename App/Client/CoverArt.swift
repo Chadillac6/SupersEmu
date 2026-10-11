@@ -22,11 +22,12 @@ struct CoverArt: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 14)
-            .fill(LinearGradient(colors: ArtworkCache.palette(item.id), startPoint: .topLeading, endPoint: .bottomTrailing))
-            .aspectRatio(3 / 4, contentMode: .fit)
+            .fill(LinearGradient(colors: ArtworkCache.palette(item.id).map { $0.opacity(0.22) }, startPoint: .topLeading, endPoint: .bottomTrailing))
+            .aspectRatio(4 / 3, contentMode: .fit)
             .overlay {
                 if let image {
-                    image.resizable().scaledToFill()
+                    image.resizable().scaledToFit()
+                        .padding(6)
                 } else {
                     VStack(spacing: 8) {
                         Image(systemName: "gamecontroller.fill").font(.system(size: 34))
