@@ -440,4 +440,39 @@ let pass6 = await service(catalog).enrichPending()
             }
         }
     }
+
+    func testNonImageThumbnailKeepsCachedArtAndRetries() async throws {
+        let rom = ROMFixtures.gba(seed: 13)
+        let name = "Mother 3 (Japan)"
+        let dats: [SystemID: (name: String, source: String, files: [String: String])] = [.gba: ("Nintendo - Game Boy Advance", "no-intro", [
+            "source": DatFixtures.entry(name, rom: rom, romName: "\(name).gba"),
+        ])]
+        let first = catalog(dats)
+        fetcher.set(first.thumbnailURL(first.systems[.gba]!, kind: "Named_Boxarts", name: name), DatFixtures.png)
+        let id = try await importROM(rom, "m3.gba")
+        await service(first).enrichPending()
+        let cover: () async throws -> (Data?, String?) = {
+            try await self.store.db.read { db in
+                let path = try String.fetchOne(db, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND kind = 'cover'", arguments: [id])
+                let version = try String.fetchOne(db, sql: "SELECT artwork_version FROM metadata_jobs WHERE game_id = ?", arguments: [id])
+                return (path.flatMap { FileManager.default.contents(atPath: self.store.paths.root.appendingPathComponent($0).path) }, version)
+            }
+        }
+        let original = try await cover()
+        XCTAssertEqual(original.0, DatFixtures.png)
+
+        let second = catalog(dats, thumbnails: "thumbs2")
+        let url = second.thumbnailURL(second.systems[.gba]!, kind: "Named_Boxarts", name: name)
+        fetcher.set(url, Data("<html>error</html>".utf8))
+        await service(second).enrichPending()
+        let afterError = try await cover()
+        XCTAssertEqual(afterError.0, DatFixtures.png)
+        XCTAssertEqual(afterError.1, original.1)
+
+        fetcher.set(url, DatFixtures.png + Data([9]))
+        await service(second).enrichPending()
+        let afterRetry = try await cover()
+        XCTAssertEqual(afterRetry.0, DatFixtures.png + Data([9]))
+        XCTAssertNotEqual(afterRetry.1, original.1)
+    }
 }
