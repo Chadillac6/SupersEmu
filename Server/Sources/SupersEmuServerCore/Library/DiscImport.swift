@@ -288,8 +288,9 @@ extension LibraryImporter {
         do {
             try store.db.write { db in
                 for id in staleIDs { try db.execute(sql: "DELETE FROM games WHERE id = ? AND needs_review = 1", arguments: [id]) }
-                try db.execute(sql: "INSERT INTO games (id, title, system, needs_review, created_at) VALUES (?, ?, ?, 0, ?)",
-                               arguments: [gameID, title, system.rawValue, Date()])
+                let now = Date()
+                try db.execute(sql: "INSERT INTO games (id, title, system, needs_review, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)",
+                               arguments: [gameID, title, system.rawValue, now, now])
                 for row in rows {
                     try db.execute(sql: """
                         INSERT INTO game_files (id, game_id, filename, role, size, disc_number, stored_path) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -328,7 +329,10 @@ extension LibraryImporter {
         if let existing {
             if (existing["needs_review"] as Int) == 0 { return .unsupported("\(label): \(reason)") }
             if existing["review_reason"] as String? != reason {
-                try store.db.write { try $0.execute(sql: "UPDATE games SET review_reason = ? WHERE id = ?", arguments: [reason, file.sha]) }
+                try store.db.write {
+                    try $0.execute(sql: "UPDATE games SET review_reason = ?, updated_at = ? WHERE id = ?",
+                                   arguments: [reason, Date(), file.sha])
+                }
             }
             return .review(ReviewItem(id: file.sha, filename: existing["filename"], reason: reason))
         }
@@ -338,10 +342,11 @@ extension LibraryImporter {
         let destination = directory.appendingPathComponent(name)
         if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
         try FileManager.default.copyItem(at: file.local, to: destination)
+        let now = Date()
         try store.db.write { db in
             try db.execute(sql: """
-                INSERT INTO games (id, title, system, needs_review, review_reason, created_at) VALUES (?, ?, ?, 1, ?, ?)
-                """, arguments: [file.sha, title, system?.rawValue ?? "unknown", reason, Date()])
+                INSERT INTO games (id, title, system, needs_review, review_reason, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)
+                """, arguments: [file.sha, title, system?.rawValue ?? "unknown", reason, now, now])
             try db.execute(sql: """
                 INSERT INTO game_files (id, game_id, filename, role, size, stored_path) VALUES (?, ?, ?, ?, ?, ?)
                 """, arguments: [file.sha, file.sha, name, file.role.rawValue, file.size, "games/\(file.sha)/\(name)"])

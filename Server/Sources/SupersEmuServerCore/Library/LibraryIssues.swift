@@ -123,8 +123,8 @@ extension LibraryImporter {
             guard let issue = try importer.issues().first(where: { $0.id == id }) else { throw LibraryIssueError.notFound }
             guard let reviewID = issue.reviewID, issue.candidateSystems.contains(system) else { throw LibraryIssueError.notAssignable }
             let summary = try importer.store.db.write { db -> GameSummary in
-                try db.execute(sql: "UPDATE games SET system = ?, needs_review = 0, review_reason = NULL WHERE id = ? AND needs_review = 1",
-                               arguments: [system.rawValue, reviewID])
+                try db.execute(sql: "UPDATE games SET system = ?, needs_review = 0, review_reason = NULL, updated_at = ? WHERE id = ? AND needs_review = 1",
+                               arguments: [system.rawValue, Date(), reviewID])
                 let row = try Row.fetchOne(db, sql: "SELECT g.title, f.size FROM games g JOIN game_files f ON f.game_id = g.id WHERE g.id = ?",
                                            arguments: [reviewID])
                 return GameSummary(id: reviewID, title: row?["title"] ?? issue.filename, system: system, year: nil, genre: nil,

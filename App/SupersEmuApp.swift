@@ -70,7 +70,10 @@ struct RootView: View {
             await server.refresh()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await server.refresh() } }
+            if phase == .active {
+                library.refresh()
+                Task { await server.refresh() }
+            }
         }
         // Every successful refresh (including a LAN -> Tailscale switch) retries queued saves; overlapping
         // flushes coalesce inside the engine.

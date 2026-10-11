@@ -5,6 +5,18 @@ import Observation
 import ServiceManagement
 import SupersEmuKit
 
+enum LocalServerAdminClient {
+    static func make(dataDirectory: URL, serverURL: URL, certificateSHA256: String?, timeout: TimeInterval = 4) throws -> APIClient {
+        let tokenURL = dataDirectory.appendingPathComponent("admin.token")
+        guard let data = FileManager.default.contents(atPath: tokenURL.path) else {
+            throw ServerModeError("Can't read \(tokenURL.path). Start the server first (it bootstraps the admin token).")
+        }
+        let token = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return APIClient(baseURL: serverURL, token: token,
+                         session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256, timeout: timeout))
+    }
+}
+
 /// Server mode on the Mac mini: registers the boot-time launch daemon, or runs the embedded server for this
 /// session, and talks to it as the local admin (token file + pinned certificate from the data directory).
 @MainActor @Observable
@@ -28,6 +40,7 @@ final class ServerModeModel {
     var source: Source
     private(set) var daemonStatus: SMAppService.Status
     private(set) var sessionRunning = false
+    private(set) var sessionStoppedUnexpectedly = false
     private(set) var health: HealthResponse?
     private(set) var statusError: String?
     private(set) var pairing: PairingCode?
@@ -110,11 +123,12 @@ final class ServerModeModel {
             guard let pairedCredential else { throw ServerModeError("This Mac isn't paired with a server.") }
             token = authenticated ? pairedCredential.token : nil
         } else if authenticated {
-            let tokenURL = dataDirectory.appendingPathComponent("admin.token")
-            guard let data = FileManager.default.contents(atPath: tokenURL.path) else {
-                throw ServerModeError("Can't read \(tokenURL.path). Start the server first (it bootstraps the admin token).")
-            }
-            token = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            return try LocalServerAdminClient.make(
+                dataDirectory: dataDirectory,
+                serverURL: serverURL,
+                certificateSHA256: certificateSHA256,
+                timeout: timeout
+            )
         }
         return APIClient(baseURL: serverURL, token: token,
                          session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256, timeout: timeout))
@@ -123,6 +137,7 @@ final class ServerModeModel {
     func refresh() async {
         daemonStatus = daemon.status
         sessionRunning = process?.isRunning == true
+        sessionStoppedUnexpectedly = SessionServerProcess.shared.stoppedUnexpectedly
         await resolvePairedURL()
         do {
             health = try await client(authenticated: false).health()
@@ -187,6 +202,18 @@ final class ServerModeModel {
             process.arguments = ["run", "--data-dir", dataDirectory.path, "--port", "\(Self.sessionPort)", "--bootstrap"]
             process.standardOutput = log
             process.standardError = log
+            SessionServerProcess.shared.stoppedUnexpectedly = false
+            SessionServerProcess.shared.expectedTermination = nil
+            sessionStoppedUnexpectedly = false
+            process.terminationHandler = { child in
+                Task { @MainActor in
+                    let session = SessionServerProcess.shared
+                    guard session.process === child else { return }
+                    session.stoppedUnexpectedly = session.expectedTermination !== child
+                    session.process = nil
+                    session.expectedTermination = nil
+                }
+            }
             try process.run()
             self.process = process
             UserDefaults.standard.set(true, forKey: ServerStatusMonitor.showIconDefaultsKey)
@@ -202,9 +229,15 @@ final class ServerModeModel {
     }
 
     func stopSession() async {
-        process?.terminate()
-        process?.waitUntilExit()
+        if let process {
+            SessionServerProcess.shared.expectedTermination = process
+            process.terminate()
+            process.waitUntilExit()
+        }
         process = nil
+        SessionServerProcess.shared.expectedTermination = nil
+        SessionServerProcess.shared.stoppedUnexpectedly = false
+        sessionStoppedUnexpectedly = false
         message = "Session server stopped."
         await refresh()
     }
@@ -227,6 +260,8 @@ final class ServerModeModel {
 final class SessionServerProcess {
     static let shared = SessionServerProcess()
     var process: Process?
+    var expectedTermination: Process?
+    var stoppedUnexpectedly = false
 
     private init() {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in

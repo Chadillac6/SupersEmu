@@ -31,12 +31,6 @@ struct LibraryItem: Identifiable, Hashable {
     var isLocalCopy: Bool { source == .local || (hasLocalCopy && !isDownloaded) }
 }
 
-/// One letter of "All Games A-Z".
-struct LetterSection: Identifiable, Equatable {
-    let id: String
-    let items: [LibraryItem]
-}
-
 /// What the Home screen shows for the selected console (nil is "All").
 struct HomeSections: Equatable {
     /// Consoles the library has, for the selector.
@@ -44,7 +38,8 @@ struct HomeSections: Equatable {
     /// Most recently played, else the newest game.
     var featured: LibraryItem?
     var currentlyPlaying: [LibraryItem]
-    var letters: [LetterSection]
+    var allGames: [LibraryItem]
+    var letterAnchors: [String: String]
 }
 
 enum LibraryShelves {
@@ -90,9 +85,13 @@ enum LibraryShelves {
         seen = []
         let sorted = shown.sorted(by: titleOrder).filter { seen.insert($0.id).inserted }
         let newest = sorted.filter { $0.addedAt != nil }.max { $0.addedAt! < $1.addedAt! }
-        let groups = Dictionary(grouping: sorted, by: { letter(for: $0.title) })
+        var letterAnchors: [String: String] = [:]
+        for item in sorted {
+            let letter = letter(for: item.title)
+            if letterAnchors[letter] == nil { letterAnchors[letter] = item.id }
+        }
         return HomeSections(systems: systems, featured: playing.first ?? newest ?? sorted.first, currentlyPlaying: playing,
-                            letters: alphabet.compactMap { letter in groups[letter].map { LetterSection(id: letter, items: $0) } })
+                            allGames: sorted, letterAnchors: letterAnchors)
     }
 
     /// "A"-"Z" by the first letter (accents folded), "#" for everything else.

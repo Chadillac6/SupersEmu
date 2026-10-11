@@ -34,7 +34,8 @@ public struct ArtworkStore: Sendable {
         try Self.writeLock.withLock {
             try data.write(to: url, options: .atomic)
             try store.db.write { db in
-                try db.execute(sql: "UPDATE games SET cover_artwork = ? WHERE id = ?", arguments: ["artwork/\(gameID)/\(name)", gameID])
+                try db.execute(sql: "UPDATE games SET cover_artwork = ?, updated_at = ? WHERE id = ?",
+                               arguments: ["artwork/\(gameID)/\(name)", Date(), gameID])
             }
             let others = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
             for other in others where other != name && other.hasPrefix("cover") {

@@ -25,12 +25,20 @@ public struct HealthResponse: Codable, Sendable, Equatable {
     public var serverName: String
     public var serverVersion: String
     public var apiVersion: String
+    public var libraryRevision: String?
 
-    public init(status: String, serverName: String, serverVersion: String, apiVersion: String = APIVersion.current) {
+    public init(
+        status: String,
+        serverName: String,
+        serverVersion: String,
+        apiVersion: String = APIVersion.current,
+        libraryRevision: String? = nil
+    ) {
         self.status = status
         self.serverName = serverName
         self.serverVersion = serverVersion
         self.apiVersion = apiVersion
+        self.libraryRevision = libraryRevision
     }
 }
 
@@ -251,4 +259,3 @@ public struct BIOSFileInfo: Codable, Sendable, Equatable, Identifiable {
         self.required = required
     }
 }
-

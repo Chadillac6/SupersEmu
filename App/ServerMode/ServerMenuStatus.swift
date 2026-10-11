@@ -14,8 +14,16 @@ struct ServerMenuStatus: Equatable {
     let title: String
     let detail: String
     let symbolName: String
+    let sessionStoppedUnexpectedly: Bool
 
-    init(daemonStatus: SMAppService.Status, sessionRunning: Bool, health: HealthResponse?, deviceCount: Int) {
+    init(
+        daemonStatus: SMAppService.Status,
+        sessionRunning: Bool,
+        health: HealthResponse?,
+        deviceCount: Int,
+        sessionStoppedUnexpectedly: Bool = false
+    ) {
+        self.sessionStoppedUnexpectedly = sessionStoppedUnexpectedly
         if health != nil {
             state = .running
             if daemonStatus == .enabled {
@@ -27,6 +35,9 @@ struct ServerMenuStatus: Equatable {
         } else if daemonStatus == .requiresApproval {
             state = .needsApproval
             detail = "Approve the server in Login Items"
+        } else if sessionStoppedUnexpectedly {
+            state = .notRunning
+            detail = "Server stopped unexpectedly"
         } else if daemonStatus == .enabled || sessionRunning {
             state = .notRunning
             detail = daemonStatus == .enabled ? "Boot server · port 8487" : "This session only · port 8488"

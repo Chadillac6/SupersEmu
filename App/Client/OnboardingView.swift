@@ -17,6 +17,13 @@ struct OnboardingView: View {
     @State private var link = ""
     @State private var isPairing = false
     @State private var errorMessage: String?
+    @State private var discoveredServers: [DiscoveredServer] = []
+    @State private var selectedServer: DiscoveredServer?
+    @State private var selectedServerAddress: URL?
+    @State private var resolvingServerID: String?
+    #if os(macOS)
+    @State private var localServer = ServerModeModel()
+    #endif
     #if os(iOS)
     @State private var mode: Mode = .scan
     enum Mode: String, CaseIterable { case scan = "Scan QR Code", code = "Enter Code" }
@@ -38,6 +45,12 @@ struct OnboardingView: View {
                     codeForm
                 }
                 #else
+                if localServer.health != nil {
+                    Button("Use This Mac's Server") { Task { await pairWithThisMac() } }
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("pair-local-server")
+                }
                 linkForm
                 HStack { line; Text("or").foregroundStyle(.secondary); line }
                 codeForm
@@ -60,6 +73,16 @@ struct OnboardingView: View {
             .frame(maxWidth: .infinity)
         }
         .disabled(isPairing)
+        .task {
+            let browser = ServerBrowser()
+            for await servers in browser.servers() {
+                guard !Task.isCancelled else { return }
+                discoveredServers = servers
+            }
+        }
+        #if os(macOS)
+        .task { await localServer.refresh() }
+        #endif
     }
 
     private var header: some View {
@@ -105,6 +128,28 @@ struct OnboardingView: View {
 
     private var codeForm: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if !discoveredServers.isEmpty {
+                Text("Servers on your network").font(.headline)
+                ForEach(discoveredServers) { server in
+                    Button {
+                        Task { await select(server) }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(server.serverName)
+                                Text(server.name).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if resolvingServerID == server.id {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(resolvingServerID != nil)
+                    .accessibilityIdentifier("discovered-server-\(server.id)")
+                }
+            }
             Text("Server address").font(.headline)
             TextField("mac-mini.local", text: $address)
                 .textFieldStyle(.roundedBorder)
@@ -140,12 +185,65 @@ struct OnboardingView: View {
     }
 
     private func pairWithCode() async {
+        if let selectedServer, let selectedServerAddress, address == selectedServerAddress.absoluteString {
+            await pair(selectedServer.pairingPayload(at: selectedServerAddress, code: code))
+            return
+        }
         guard let payload = PairingLinkParser.payload(address: address, code: code) else {
             errorMessage = "Enter the server address and the 6-digit code."
             return
         }
         await pair(payload)
     }
+
+    private func select(_ server: DiscoveredServer) async {
+        resolvingServerID = server.id
+        errorMessage = nil
+        defer { resolvingServerID = nil }
+        do {
+            let resolvedAddress = try await ServerBrowser.resolve(server)
+            selectedServer = server
+            selectedServerAddress = resolvedAddress
+            address = resolvedAddress.absoluteString
+        } catch {
+            errorMessage = "Couldn't resolve \(server.serverName). Try entering its address manually."
+        }
+    }
+
+    #if os(macOS)
+    private func pairWithThisMac() async {
+        guard let pin = localServer.certificateSHA256 else {
+            address = localServer.localURL.absoluteString
+            errorMessage = "This Mac's server certificate is unavailable. Enter a pairing code below instead."
+            return
+        }
+        isPairing = true
+        errorMessage = nil
+        defer { isPairing = false }
+        do {
+            let client = try LocalServerAdminClient.make(
+                dataDirectory: localServer.dataDirectory,
+                serverURL: localServer.localURL,
+                certificateSHA256: pin,
+                timeout: 15
+            )
+            let pairing = try await client.createPairingCode()
+            let payload = PairingPayload(
+                serverName: pairing.payload.serverName,
+                urls: [localServer.localURL],
+                certificateSHA256: pin,
+                code: pairing.code
+            )
+            try await server.pair(payload)
+        } catch {
+            address = localServer.localURL.absoluteString
+            let description = String(describing: error)
+            errorMessage = description.contains("admin.token")
+                ? "Couldn't read this Mac's admin token. You can still enter a pairing code below."
+                : "Couldn't pair with this Mac's server: \(description)"
+        }
+    }
+    #endif
 
     private func pair(_ payload: PairingPayload) async {
         isPairing = true

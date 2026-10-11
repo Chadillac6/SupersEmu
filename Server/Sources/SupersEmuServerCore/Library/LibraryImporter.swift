@@ -354,10 +354,11 @@ public final class LibraryImporter: @unchecked Sendable {
         try FileManager.default.moveItem(at: staged, to: destination)
 
         let title = TitleNormalizer.title(fromFilename: storedName)
+        let now = Date()
         try store.db.write { db in
             try db.execute(sql: """
-                INSERT INTO games (id, title, system, needs_review, review_reason, created_at) VALUES (?, ?, ?, ?, ?, ?)
-                """, arguments: [sha, title, system?.rawValue ?? "unknown", reviewReason == nil ? 0 : 1, reviewReason, Date()])
+                INSERT INTO games (id, title, system, needs_review, review_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [sha, title, system?.rawValue ?? "unknown", reviewReason == nil ? 0 : 1, reviewReason, now, now])
             try db.execute(sql: """
                 INSERT INTO game_files (id, game_id, filename, role, size, stored_path) VALUES (?, ?, ?, ?, ?, ?)
                 """, arguments: [sha, sha, storedName, GameFileRole.rom.rawValue, size, "games/\(sha)/\(storedName)"])
@@ -380,8 +381,8 @@ public final class LibraryImporter: @unchecked Sendable {
         let title = TitleNormalizer.title(fromFilename: storedName)
         do {
             try store.db.write { db in
-                try db.execute(sql: "UPDATE games SET title = ?, system = ?, needs_review = 0, review_reason = NULL WHERE id = ?",
-                               arguments: [title, system.rawValue, sha])
+                try db.execute(sql: "UPDATE games SET title = ?, system = ?, needs_review = 0, review_reason = NULL, updated_at = ? WHERE id = ?",
+                               arguments: [title, system.rawValue, Date(), sha])
                 try db.execute(sql: "UPDATE game_files SET filename = ?, stored_path = ? WHERE game_id = ?",
                                arguments: [storedName, newStoredPath, sha])
             }

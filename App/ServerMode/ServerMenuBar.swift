@@ -42,7 +42,8 @@ final class ServerStatusMonitor {
             daemonStatus: model.daemonStatus,
             sessionRunning: model.sessionRunning,
             health: model.health,
-            deviceCount: model.devices.count
+            deviceCount: model.devices.count,
+            sessionStoppedUnexpectedly: model.sessionStoppedUnexpectedly
         )
     }
 
@@ -89,6 +90,7 @@ final class ServerStatusMonitor {
 final class ServerModeNavigation {
     static let shared = ServerModeNavigation()
     var requested: ServerModeSection?
+    var generatePairingCode = false
 
     private init() {}
 }
@@ -105,12 +107,13 @@ private struct ServerMenuBarContent: View {
         Text(status.detail).disabled(true)
         Divider()
         Button("Open Server Window…") { openServerWindow() }
+        Button("Pair a Device…") { openServerWindow(section: .server, generatePairingCode: true) }
         Button("Add Games…") { openServerWindow(section: .library) }
         Button("Review Needed…") { openServerWindow(section: .review) }
         Button("BIOS…") { openServerWindow(section: .bios) }
         Button("Storage…") { openServerWindow(section: .storage) }
         Divider()
-        if status.state == .off {
+        if status.state == .off || status.sessionStoppedUnexpectedly {
             Button("Start Server for This Session") {
                 Task { await monitor.model.startSession() }
             }
@@ -140,6 +143,13 @@ private struct ServerMenuBarContent: View {
 
     private func openServerWindow(section: ServerModeSection? = nil) {
         if let section { ServerModeNavigation.shared.requested = section }
+        openWindow(id: ServerModeScene.windowID)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func openServerWindow(section: ServerModeSection, generatePairingCode: Bool) {
+        ServerModeNavigation.shared.requested = section
+        ServerModeNavigation.shared.generatePairingCode = generatePairingCode
         openWindow(id: ServerModeScene.windowID)
         NSApp.activate(ignoringOtherApps: true)
     }

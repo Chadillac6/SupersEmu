@@ -1,4 +1,6 @@
+import Foundation
 import GRDB
+import SupersEmuKit
 
 enum LibraryMigrations {
     static func register(_ migrator: inout DatabaseMigrator) {
@@ -38,6 +40,23 @@ enum LibraryMigrations {
                     created_at DATETIME NOT NULL
                 );
                 """)
+        }
+        migrator.registerMigration("v4_library_game_updated_at") { db in
+            try db.execute(sql: """
+                ALTER TABLE games ADD COLUMN updated_at DATETIME;
+                UPDATE games SET updated_at = created_at;
+                """)
+        }
+        migrator.registerMigration("v5_library_hash_prefix_titles") { db in
+            let games = try Row.fetchAll(db, sql: "SELECT id, title FROM games")
+            for game in games {
+                let title: String = game["title"]
+                guard TitleNormalizer.hasHashPrefix(title) else { continue }
+                let id: String = game["id"]
+                try db.execute(
+                    sql: "UPDATE games SET title = ?, updated_at = ? WHERE id = ?",
+                    arguments: [TitleNormalizer.title(fromFilename: title), Date(), id])
+            }
         }
     }
 }

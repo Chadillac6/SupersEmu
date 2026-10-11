@@ -33,9 +33,18 @@ final class CoreTests: XCTestCase {
         try await app().test(.router) { client in
             try await client.execute(uri: "/v1/health", method: .get) { response in
                 XCTAssertEqual(response.status, .ok)
-                XCTAssertEqual(try self.decode(HealthResponse.self, response).apiVersion, "v1")
+                let health = try self.decode(HealthResponse.self, response)
+                XCTAssertEqual(health.apiVersion, "v1")
+                XCTAssertNotNil(health.libraryRevision)
             }
         }
+    }
+
+    func testHealthResponseWithoutLibraryRevisionStillDecodes() throws {
+        let data = Data(#"{"status":"ok","serverName":"Old server","serverVersion":"0.1.0","apiVersion":"v1"}"#.utf8)
+        let health = try SupersEmuJSON.decoder().decode(HealthResponse.self, from: data)
+
+        XCTAssertNil(health.libraryRevision)
     }
 
     func testMeRequiresValidToken() async throws {

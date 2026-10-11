@@ -119,6 +119,38 @@ final class SystemDetectorTests: XCTestCase {
     func testTitleNormalizerMatchesApp() {
         XCTAssertEqual(TitleNormalizer.title(fromFilename: "Super_Game (USA) [!].sfc"), "Super Game")
         XCTAssertEqual(TitleNormalizer.title(fromFilename: "HelloWorld.sfc"), "Hello World")
+        XCTAssertEqual(TitleNormalizer.title(fromFilename: "\(String(repeating: "a", count: 64))--Chrono Trigger (USA).sfc"), "Chrono Trigger")
+        XCTAssertEqual(TitleNormalizer.title(fromFilename: "1942 (USA).sfc"), "1942")
+    }
+
+    func testStartupMigrationRetitlesHashPrefixedGames() throws {
+        let db = try DatabaseQueue()
+        try ServerMigrations.migrator.migrate(db, upTo: "v3_library_issues")
+        let hashPrefixedTitle = "\(String(repeating: "a", count: 64))--Chrono Trigger"
+        try db.write { db in
+            try db.execute(sql: """
+                INSERT INTO games (id, title, system, created_at) VALUES (?, ?, ?, ?)
+                """, arguments: ["hash-prefixed", hashPrefixedTitle, "snes", Date()])
+            try db.execute(sql: """
+                INSERT INTO games (id, title, system, created_at) VALUES (?, ?, ?, ?)
+                """, arguments: ["hex-title", "1942", "genesis", Date()])
+        }
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = ServerPaths(root: root)
+        try paths.createDirectories()
+        let upgradedStore = try ServerStore(db: db, paths: paths, serverName: "Migration Test")
+
+        let titles = try upgradedStore.db.read { db in
+            try Dictionary(uniqueKeysWithValues: Row.fetchAll(db, sql: "SELECT id, title FROM games").map { row in
+                (row["id"] as String, row["title"] as String)
+            })
+        }
+        XCTAssertEqual(titles["hash-prefixed"], "Chrono Trigger")
+        XCTAssertEqual(titles["hex-title"], "1942")
+        try ServerMigrations.migrator.migrate(db)
+        XCTAssertEqual(try db.read { try String.fetchOne($0, sql: "SELECT title FROM games WHERE id = 'hash-prefixed'") }, "Chrono Trigger")
     }
 
     func testByteRangeParsing() {
@@ -211,6 +243,16 @@ final class LibraryTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
         let count = try await store.db.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM games") }
         XCTAssertEqual(count, 1)
+    }
+
+    func testImportChangesLibraryRevision() async throws {
+        let before = try store.libraryRevision()
+        let rom = try write(ROMFixtures.snes(seed: 26), "Revision.sfc")
+
+        let report = try await importer.importPaths([rom.path], auth: nil)
+
+        XCTAssertEqual(report.imported.count, 1)
+        XCTAssertNotEqual(try store.libraryRevision(), before)
     }
 
     func testImportsFoldersOfMixedSystems() async throws {
