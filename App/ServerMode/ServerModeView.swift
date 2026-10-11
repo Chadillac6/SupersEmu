@@ -70,7 +70,9 @@ struct ServerModeView: View {
     @State private var model = ServerModeModel()
     @State private var library: LibraryManagerModel?
     @State private var section: ServerModeSection? = .server
+    @State private var navigation = ServerModeNavigation.shared
     @AppStorage(ServerModeLaunch.defaultsKey) private var openAtLaunch = false
+    @AppStorage(ServerStatusMonitor.showIconDefaultsKey) private var showServerMenuBarIcon = false
 
     var body: some View {
         NavigationSplitView {
@@ -97,6 +99,11 @@ struct ServerModeView: View {
         .onChange(of: model.source) {
             library?.reset()
             Task { await model.refresh(); await library?.refreshAll() }
+        }
+        .onAppear(perform: consumeNavigationRequest)
+        .onChange(of: navigation.requested) { _, _ in consumeNavigationRequest() }
+        .onChange(of: showServerMenuBarIcon) { _, visible in
+            ServerStatusMonitor.shared.setMenuBarIconVisible(visible)
         }
     }
 
@@ -172,7 +179,14 @@ struct ServerModeView: View {
             }
             if let message = model.message { Text(message).font(.callout).foregroundStyle(.secondary) }
             Toggle("Open Server mode when SupersEmu launches", isOn: $openAtLaunch)
+            Toggle("Show server status in the menu bar", isOn: $showServerMenuBarIcon)
         }
+    }
+
+    private func consumeNavigationRequest() {
+        guard let requested = navigation.requested else { return }
+        section = requested
+        navigation.requested = nil
     }
 
     private var daemonSection: some View {

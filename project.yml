@@ -852,9 +852,12 @@ targets:
     platform: macOS
     sources:
       - Tests/HostTests
+      - App/ServerMode/ServerMenuStatus.swift
       - Host/SELibretroHost.h
       - Host/SELibretroHost.mm
     dependencies:
+      - package: SupersEmuServer
+        product: SupersEmuKit
       - target: Snes9xCore_macOS
       - target: GambatteCore_macOS
       - target: MGBACore_macOS

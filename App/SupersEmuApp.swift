@@ -7,6 +7,12 @@ struct SupersEmuApp: App {
     @State private var downloads = DownloadCenter()
     @State private var bios = BIOSCenter()
 
+    #if os(macOS)
+    init() {
+        ServerStatusMonitor.shared.startPolling()
+    }
+    #endif
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -21,6 +27,7 @@ struct SupersEmuApp: App {
         }
         #if os(macOS)
         ServerModeScene()
+        ServerMenuBar()
         Settings {
             ControlsView()
                 .preferredColorScheme(.dark)
