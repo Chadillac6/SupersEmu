@@ -13,7 +13,7 @@ fi
 scripts/prepare-mac-appcast.sh "$out" "$tag"
 shopt -s nullglob
 zips=("$out"/updates/SupersEmu-*.zip)
-gh release create "$tag" "${zips[@]}" "$out/updates/appcast.xml" \
+gh release create "$tag" "${zips[@]}" "$out/updates/appcast.xml" "$out"/SupersEmu-*.dmg \
   --repo Chadillac6/SupersEmu --target "$ref" --title "SupersEmu $tag" --generate-notes --draft
 # Latest is explicit because Sparkle follows /releases/latest/download/appcast.xml.
 gh release edit "$tag" --repo Chadillac6/SupersEmu --draft=false --latest
