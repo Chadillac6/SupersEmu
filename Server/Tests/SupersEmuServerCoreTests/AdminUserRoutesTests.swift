@@ -176,6 +176,34 @@ final class AdminUserRoutesTests: XCTestCase {
         XCTAssertEqual(try auditActions(), ["device.revoke"])
     }
 
+    func testDeviceSelfRevokeRevokesOnlyCurrentDevice() async throws {
+        let player = try store.createUser(displayName: "Alex", role: .player)
+        let current = try store.createDeviceToken(userID: player.id, deviceName: "Alex's iPhone")
+        let other = try store.createDeviceToken(userID: player.id, deviceName: "Alex's iPad")
+
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/devices/self", method: .delete, headers: self.bearer(current.token)) { response in
+                XCTAssertEqual(response.status, .ok)
+                let device = try self.decode(DeviceInfo.self, response)
+                XCTAssertEqual(device.id, current.deviceID)
+                XCTAssertNotNil(device.revokedAt)
+            }
+            try await client.execute(uri: "/v1/me", method: .get, headers: self.bearer(current.token)) {
+                XCTAssertEqual($0.status, .unauthorized)
+            }
+            try await client.execute(uri: "/v1/me", method: .get, headers: self.bearer(other.token)) {
+                XCTAssertEqual($0.status, .ok)
+            }
+            try await client.execute(uri: "/v1/devices/self", method: .delete, headers: self.bearer(current.token)) {
+                XCTAssertEqual($0.status, .unauthorized)
+            }
+            try await client.execute(uri: "/v1/devices/self", method: .delete, headers: self.bearer("unknown-token")) {
+                XCTAssertEqual($0.status, .unauthorized)
+            }
+        }
+        XCTAssertEqual(try auditActions(), ["device.self_revoked"])
+    }
+
     func testRevokeToken() async throws {
         let (id, token) = try store.createAPIToken(ownerUserID: admin.id, name: "openclaw", scopes: [.libraryRead])
         try await app().test(.router) { client in

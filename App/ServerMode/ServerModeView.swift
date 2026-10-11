@@ -99,9 +99,12 @@ struct ServerModeView: View {
         }
         .onChange(of: model.source) {
             library?.reset()
+            selectedPairingUserID = nil
             Task { await model.refresh(); await library?.refreshAll() }
         }
-        .onAppear(perform: consumeNavigationRequest)
+        .onAppear {
+            consumeNavigationRequest()
+        }
         .onChange(of: navigation.requested) { _, _ in consumeNavigationRequest() }
         .onChange(of: showServerMenuBarIcon) { _, visible in
             ServerStatusMonitor.shared.setMenuBarIconVisible(visible)
@@ -116,6 +119,10 @@ struct ServerModeView: View {
         case (.storage, let library?): StorageView(model: library)
         default: overview
         }
+    }
+
+    private var pairingRequestsModel: ServerModeModel {
+        ServerStatusMonitor.shared.model
     }
 
     private var overview: some View {
@@ -198,6 +205,10 @@ struct ServerModeView: View {
     }
 
     private func consumeNavigationRequest() {
+        if let requestedSource = navigation.requestedSource {
+            model.source = requestedSource
+            navigation.requestedSource = nil
+        }
         if let requested = navigation.requested {
             section = requested
             navigation.requested = nil
@@ -240,13 +251,18 @@ struct ServerModeView: View {
     }
 
     private var pairingSection: some View {
-        Section("Pair a device") {
+        let requestSource = model.source
+        let requests = ServerStatusMonitor.shared.pairRequests(for: requestSource)
+        let users = ServerStatusMonitor.shared.adminUsers(for: requestSource)
+        return Section("Pair a device") {
             HStack {
                 Button(model.pairing == nil ? "New Pairing Code" : "New Code") { Task { await model.createPairingCode() } }
                     .disabled(model.health == nil)
                 Spacer()
             }
-            if let error = model.pairingError { Text(error).foregroundStyle(.red).font(.callout) }
+            if let error = model.pairingError ?? pairingRequestsModel.pairingError {
+                Text(error).foregroundStyle(.red).font(.callout)
+            }
             if let pairing = model.pairing {
                 HStack(alignment: .top, spacing: 24) {
                     QRCodeImage(text: pairing.qrURL).frame(width: 220, height: 220)
@@ -270,28 +286,32 @@ struct ServerModeView: View {
                 }
                 .padding(.vertical, 6)
             }
-            ForEach(model.pairRequests) { request in
+            ForEach(requests) { request in
                 VStack(alignment: .leading, spacing: 8) {
                     Text("\(request.deviceName) (\(request.platform)) wants to connect · Code \(request.matchCode)")
-                    if model.adminUsers.count > 1 {
+                    if users.count > 1 {
                         Picker("Assign to", selection: Binding(
-                            get: { selectedPairingUserID ?? model.adminUsers.first?.id ?? "" },
+                            get: { selectedPairingUserID ?? users.first?.id ?? "" },
                             set: { selectedPairingUserID = $0 }
                         )) {
-                            ForEach(model.adminUsers) { user in
+                            ForEach(users) { user in
                                 Text(user.displayName).tag(user.id)
                             }
                         }
                         Button("Approve") {
                             Task {
-                                await model.approvePairRequest(
-                                    request.id, userID: selectedPairingUserID ?? model.adminUsers.first?.id)
+                                await ServerStatusMonitor.shared.approvePairRequest(
+                                    request.id, source: requestSource, userID: selectedPairingUserID ?? users.first?.id)
                             }
                         }
                     } else {
-                        Button("Approve") { Task { await model.approvePairRequest(request.id) } }
+                        Button("Approve") {
+                            Task { await ServerStatusMonitor.shared.approvePairRequest(request.id, source: requestSource) }
+                        }
                     }
-                    Button("Deny", role: .destructive) { Task { await model.denyPairRequest(request.id) } }
+                    Button("Deny", role: .destructive) {
+                        Task { await ServerStatusMonitor.shared.denyPairRequest(request.id, source: requestSource) }
+                    }
                 }
                 .padding(.vertical, 4)
             }
