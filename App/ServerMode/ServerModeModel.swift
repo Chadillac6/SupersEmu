@@ -45,7 +45,6 @@ final class ServerModeModel {
             pairingRequestGeneration += 1
             pairing = nil
             pairingError = nil
-            pairRequests = []
         }
     }
     private var pairingRequestGeneration = 0
@@ -57,8 +56,6 @@ final class ServerModeModel {
     private(set) var pairing: PairingCode?
     private(set) var pairingError: String?
     private(set) var devices: [DeviceInfo] = []
-    private(set) var pairRequests: [PendingPairRequest] = []
-    private(set) var adminUsers: [UserInfo] = []
     enum LANReachability { case unknown, reachable, blocked }
     private(set) var lanReachability: LANReachability = .unknown
     private(set) var firewallBlocksServer: Bool?
@@ -91,6 +88,10 @@ final class ServerModeModel {
     }
 
     var dataDirectory: URL {
+        dataDirectory(for: source)
+    }
+
+    private func dataDirectory(for source: Source) -> URL {
         switch source {
         case .daemon:
             return URL(fileURLWithPath: "/Library/Application Support/SupersEmu Server", isDirectory: true)
@@ -100,10 +101,15 @@ final class ServerModeModel {
         }
     }
 
-    var port: Int { source == .daemon ? Self.daemonPort : Self.sessionPort }
-    var localURL: URL { URL(string: "https://127.0.0.1:\(port)")! }
+    private func port(for source: Source) -> Int { source == .daemon ? Self.daemonPort : Self.sessionPort }
+    var port: Int { port(for: source) }
+    private func localURL(for source: Source) -> URL { URL(string: "https://127.0.0.1:\(port(for: source))")! }
+    var localURL: URL { localURL(for: source) }
     private(set) var pairedURL: URL?
-    var serverURL: URL { isLocal ? localURL : pairedURL ?? pairedCredential?.urls.first ?? localURL }
+    private func serverURL(for source: Source) -> URL {
+        source == .paired ? pairedURL ?? pairedCredential?.urls.first ?? localURL(for: source) : localURL(for: source)
+    }
+    var serverURL: URL { serverURL(for: source) }
 
     /// Paired servers have LAN and Tailscale addresses; keep using whichever answered last.
     func resolvePairedURL() async {
@@ -122,8 +128,14 @@ final class ServerModeModel {
     var serverBinary: URL? { Bundle.main.url(forAuxiliaryExecutable: "supersemu-server") }
 
     var certificateSHA256: String? {
-        if !isLocal { return pairedCredential?.certificateSHA256 }
-        return FileManager.default.contents(atPath: dataDirectory.appendingPathComponent("tls/server.cer").path).map(CertificatePin.sha256(ofDER:))
+        certificateSHA256(for: source)
+    }
+
+    private func certificateSHA256(for source: Source) -> String? {
+        if source == .paired { return pairedCredential?.certificateSHA256 }
+        return FileManager.default.contents(
+            atPath: dataDirectory(for: source).appendingPathComponent("tls/server.cer").path
+        ).map(CertificatePin.sha256(ofDER:))
     }
 
     var daemonStatusText: String {
@@ -139,22 +151,31 @@ final class ServerModeModel {
     }
 
     func adminClient(timeout: TimeInterval = 15) throws -> APIClient { try client(authenticated: true, timeout: timeout) }
+    func adminClient(for source: Source, timeout: TimeInterval = 15) throws -> APIClient {
+        try client(authenticated: true, source: source, timeout: timeout)
+    }
 
     private func client(authenticated: Bool, timeout: TimeInterval = 4) throws -> APIClient {
+        try client(authenticated: authenticated, source: source, timeout: timeout)
+    }
+
+    private func client(authenticated: Bool, source: Source, timeout: TimeInterval = 4) throws -> APIClient {
+        let url = serverURL(for: source)
+        let pin = certificateSHA256(for: source)
         var token: String?
-        if !isLocal {
+        if source == .paired {
             guard let pairedCredential else { throw ServerModeError("This Mac isn't paired with a server.") }
             token = authenticated ? pairedCredential.token : nil
         } else if authenticated {
             return try LocalServerAdminClient.make(
-                dataDirectory: dataDirectory,
-                serverURL: serverURL,
-                certificateSHA256: certificateSHA256,
+                dataDirectory: dataDirectory(for: source),
+                serverURL: url,
+                certificateSHA256: pin,
                 timeout: timeout
             )
         }
-        return APIClient(baseURL: serverURL, token: token,
-                         session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256, timeout: timeout))
+        return APIClient(baseURL: url, token: token,
+                         session: PinnedCertificateDelegate.session(certificateSHA256: pin, timeout: timeout))
     }
 
     func refresh() async {
@@ -172,7 +193,6 @@ final class ServerModeModel {
         guard health != nil else {
             devices = []
             devicesError = nil
-            pairRequests = []
             lanReachability = .unknown
             firewallBlocksServer = nil
             return
@@ -289,17 +309,14 @@ final class ServerModeModel {
         }
     }
 
-    func refreshPairRequests() async {
-        guard isLocal, health != nil else {
-            pairRequests = []
-            return
-        }
+    func loadPairRequests(for source: Source) async -> (requests: [PendingPairRequest], users: [UserInfo]) {
+        guard source != .paired else { return ([], []) }
         do {
-            let admin = try client(authenticated: true)
+            _ = try await client(authenticated: false, source: source, timeout: 2).health()
+            let admin = try adminClient(for: source, timeout: 2)
             let requests = try await admin.pendingPairRequests()
             let added = requests.filter { !Self.notifiedRequestIDs.contains($0.id) }
-            pairRequests = requests
-            adminUsers = (try? await admin.adminUsers()) ?? []
+            let users = requests.isEmpty ? [] : (try? await admin.adminUsers()) ?? []
             if !added.isEmpty {
                 let center = UNUserNotificationCenter.current()
                 try? await center.requestAuthorization(options: [.alert, .sound])
@@ -307,29 +324,30 @@ final class ServerModeModel {
                     Self.notifiedRequestIDs.insert(request.id)
                     let content = UNMutableNotificationContent()
                     content.title = "Pairing request"
-                    content.body = "\(request.deviceName) (\(request.platform)) wants to connect · Code \(request.matchCode)"
-                    content.userInfo = ["pair-request-id": request.id.uuidString]
+                    content.body = "\(request.deviceName) (\(request.platform)) wants to connect on \(source.title) · Code \(request.matchCode)"
+                    content.userInfo = ["pair-request-id": request.id.uuidString, "pair-request-source": source.rawValue]
                     try? await center.add(UNNotificationRequest(identifier: request.id.uuidString, content: content, trigger: nil))
                 }
             }
+            return (requests, users)
         } catch {
-            pairRequests = []
+            return ([], [])
         }
     }
 
-    func approvePairRequest(_ id: UUID, userID: String? = nil) async {
+    func approvePairRequest(_ id: UUID, source: Source, userID: String? = nil) async {
+        pairingError = nil
         do {
-            _ = try await client(authenticated: true).approvePairRequest(id: id, userID: userID)
-            await refreshPairRequests()
+            _ = try await adminClient(for: source).approvePairRequest(id: id, userID: userID)
         } catch {
             pairingError = "Couldn't approve the request: \(error)"
         }
     }
 
-    func denyPairRequest(_ id: UUID) async {
+    func denyPairRequest(_ id: UUID, source: Source) async {
+        pairingError = nil
         do {
-            _ = try await client(authenticated: true).denyPairRequest(id: id)
-            await refreshPairRequests()
+            _ = try await adminClient(for: source).denyPairRequest(id: id)
         } catch {
             pairingError = "Couldn't deny the request: \(error)"
         }
@@ -405,8 +423,11 @@ private final class PairRequestNotificationDelegate: NSObject, UNUserNotificatio
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         guard response.notification.request.content.userInfo["pair-request-id"] != nil,
               let url = URL(string: "supersemu://server-mode") else { return }
+        let sourceRawValue = response.notification.request.content.userInfo["pair-request-source"] as? String
+        let requestSource = sourceRawValue.flatMap { ServerModeModel.Source(rawValue: $0) }
         await MainActor.run {
             ServerModeNavigation.shared.requested = .server
+            ServerModeNavigation.shared.requestedSource = requestSource
             NSWorkspace.shared.open(url)
         }
     }

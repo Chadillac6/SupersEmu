@@ -139,7 +139,27 @@ final class ServerSession {
         certificateSHA256: String,
         shouldCommit: () -> Bool
     ) async throws {
-        guard shouldCommit() else { throw CancellationError() }
+        guard shouldCommit() else {
+            let client = APIClient(
+                baseURL: url,
+                token: response.token,
+                session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256)
+            )
+            let revocationFailure: String?
+            do {
+                _ = try await client.revokeDevice(response.deviceID)
+                revocationFailure = nil
+            } catch {
+                if let clientError = error as? APIClientError, case .http(let status, _) = clientError {
+                    revocationFailure = "HTTP \(status)"
+                } else {
+                    let nsError = error as NSError
+                    revocationFailure = "\(nsError.domain) \(nsError.code)"
+                }
+            }
+            throw PairingError.approvedResponseFlowLost(
+                deviceID: response.deviceID, revocationFailure: revocationFailure)
+        }
         let credential = ServerCredential(serverName: response.serverName, urls: [url],
                                           certificateSHA256: certificateSHA256, token: response.token,
                                           deviceID: response.deviceID, user: response.user)
@@ -395,12 +415,18 @@ enum PairingError: LocalizedError {
     case insecureAddress
     case fingerprintUnavailable
     case fingerprintConfirmationRequired
+    case approvedResponseFlowLost(deviceID: String, revocationFailure: String?)
 
     var errorDescription: String? {
         switch self {
         case .insecureAddress: return "Use an https:// server address to pair."
         case .fingerprintUnavailable: return "Couldn't read the server's TLS certificate fingerprint."
         case .fingerprintConfirmationRequired: return "Confirm the server's TLS fingerprint before pairing."
+        case .approvedResponseFlowLost(let deviceID, let revocationFailure):
+            if let revocationFailure {
+                return "The approved pairing response arrived after this flow ended. Device \(deviceID) wasn't saved and couldn't be revoked automatically (\(revocationFailure)); revoke it in Server Mode."
+            }
+            return "The approved pairing response arrived after this flow ended. Device \(deviceID) wasn't saved and was revoked."
         }
     }
 }

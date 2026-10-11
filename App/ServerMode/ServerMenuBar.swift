@@ -2,6 +2,7 @@
 import AppKit
 import Observation
 import ServiceManagement
+import SupersEmuKit
 import SwiftUI
 
 struct ServerMenuBar: Scene {
@@ -14,8 +15,8 @@ struct ServerMenuBar: Scene {
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: monitor.status.symbolName)
-                if !monitor.model.pairRequests.isEmpty {
-                    Text("\(monitor.model.pairRequests.count)").font(.caption2.bold())
+                if !monitor.pairRequestEntries.isEmpty {
+                    Text("\(monitor.pairRequestEntries.count)").font(.caption2.bold())
                 }
             }
                 .accessibilityLabel(monitor.status.title)
@@ -42,6 +43,26 @@ final class ServerStatusMonitor {
     let model: ServerModeModel
     private var pollingTask: Task<Void, Never>?
     private var lastStatusRefreshAt: Date?
+    private(set) var pairRequestsBySource: [ServerModeModel.Source: [PendingPairRequest]] = [:]
+    private(set) var adminUsersBySource: [ServerModeModel.Source: [UserInfo]] = [:]
+
+    private var rawPairRequestsBySource: [String: [PendingPairRequest]] {
+        Dictionary(uniqueKeysWithValues: pairRequestsBySource.map { ($0.key.rawValue, $0.value) })
+    }
+    var pairRequestEntries: [PairRequestSourceEntry] {
+        PairRequestSourceGrouping.entries(from: rawPairRequestsBySource)
+    }
+    var hasPairRequestsFromBothSources: Bool {
+        PairRequestSourceGrouping.hasMultipleSourcesWithRequests(in: rawPairRequestsBySource)
+    }
+
+    func pairRequests(for source: ServerModeModel.Source) -> [PendingPairRequest] {
+        PairRequestSourceGrouping.requests(for: source.rawValue, in: rawPairRequestsBySource)
+    }
+
+    func adminUsers(for source: ServerModeModel.Source) -> [UserInfo] {
+        adminUsersBySource[source] ?? []
+    }
 
     var status: ServerMenuStatus {
         ServerMenuStatus(
@@ -66,18 +87,14 @@ final class ServerStatusMonitor {
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let showIcon = UserDefaults.standard.bool(forKey: Self.showIconDefaultsKey)
-                let statusRefreshIsDue = self.lastStatusRefreshAt.map {
-                    Date().timeIntervalSince($0) >= 10
-                } ?? true
-                if self.model.health == nil || (showIcon && statusRefreshIsDue) {
+                let statusRefreshIsDue = ServerPollingCadence.shouldRefreshStatus(
+                    lastRefreshAt: self.lastStatusRefreshAt, now: Date())
+                if self.model.health == nil || statusRefreshIsDue {
                     await refresh()
                 }
-                if model.isLocal && model.health != nil {
-                    await model.refreshPairRequests()
-                }
+                await refreshPairRequests()
                 do {
-                    try await Task.sleep(for: .seconds(3))
+                    try await Task.sleep(for: .seconds(ServerPollingCadence.pairRequestRefreshInterval))
                 } catch {
                     return
                 }
@@ -98,12 +115,35 @@ final class ServerStatusMonitor {
         }
         lastStatusRefreshAt = Date()
     }
+
+    func refreshPairRequests() async {
+        for source in [ServerModeModel.Source.daemon, .session] {
+            let result = await model.loadPairRequests(for: source)
+            pairRequestsBySource[source] = result.requests
+            adminUsersBySource[source] = result.users
+        }
+    }
+
+    func approvePairRequest(_ id: UUID, source: ServerModeModel.Source, userID: String? = nil) async {
+        await model.approvePairRequest(id, source: source, userID: userID)
+        let result = await model.loadPairRequests(for: source)
+        pairRequestsBySource[source] = result.requests
+        adminUsersBySource[source] = result.users
+    }
+
+    func denyPairRequest(_ id: UUID, source: ServerModeModel.Source) async {
+        await model.denyPairRequest(id, source: source)
+        let result = await model.loadPairRequests(for: source)
+        pairRequestsBySource[source] = result.requests
+        adminUsersBySource[source] = result.users
+    }
 }
 
 @MainActor @Observable
 final class ServerModeNavigation {
     static let shared = ServerModeNavigation()
     var requested: ServerModeSection?
+    var requestedSource: ServerModeModel.Source?
     var generatePairingCode = false
 
     private init() {}
@@ -126,10 +166,17 @@ private struct ServerMenuBarContent: View {
         Divider()
         Button("Open Server Window…") { openServerWindow() }
         Button("Pair a Device…") { openServerWindow(section: .server, generatePairingCode: true) }
-        ForEach(monitor.model.pairRequests) { request in
-            Text("\(request.deviceName) (\(request.platform)) wants to connect · Code \(request.matchCode)")
-            Button("Approve \(request.deviceName)") { Task { await monitor.model.approvePairRequest(request.id) } }
-            Button("Deny \(request.deviceName)") { Task { await monitor.model.denyPairRequest(request.id) } }
+        ForEach(monitor.pairRequestEntries) { entry in
+            let request = entry.request
+            let source = ServerModeModel.Source(rawValue: entry.source) ?? .session
+            let sourceLabel = monitor.hasPairRequestsFromBothSources ? " · \(source == .daemon ? "Boot server" : "This session")" : ""
+            Text("\(request.deviceName) (\(request.platform)) wants to connect · Code \(request.matchCode)\(sourceLabel)")
+            Button("Approve \(request.deviceName)\(sourceLabel)") {
+                Task { await monitor.approvePairRequest(request.id, source: source) }
+            }
+            Button("Deny \(request.deviceName)\(sourceLabel)") {
+                Task { await monitor.denyPairRequest(request.id, source: source) }
+            }
         }
         Button("Add Games…") { openServerWindow(section: .library) }
         Button("Review Needed…") { openServerWindow(section: .review) }

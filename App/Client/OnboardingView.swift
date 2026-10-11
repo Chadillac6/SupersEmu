@@ -275,15 +275,18 @@ struct OnboardingView: View {
             while !Task.isCancelled, requestFlowIsCurrent(identity) {
                 do {
                     let claim = try await client.claimPairRequest(id: created.requestID, claimSecret: secret)
-                    guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
                     switch claim {
                     case .pending:
+                        guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
                         try await Task.sleep(for: .seconds(2))
                     case .paired(let response):
-                        guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
                         try await server.pair(
                             response: response, at: endpoint, certificateSHA256: fingerprint,
-                            shouldCommit: { requestFlowIsCurrent(identity) && !Task.isCancelled }
+                            shouldCommit: {
+                                PairingApprovalDisposition.forCurrentOwner(
+                                    flowIdentity: identity, currentIdentity: requestFlowIdentity
+                                ) == .saveCredential
+                            }
                         )
                         return
                     }
@@ -299,6 +302,13 @@ struct OnboardingView: View {
             }
         } catch is CancellationError {
             return
+        } catch let error as PairingError {
+            if case .approvedResponseFlowLost = error {
+                recordDiagnostic(error, endpoint: endpoint, safeDetail: error.localizedDescription)
+            } else {
+                guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
+                recordDiagnostic(error, endpoint: endpoint)
+            }
         } catch {
             guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
             recordDiagnostic(error, endpoint: endpoint)
@@ -340,7 +350,7 @@ struct OnboardingView: View {
         #endif
     }
 
-    private func recordDiagnostic(_ error: Error, endpoint: URL) {
+    private func recordDiagnostic(_ error: Error, endpoint: URL, safeDetail: String? = nil) {
         let diagnosis = ConnectionDiagnosis.from(error: error)
         errorMessage = diagnosis.message
         let nsError = error as NSError
@@ -366,6 +376,7 @@ struct OnboardingView: View {
         diagnosis: \(diagnosis)
         error: \(nsError.domain) \(nsError.code)
         HTTP status: \(httpStatus)
+        detail: \(safeDetail ?? "none")
         """
     }
 

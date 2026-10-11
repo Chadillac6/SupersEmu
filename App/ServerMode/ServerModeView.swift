@@ -99,6 +99,7 @@ struct ServerModeView: View {
         }
         .onChange(of: model.source) {
             library?.reset()
+            selectedPairingUserID = nil
             Task { await model.refresh(); await library?.refreshAll() }
         }
         .onAppear {
@@ -204,6 +205,10 @@ struct ServerModeView: View {
     }
 
     private func consumeNavigationRequest() {
+        if let requestedSource = navigation.requestedSource {
+            model.source = requestedSource
+            navigation.requestedSource = nil
+        }
         if let requested = navigation.requested {
             section = requested
             navigation.requested = nil
@@ -246,7 +251,10 @@ struct ServerModeView: View {
     }
 
     private var pairingSection: some View {
-        Section("Pair a device") {
+        let requestSource = model.source
+        let requests = ServerStatusMonitor.shared.pairRequests(for: requestSource)
+        let users = ServerStatusMonitor.shared.adminUsers(for: requestSource)
+        return Section("Pair a device") {
             HStack {
                 Button(model.pairing == nil ? "New Pairing Code" : "New Code") { Task { await model.createPairingCode() } }
                     .disabled(model.health == nil)
@@ -278,29 +286,31 @@ struct ServerModeView: View {
                 }
                 .padding(.vertical, 6)
             }
-            ForEach(pairingRequestsModel.pairRequests) { request in
+            ForEach(requests) { request in
                 VStack(alignment: .leading, spacing: 8) {
                     Text("\(request.deviceName) (\(request.platform)) wants to connect · Code \(request.matchCode)")
-                    if pairingRequestsModel.adminUsers.count > 1 {
+                    if users.count > 1 {
                         Picker("Assign to", selection: Binding(
-                            get: { selectedPairingUserID ?? pairingRequestsModel.adminUsers.first?.id ?? "" },
+                            get: { selectedPairingUserID ?? users.first?.id ?? "" },
                             set: { selectedPairingUserID = $0 }
                         )) {
-                            ForEach(pairingRequestsModel.adminUsers) { user in
+                            ForEach(users) { user in
                                 Text(user.displayName).tag(user.id)
                             }
                         }
                         Button("Approve") {
                             Task {
-                                await pairingRequestsModel.approvePairRequest(
-                                    request.id, userID: selectedPairingUserID ?? pairingRequestsModel.adminUsers.first?.id)
+                                await ServerStatusMonitor.shared.approvePairRequest(
+                                    request.id, source: requestSource, userID: selectedPairingUserID ?? users.first?.id)
                             }
                         }
                     } else {
-                        Button("Approve") { Task { await pairingRequestsModel.approvePairRequest(request.id) } }
+                        Button("Approve") {
+                            Task { await ServerStatusMonitor.shared.approvePairRequest(request.id, source: requestSource) }
+                        }
                     }
                     Button("Deny", role: .destructive) {
-                        Task { await pairingRequestsModel.denyPairRequest(request.id) }
+                        Task { await ServerStatusMonitor.shared.denyPairRequest(request.id, source: requestSource) }
                     }
                 }
                 .padding(.vertical, 4)
