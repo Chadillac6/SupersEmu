@@ -55,7 +55,7 @@ enum LibraryMigrations {
                 let id: String = game["id"]
                 try db.execute(
                     sql: "UPDATE games SET title = ?, updated_at = ? WHERE id = ?",
-                    arguments: [TitleNormalizer.title(fromFilename: title), Date(), id])
+                    arguments: [TitleNormalizer.strippingHashPrefix(title), Date(), id])
             }
         }
     }

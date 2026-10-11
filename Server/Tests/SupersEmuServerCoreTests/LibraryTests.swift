@@ -121,6 +121,7 @@ final class SystemDetectorTests: XCTestCase {
         XCTAssertEqual(TitleNormalizer.title(fromFilename: "HelloWorld.sfc"), "Hello World")
         XCTAssertEqual(TitleNormalizer.title(fromFilename: "\(String(repeating: "a", count: 64))--Chrono Trigger (USA).sfc"), "Chrono Trigger")
         XCTAssertEqual(TitleNormalizer.title(fromFilename: "1942 (USA).sfc"), "1942")
+        XCTAssertEqual(TitleNormalizer.strippingHashPrefix("\(String(repeating: "a", count: 64))--Dr. Mario"), "Dr. Mario")
     }
 
     func testStartupMigrationRetitlesHashPrefixedGames() throws {
@@ -131,6 +132,9 @@ final class SystemDetectorTests: XCTestCase {
             try db.execute(sql: """
                 INSERT INTO games (id, title, system, created_at) VALUES (?, ?, ?, ?)
                 """, arguments: ["hash-prefixed", hashPrefixedTitle, "snes", Date()])
+            try db.execute(sql: """
+                INSERT INTO games (id, title, system, created_at) VALUES (?, ?, ?, ?)
+                """, arguments: ["dotted-title", "\(String(repeating: "b", count: 64))--Dr. Mario", "snes", Date()])
             try db.execute(sql: """
                 INSERT INTO games (id, title, system, created_at) VALUES (?, ?, ?, ?)
                 """, arguments: ["hex-title", "1942", "genesis", Date()])
@@ -148,6 +152,7 @@ final class SystemDetectorTests: XCTestCase {
             })
         }
         XCTAssertEqual(titles["hash-prefixed"], "Chrono Trigger")
+        XCTAssertEqual(titles["dotted-title"], "Dr. Mario")
         XCTAssertEqual(titles["hex-title"], "1942")
         try ServerMigrations.migrator.migrate(db)
         XCTAssertEqual(try db.read { try String.fetchOne($0, sql: "SELECT title FROM games WHERE id = 'hash-prefixed'") }, "Chrono Trigger")
