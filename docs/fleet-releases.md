@@ -8,7 +8,7 @@ skip their matching tests. iOS distribution is not enabled by this workflow.
 A push to `main` (including a merged PR) runs the same checks, then builds a universal
 Developer ID release, notarizes and staples it, signs the Sparkle ZIP, and publishes
 a GitHub release with ZIP, DMG, and `appcast.xml`. The installed app polls the existing
-latest-release feed. Standard `macos-15` hosted runners are used; no runner is installed
+latest-release feed. Standard `macos-15` hosted runners with Xcode 26.2 (Swift 6.2) are used; no runner is installed
 on the production Mac mini. Failed checks or notarization prevent publication.
 
 ## One-time credential setup
