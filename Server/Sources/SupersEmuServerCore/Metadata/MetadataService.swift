@@ -1,7 +1,46 @@
+import CryptoKit
 import Foundation
 import GRDB
 import Logging
 import SupersEmuKit
+
+private struct MetadataRecordFingerprint: Encodable {
+    var provider: String
+    var providerRef: String?
+    var title: String?
+    var region: String?
+    var year: Int?
+    var publisher: String?
+    var developer: String?
+    var genres: [String]?
+    var description: String?
+    var players: Int?
+    var criticScore: CriticScore?
+    var source: MetadataSource?
+    var reception: ReceptionSummary?
+    var reviewLink: ReviewLink?
+    var artworkURLs: [String]
+    var artworkCandidates: [String]
+
+    init(record: MetadataRecord, artworkCandidates: [String]) {
+        provider = record.provider
+        providerRef = record.providerRef
+        title = record.title
+        region = record.region
+        year = record.year
+        publisher = record.publisher
+        developer = record.developer
+        genres = record.genres
+        description = record.description
+        players = record.players
+        criticScore = record.criticScore
+        source = record.source
+        reception = record.reception
+        reviewLink = record.reviewLink
+        artworkURLs = (record.artworkURLs ?? [:]).map { "\($0.key.rawValue):\($0.value.absoluteString)" }.sorted()
+        self.artworkCandidates = artworkCandidates.sorted()
+    }
+}
 
 /// Runs every provider over imported games in the background: match, store a `game_metadata` row, then fetch artwork.
 /// Failures leave the game as imported (filename title, generated tile) and are retried on the next pass.
@@ -123,11 +162,13 @@ public actor MetadataService {
                         try artwork.removeProviderArtwork(provider: provider.id, gameID: id)
                     }
                     try await store.db.write { db in try record.save(gameID: id, db: db) }
-                    try await recordJob(id, provider, match: complete ? "matched" : "partial", searchTitle: title, clearingRecord: false)
+                    let recordHash = try Self.recordHash(record, system: system, provider: provider)
+                    try await recordJob(id, provider, match: complete ? "matched" : "partial", searchTitle: title,
+                                        recordHash: recordHash, clearingRecord: false)
                     logger.info("\(provider.id) matched \(id.prefix(12)) to \"\(record.providerRef ?? record.title ?? "?")\"")
                     changed += 1
                 }
-            } else if status != "matched" || ((row["artwork_status"] as String?) != nil
+            } else if status != "matched" || ((row["artwork_status"] as String?) == "done"
                         && (row["artwork_version"] as String?) == provider.artworkVersion(system: system)) {
                 continue
             }
@@ -146,27 +187,39 @@ public actor MetadataService {
     }
 
     private func recordJob(_ gameID: String, _ provider: any MetadataProvider, match: String, searchTitle: String,
-                           clearingRecord: Bool) async throws {
+                           recordHash: String? = nil, clearingRecord: Bool) async throws {
         try await store.db.write { db in
             if clearingRecord {
                 try db.execute(sql: "DELETE FROM game_metadata WHERE game_id = ? AND provider = ?", arguments: [gameID, provider.id])
             }
             try db.execute(sql: """
                 INSERT INTO metadata_jobs (game_id, provider, match_status, artwork_status, dataset_version,
-                    artwork_version, search_title, updated_at)
-                VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
+                    artwork_version, search_title, record_hash, updated_at)
+                VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)
                 ON CONFLICT (game_id, provider) DO UPDATE SET
                     match_status = excluded.match_status,
                     artwork_status = NULL,
                     dataset_version = excluded.dataset_version,
                     artwork_version = NULL,
                     search_title = excluded.search_title,
+                    record_hash = excluded.record_hash,
                     updated_at = excluded.updated_at
                 WHERE metadata_jobs.match_status IS NOT excluded.match_status
                     OR metadata_jobs.dataset_version IS NOT excluded.dataset_version
                     OR metadata_jobs.search_title IS NOT excluded.search_title
-                """, arguments: [gameID, provider.id, match, provider.version, nil as String?, searchTitle, Date()])
+                    OR metadata_jobs.record_hash IS NOT excluded.record_hash
+                """, arguments: [gameID, provider.id, match, provider.version, nil as String?, searchTitle, recordHash, Date()])
         }
+    }
+
+    private static func recordHash(_ record: MetadataRecord, system: SystemID, provider: any MetadataProvider) throws -> String {
+        let candidates = provider.artwork(for: record, system: system).flatMap { candidate in
+            candidate.urls.map { "\(candidate.kind.rawValue):\(candidate.position):\($0.absoluteString)" }
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(MetadataRecordFingerprint(record: record, artworkCandidates: candidates))
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Marks artwork done unless a request failed on the network, in which case the next pass retries.
@@ -185,6 +238,12 @@ public actor MetadataService {
                     data = try await http.get(url)
                 } catch {
                     logger.info("Artwork for \(gameID.prefix(12)) deferred: \(error)")
+                    try await store.db.write { db in
+                        try db.execute(sql: """
+                            UPDATE metadata_jobs SET artwork_status = 'failed', updated_at = ?
+                            WHERE game_id = ? AND provider = ?
+                            """, arguments: [Date(), gameID, provider.id])
+                    }
                     return
                 }
                 guard let data else { continue }

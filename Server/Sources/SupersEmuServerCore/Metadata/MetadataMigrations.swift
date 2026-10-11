@@ -5,7 +5,7 @@ enum MetadataMigrations {
         // One row per (game, provider); every field optional. `MetadataMerge` picks per field by provider precedence,
         // falling back to what the importer stored in `games`.
         // `metadata_jobs.match_status`: 'matched' / 'unmatched'; NULL or a stale `dataset_version` means try again.
-        // `artwork_status` is 'done' once every artwork candidate was tried without a network error.
+        // `artwork_status` is 'done' after all candidates are tried, or 'failed' when a request can be retried later.
         migrator.registerMigration("v3_metadata") { db in
             try db.execute(sql: """
                 CREATE TABLE game_metadata (
@@ -62,6 +62,26 @@ enum MetadataMigrations {
             }
             // The title a name-searching provider looked up; an unmatched game is retried when a better title appears.
             try db.execute(sql: "ALTER TABLE metadata_jobs ADD COLUMN search_title TEXT")
+        }
+    }
+
+    static func registerArtworkRecordHash(_ migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v7_metadata_artwork_record_hash") { db in
+            try db.execute(sql: "ALTER TABLE metadata_jobs ADD COLUMN record_hash TEXT")
+            try db.execute(sql: "DROP TRIGGER IF EXISTS library_revision_metadata_jobs_update")
+            try db.execute(sql: """
+                CREATE TRIGGER library_revision_metadata_jobs_update
+                AFTER UPDATE ON metadata_jobs
+                WHEN OLD.match_status IS NOT NEW.match_status
+                    OR OLD.artwork_status IS NOT NEW.artwork_status
+                    OR OLD.dataset_version IS NOT NEW.dataset_version
+                    OR OLD.artwork_version IS NOT NEW.artwork_version
+                    OR OLD.search_title IS NOT NEW.search_title
+                    OR OLD.record_hash IS NOT NEW.record_hash
+                BEGIN
+                    UPDATE library_revision SET value = value + 1 WHERE id = 1;
+                END;
+                """)
         }
     }
 }

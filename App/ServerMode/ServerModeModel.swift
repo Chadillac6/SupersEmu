@@ -37,7 +37,13 @@ final class ServerModeModel {
     static let daemonPort = 8487
     static let sessionPort = 8488
 
-    var source: Source
+    var source: Source {
+        didSet {
+            guard oldValue != source else { return }
+            pairing = nil
+            pairingError = nil
+        }
+    }
     private(set) var daemonStatus: SMAppService.Status
     private(set) var sessionRunning = false
     private(set) var sessionStoppedUnexpectedly = false

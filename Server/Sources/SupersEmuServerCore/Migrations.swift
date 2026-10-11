@@ -105,5 +105,6 @@ public enum ServerMigrations {
         SaveMigrations.register(&migrator)
         MetadataMigrations.registerReviews(&migrator)
         LibraryRevisionMigrations.register(&migrator)
+        MetadataMigrations.registerArtworkRecordHash(&migrator)
     }
 }
