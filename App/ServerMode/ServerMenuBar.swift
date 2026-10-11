@@ -12,7 +12,12 @@ struct ServerMenuBar: Scene {
         MenuBarExtra(isInserted: insertionBinding) {
             ServerMenuBarContent(monitor: monitor, showIcon: $showIcon)
         } label: {
-            Image(systemName: monitor.status.symbolName)
+            HStack(spacing: 3) {
+                Image(systemName: monitor.status.symbolName)
+                if !monitor.model.pairRequests.isEmpty {
+                    Text("\(monitor.model.pairRequests.count)").font(.caption2.bold())
+                }
+            }
                 .accessibilityLabel(monitor.status.title)
         }
         .menuBarExtraStyle(.menu)
@@ -105,9 +110,18 @@ private struct ServerMenuBarContent: View {
         let status = monitor.status
         Text(status.title).disabled(true)
         Text(status.detail).disabled(true)
+        if monitor.model.lanReachability == .blocked {
+            Text("Other devices can't reach this server.")
+            Button("Allow in Firewall…") { Task { await monitor.model.allowInFirewall() } }
+        }
         Divider()
         Button("Open Server Window…") { openServerWindow() }
         Button("Pair a Device…") { openServerWindow(section: .server, generatePairingCode: true) }
+        ForEach(monitor.model.pairRequests) { request in
+            Text("\(request.deviceName) (\(request.platform)) wants to connect · Code \(request.matchCode)")
+            Button("Approve \(request.deviceName)") { Task { await monitor.model.approvePairRequest(request.id) } }
+            Button("Deny \(request.deviceName)") { Task { await monitor.model.denyPairRequest(request.id) } }
+        }
         Button("Add Games…") { openServerWindow(section: .library) }
         Button("Review Needed…") { openServerWindow(section: .review) }
         Button("BIOS…") { openServerWindow(section: .bios) }

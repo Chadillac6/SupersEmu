@@ -71,6 +71,7 @@ struct ServerModeView: View {
     @State private var library: LibraryManagerModel?
     @State private var section: ServerModeSection? = .server
     @State private var navigation = ServerModeNavigation.shared
+    @State private var selectedPairingUserID: String?
     @AppStorage(ServerModeLaunch.defaultsKey) private var openAtLaunch = false
     @AppStorage(ServerStatusMonitor.showIconDefaultsKey) private var showServerMenuBarIcon = false
 
@@ -156,6 +157,19 @@ struct ServerModeView: View {
                 }
             }
             LabeledContent("Address", value: model.serverURL.absoluteString)
+            if model.lanReachability == .blocked {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Other devices can't reach this server.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    if model.firewallBlocksServer == true {
+                        Text("macOS Firewall is blocking SupersEmu Server.")
+                    } else {
+                        Text("The macOS Firewall status is unknown.")
+                    }
+                    Button("Allow in Firewall…") { Task { await model.allowInFirewall() } }
+                }
+                .padding(.vertical, 4)
+            }
             if model.isLocal {
                 LabeledContent("Data folder") {
                     Text(model.dataDirectory.path).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
@@ -255,6 +269,31 @@ struct ServerModeView: View {
                     }
                 }
                 .padding(.vertical, 6)
+            }
+            ForEach(model.pairRequests) { request in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(request.deviceName) (\(request.platform)) wants to connect · Code \(request.matchCode)")
+                    if model.adminUsers.count > 1 {
+                        Picker("Assign to", selection: Binding(
+                            get: { selectedPairingUserID ?? model.adminUsers.first?.id ?? "" },
+                            set: { selectedPairingUserID = $0 }
+                        )) {
+                            ForEach(model.adminUsers) { user in
+                                Text(user.displayName).tag(user.id)
+                            }
+                        }
+                        Button("Approve") {
+                            Task {
+                                await model.approvePairRequest(
+                                    request.id, userID: selectedPairingUserID ?? model.adminUsers.first?.id)
+                            }
+                        }
+                    } else {
+                        Button("Approve") { Task { await model.approvePairRequest(request.id) } }
+                    }
+                    Button("Deny", role: .destructive) { Task { await model.denyPairRequest(request.id) } }
+                }
+                .padding(.vertical, 4)
             }
         }
     }

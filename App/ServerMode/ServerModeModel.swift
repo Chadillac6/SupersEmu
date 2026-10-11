@@ -1,9 +1,11 @@
 #if os(macOS)
 import AppKit
+import Darwin
 import Foundation
 import Observation
 import ServiceManagement
 import SupersEmuKit
+import UserNotifications
 
 enum LocalServerAdminClient {
     static func make(dataDirectory: URL, serverURL: URL, certificateSHA256: String?, timeout: TimeInterval = 4) throws -> APIClient {
@@ -43,6 +45,9 @@ final class ServerModeModel {
             pairingRequestGeneration += 1
             pairing = nil
             pairingError = nil
+            pairRequests = []
+            requestPollTask?.cancel()
+            requestPollTask = nil
         }
     }
     private var pairingRequestGeneration = 0
@@ -54,6 +59,11 @@ final class ServerModeModel {
     private(set) var pairing: PairingCode?
     private(set) var pairingError: String?
     private(set) var devices: [DeviceInfo] = []
+    private(set) var pairRequests: [PendingPairRequest] = []
+    private(set) var adminUsers: [UserInfo] = []
+    enum LANReachability { case unknown, reachable, blocked }
+    private(set) var lanReachability: LANReachability = .unknown
+    private(set) var firewallBlocksServer: Bool?
     private(set) var devicesError: String?
     private(set) var message: String?
     private(set) var busy = false
@@ -63,6 +73,13 @@ final class ServerModeModel {
         set { SessionServerProcess.shared.process = newValue }
     }
     private let daemon = SMAppService.daemon(plistName: ServerModeModel.daemonPlistName)
+    private var requestPollTask: Task<Void, Never>?
+    private var lastLANProbeAt: Date?
+    private static let notifiedRequestsDefaultsKey = "notifiedPairRequestIDs"
+    private static var notifiedRequestIDs: Set<UUID> {
+        get { Set((UserDefaults.standard.stringArray(forKey: notifiedRequestsDefaultsKey) ?? []).compactMap(UUID.init(uuidString:))) }
+        set { UserDefaults.standard.set(newValue.map(\.uuidString), forKey: notifiedRequestsDefaultsKey) }
+    }
 
     /// The server this Mac is paired with as a player, managed remotely when it's an admin device.
     let pairedCredential = ServerSession.defaultStore().load()
@@ -73,6 +90,7 @@ final class ServerModeModel {
         let status = daemon.status
         daemonStatus = status
         source = status == .enabled ? .daemon : .session
+        UNUserNotificationCenter.current().delegate = PairRequestNotificationDelegate.shared
     }
 
     var dataDirectory: URL {
@@ -154,7 +172,17 @@ final class ServerModeModel {
             health = nil
             statusError = "Not responding on \(serverURL.absoluteString)"
         }
-        guard health != nil else { devices = []; devicesError = nil; return }
+        guard health != nil else {
+            devices = []
+            devicesError = nil
+            pairRequests = []
+            lanReachability = .unknown
+            firewallBlocksServer = nil
+            requestPollTask?.cancel()
+            requestPollTask = nil
+            return
+        }
+        startPairRequestPolling()
         do {
             devices = try await client(authenticated: true).devices()
             devicesError = nil
@@ -163,6 +191,8 @@ final class ServerModeModel {
         } catch {
             devicesError = "Couldn't load devices: \(error)"
         }
+        await refreshPairRequests()
+        if isLocal { await probeLANReachability() }
     }
 
     // MARK: Boot daemon
@@ -263,6 +293,139 @@ final class ServerModeModel {
         } catch {
             guard request.matches(generation: pairingRequestGeneration, source: source.rawValue) else { return }
             pairingError = "\(error)"
+        }
+    }
+
+    private func startPairRequestPolling() {
+        guard isLocal, requestPollTask == nil else { return }
+        requestPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled, let self else { return }
+                await self.refreshPairRequests()
+            }
+        }
+    }
+
+    func refreshPairRequests() async {
+        guard isLocal, health != nil else {
+            pairRequests = []
+            return
+        }
+        do {
+            let admin = try client(authenticated: true)
+            let requests = try await admin.pendingPairRequests()
+            let added = requests.filter { !Self.notifiedRequestIDs.contains($0.id) }
+            pairRequests = requests
+            adminUsers = (try? await admin.adminUsers()) ?? []
+            if !added.isEmpty {
+                let center = UNUserNotificationCenter.current()
+                try? await center.requestAuthorization(options: [.alert, .sound])
+                for request in added {
+                    Self.notifiedRequestIDs.insert(request.id)
+                    let content = UNMutableNotificationContent()
+                    content.title = "Pairing request"
+                    content.body = "\(request.deviceName) (\(request.platform)) wants to connect · Code \(request.matchCode)"
+                    content.userInfo = ["pair-request-id": request.id.uuidString]
+                    try? await center.add(UNNotificationRequest(identifier: request.id.uuidString, content: content, trigger: nil))
+                }
+            }
+        } catch {
+            pairRequests = []
+        }
+    }
+
+    func approvePairRequest(_ id: UUID, userID: String? = nil) async {
+        do {
+            _ = try await client(authenticated: true).approvePairRequest(id: id, userID: userID)
+            await refreshPairRequests()
+        } catch {
+            pairingError = "Couldn't approve the request: \(error)"
+        }
+    }
+
+    func denyPairRequest(_ id: UUID) async {
+        do {
+            _ = try await client(authenticated: true).denyPairRequest(id: id)
+            await refreshPairRequests()
+        } catch {
+            pairingError = "Couldn't deny the request: \(error)"
+        }
+    }
+
+    func probeLANReachability(force: Bool = false) async {
+        guard isLocal, health != nil,
+              force || lastLANProbeAt.map({ Date().timeIntervalSince($0) >= 60 }) ?? true,
+              let ip = Self.firstLANAddress(), let url = URL(string: "https://\(ip):\(port)") else { return }
+        lastLANProbeAt = Date()
+        do {
+            _ = try await APIClient(baseURL: url, token: nil,
+                                    session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256, timeout: 4)).health()
+            lanReachability = .reachable
+            firewallBlocksServer = nil
+        } catch {
+            lanReachability = .blocked
+            firewallBlocksServer = firewallStatusForServerBinary()
+        }
+    }
+
+    func allowInFirewall() async {
+        guard let binary = serverBinary else { return }
+        let path = binary.path.replacingOccurrences(of: "'", with: "'\\''")
+        let command = "/usr/libexec/ApplicationFirewall/socketfilterfw --add '\(path)' && /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp '\(path)'"
+        let escaped = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        var details: NSDictionary?
+        let script = NSAppleScript(source: "do shell script \"\(escaped)\" with administrator privileges")
+        _ = script?.executeAndReturnError(&details)
+        lastLANProbeAt = nil
+        await probeLANReachability(force: true)
+    }
+
+    private func firewallStatusForServerBinary() -> Bool? {
+        guard let binary = serverBinary else { return nil }
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/libexec/ApplicationFirewall/socketfilterfw")
+        process.arguments = ["--getappblocked", binary.path]
+        process.standardOutput = output
+        process.standardError = output
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).lowercased()
+            return text.contains("blocked") && !text.contains("not blocked")
+        } catch {
+            return nil
+        }
+    }
+
+    private static func firstLANAddress() -> String? {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return nil }
+        defer { freeifaddrs(list) }
+        for item in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let flags = Int32(item.pointee.ifa_flags)
+            guard let address = item.pointee.ifa_addr, address.pointee.sa_family == UInt8(AF_INET),
+                  flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0 else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+                return String(cString: host)
+            }
+        }
+        return nil
+    }
+}
+
+private final class PairRequestNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = PairRequestNotificationDelegate()
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard response.notification.request.content.userInfo["pair-request-id"] != nil,
+              let url = URL(string: "supersemu://server-mode") else { return }
+        await MainActor.run {
+            ServerModeNavigation.shared.requested = .server
+            NSWorkspace.shared.open(url)
         }
     }
 }

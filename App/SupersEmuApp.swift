@@ -42,6 +42,9 @@ struct RootView: View {
     @Environment(DownloadCenter.self) private var downloads
     @Environment(BIOSCenter.self) private var bios
     @Environment(\.scenePhase) private var scenePhase
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
     @AppStorage("onboardingSkipped") private var onboardingSkipped = false
     @State private var playing: Game?
 
@@ -81,6 +84,13 @@ struct RootView: View {
             if refreshed != nil { Task { await SaveSync.shared.engine.flush() } }
             if refreshed != nil { Task { await bios.sync(using: server) } }
         }
+        #if os(macOS)
+        .onOpenURL { url in
+            guard url.host == "server-mode" else { return }
+            ServerModeNavigation.shared.requested = .server
+            openWindow(id: ServerModeScene.windowID)
+        }
+        #endif
     }
 
     /// Disc games need their BIOS in the system directory before the core loads them.

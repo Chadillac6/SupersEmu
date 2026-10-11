@@ -34,6 +34,11 @@ if ! mv "$NEW" "$APP"; then
   exit 1
 fi
 rm -rf "$OLD"
+SERVER_BINARY="$APP/Contents/MacOS/supersemu-server"
+if /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>&1 | grep -qi enabled; then
+  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add "$SERVER_BINARY"
+  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp "$SERVER_BINARY"
+fi
 if launchctl print system/com.chadillac6.supersemu.server >/dev/null 2>&1; then
   echo "Restarting the boot server (asks for your password)…"
   sudo launchctl kickstart -k system/com.chadillac6.supersemu.server

@@ -53,6 +53,86 @@ public struct PairResponse: Codable, Sendable, Equatable {
     }
 }
 
+public struct PairRequestCreate: Codable, Sendable, Equatable {
+    public var deviceName: String
+    public var platform: String
+    public var claimHash: String
+
+    public init(deviceName: String, platform: String, claimHash: String) {
+        self.deviceName = deviceName
+        self.platform = platform
+        self.claimHash = claimHash
+    }
+}
+
+public struct PairRequestCreated: Codable, Sendable, Equatable {
+    public var requestID: UUID
+    public var expiresAt: Date
+
+    public init(requestID: UUID, expiresAt: Date) {
+        self.requestID = requestID
+        self.expiresAt = expiresAt
+    }
+}
+
+public struct PairRequestClaim: Codable, Sendable, Equatable {
+    public var claimSecret: String
+
+    public init(claimSecret: String) {
+        self.claimSecret = claimSecret
+    }
+}
+
+public struct PairRequestPending: Codable, Sendable, Equatable {
+    public var status: String
+
+    public init(status: String = "pending") {
+        self.status = status
+    }
+}
+
+public enum PairRequestClaimResult: Sendable, Equatable {
+    case pending
+    case paired(PairResponse)
+}
+
+public struct PendingPairRequest: Codable, Sendable, Equatable, Identifiable {
+    public var id: UUID
+    public var deviceName: String
+    public var platform: String
+    public var remoteAddress: String
+    public var matchCode: String
+    public var createdAt: Date
+    public var expiresAt: Date
+
+    public init(id: UUID, deviceName: String, platform: String, remoteAddress: String, matchCode: String,
+                createdAt: Date, expiresAt: Date) {
+        self.id = id
+        self.deviceName = deviceName
+        self.platform = platform
+        self.remoteAddress = remoteAddress
+        self.matchCode = matchCode
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+    }
+}
+
+public struct PairRequestApproval: Codable, Sendable, Equatable {
+    public var userID: String?
+
+    public init(userID: String? = nil) {
+        self.userID = userID
+    }
+}
+
+public struct PairRequestActionResponse: Codable, Sendable, Equatable {
+    public var status: String
+
+    public init(status: String) {
+        self.status = status
+    }
+}
+
 // MARK: Library admin (track: server library)
 
 public struct ImportRequest: Codable, Sendable, Equatable {
@@ -193,6 +273,40 @@ extension APIClient {
         try await send("POST", "/v1/admin/pairing-codes", body: request)
     }
     public func pair(_ request: PairRequest) async throws -> PairResponse { try await send("POST", "/v1/pair", body: request) }
+
+    public func createPairRequest(_ request: PairRequestCreate) async throws -> PairRequestCreated {
+        try await send("POST", "/v1/pair/requests", body: request)
+    }
+
+    public func claimPairRequest(id: UUID, claimSecret: String) async throws -> PairRequestClaimResult {
+        let path = "/v1/pair/requests/\(id.uuidString.lowercased())/claim"
+        let body = try SupersEmuJSON.encoder().encode(PairRequestClaim(claimSecret: claimSecret))
+        let data = try await raw("POST", path, body: body)
+        if let response = try? SupersEmuJSON.decoder().decode(PairResponse.self, from: data) {
+            return .paired(response)
+        }
+        let pending = try SupersEmuJSON.decoder().decode(PairRequestPending.self, from: data)
+        guard pending.status == "pending" else { throw APIClientError.invalidResponse }
+        return .pending
+    }
+
+    public func pendingPairRequests() async throws -> [PendingPairRequest] {
+        try await get("/v1/admin/pair-requests")
+    }
+
+    public func adminUsers() async throws -> [UserInfo] {
+        try await get("/v1/admin/users")
+    }
+
+    public func approvePairRequest(id: UUID, userID: String? = nil) async throws -> PairRequestActionResponse {
+        try await send("POST", "/v1/admin/pair-requests/\(id.uuidString.lowercased())/approve",
+                       body: PairRequestApproval(userID: userID))
+    }
+
+    public func denyPairRequest(id: UUID) async throws -> PairRequestActionResponse {
+        try await send("POST", "/v1/admin/pair-requests/\(id.uuidString.lowercased())/deny",
+                       body: Optional<String>.none)
+    }
 
     public func importLibrary(_ request: ImportRequest) async throws -> ImportReport {
         try await send("POST", "/v1/admin/library/import", body: request)
