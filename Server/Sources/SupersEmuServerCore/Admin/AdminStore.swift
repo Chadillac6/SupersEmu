@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Hummingbird
 import SupersEmuKit
 
 /// Queries behind the users/devices/tokens admin API. Never exposes token hashes.
@@ -112,6 +113,26 @@ extension ServerStore {
                 return nil
             }
             if changed { try Self.insertAudit(db, auth, action: "device.revoke", detail: "\(id) \(device.name)") }
+            return device
+        }
+    }
+
+    public func revokeOwnDevice(by auth: AuthContext) throws -> DeviceInfo? {
+        guard case .device(let id) = auth.credential else {
+            throw HTTPError(.forbidden, message: "A device token is required")
+        }
+        return try db.write { db in
+            try db.execute(
+                sql: "UPDATE devices SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+                arguments: [Date(), id, auth.user.id]
+            )
+            let changed = db.changesCount > 0
+            guard let device = try Row.fetchOne(
+                db, sql: Self.deviceColumns + " WHERE id = ? AND user_id = ?", arguments: [id, auth.user.id]
+            ).map(Self.device(from:)) else {
+                return nil
+            }
+            if changed { try Self.insertAudit(db, auth, action: "device.self_revoked", detail: id) }
             return device
         }
     }

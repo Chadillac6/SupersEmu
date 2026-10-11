@@ -36,20 +36,16 @@ func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, au
 
     publicGroup.post("pair/requests") { request, context in
         let client = context.remoteAddress ?? "unknown"
-        guard service.limiter.allowAttempt(client: client) else {
-            throw HTTPError(.tooManyRequests, message: "Too many pairing requests. Wait a minute and try again.")
-        }
         let body = try await request.decode(as: PairRequestCreate.self, context: context)
         let created = try await requests.create(body, remoteAddress: client)
-        service.limiter.recordFailure(client: client)
         return EditedResponse(status: .created, response: created)
     }
 
     publicGroup.post("pair/requests/:id/claim") { request, context in
         let id = UUID(uuidString: try context.parameters.require("id"))
-        guard let id else { throw HTTPError(.notFound, message: "No such pairing request") }
         let body = try await request.decode(as: PairRequestClaim.self, context: context)
-        switch try await requests.claim(id: id, claimSecret: body.claimSecret) {
+        switch try await requests.claim(id: id, claimSecret: body.claimSecret,
+                                        remoteAddress: context.remoteAddress ?? "unknown") {
         case .pending:
             return try LibraryHTTP.json(PairRequestPending(), status: .accepted)
         case .paired(let response):
@@ -227,6 +223,11 @@ public final class PairingService: Sendable {
 }
 
 actor PairRequestService {
+    private struct ClaimAttempt {
+        let at: Date
+        let cost: Int
+    }
+
     private enum State {
         case waiting
         case approved(PairResponse)
@@ -245,30 +246,57 @@ actor PairRequestService {
     private let pairing: PairingService
     private let now: @Sendable () -> Date
     private let lifetime: TimeInterval
-    private let maximumPending: Int
+    private let rateLimitWindow: TimeInterval
+    private let createLimitPerMinute: Int
+    private let claimLimitPerMinute: Int
+    private let maximumPendingPerClient: Int
+    private let maximumPendingGlobally: Int
     private var entries: [UUID: Entry] = [:]
+    private var createAttempts: [String: [Date]] = [:]
+    private var claimAttempts: [String: [ClaimAttempt]] = [:]
 
     init(store: ServerStore, pairing: PairingService, now: @escaping @Sendable () -> Date = { Date() },
-         lifetime: TimeInterval = 5 * 60, maximumPending: Int = 5) {
+         lifetime: TimeInterval = 5 * 60, rateLimitWindow: TimeInterval = 60,
+         createLimitPerMinute: Int = 5, claimLimitPerMinute: Int = 60,
+         maximumPendingPerClient: Int = 2, maximumPendingGlobally: Int = 10) {
         self.store = store
         self.pairing = pairing
         self.now = now
         self.lifetime = lifetime
-        self.maximumPending = maximumPending
+        self.rateLimitWindow = rateLimitWindow
+        self.createLimitPerMinute = createLimitPerMinute
+        self.claimLimitPerMinute = claimLimitPerMinute
+        self.maximumPendingPerClient = maximumPendingPerClient
+        self.maximumPendingGlobally = maximumPendingGlobally
     }
 
     func create(_ body: PairRequestCreate, remoteAddress: String) throws -> PairRequestCreated {
+        let created = now()
+        try recordCreateAttempt(remoteAddress: remoteAddress, at: created)
         let name = body.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 100,
               !body.platform.isEmpty, body.platform.count <= 40,
               body.claimHash.count == 64, body.claimHash.allSatisfy(\.isHexDigit) else {
             throw HTTPError(.badRequest, message: "Invalid pairing request")
         }
-        let created = now()
         entries = entries.filter { $0.value.request.expiresAt.addingTimeInterval(60 * 60) > created }
-        let pending = entries.values.filter { if case .waiting = $0.state { return $0.request.expiresAt > created }; return false }
-        if pending.count >= maximumPending, let oldest = pending.min(by: { $0.request.createdAt < $1.request.createdAt }) {
+        let pendingFromClient = entries.values.filter {
+            if case .waiting = $0.state {
+                return $0.request.remoteAddress == remoteAddress && $0.request.expiresAt > created
+            }
+            return false
+        }
+        if pendingFromClient.count >= maximumPendingPerClient,
+           let oldest = pendingFromClient.min(by: { $0.request.createdAt < $1.request.createdAt }) {
             entries[oldest.request.id]?.state = .expired
+        }
+        let pendingCount = entries.values.filter {
+            if case .waiting = $0.state { return $0.request.expiresAt > created }
+            return false
+        }.count
+        guard pendingCount < maximumPendingGlobally else {
+            throw HTTPError(.tooManyRequests,
+                            message: "Too many pending connection requests — approve or deny them in the SupersEmu Server window")
         }
         let id = UUID()
         let expires = created.addingTimeInterval(lifetime)
@@ -290,15 +318,24 @@ actor PairRequestService {
         }.sorted { $0.createdAt < $1.createdAt }
     }
 
-    func claim(id: UUID, claimSecret: String) throws -> PairRequestClaimResult {
-        guard var entry = entries[id] else { throw HTTPError(.notFound, message: "No such pairing request") }
-        let secretBytes = Self.decodeHex(claimSecret)
-        guard let secretBytes else { throw HTTPError(.notFound, message: "No such pairing request") }
-        let suppliedHash = SHA256.hash(data: secretBytes).map { String(format: "%02x", $0) }.joined()
-        guard Self.constantTimeEquals(entry.claimHash, suppliedHash) else {
+    func claim(id: UUID?, claimSecret: String, remoteAddress: String = "unknown") throws -> PairRequestClaimResult {
+        let claimedAt = now()
+        guard let id, var entry = entries[id] else {
+            try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
             throw HTTPError(.notFound, message: "No such pairing request")
         }
-        if entry.request.expiresAt <= now() {
+        let secretBytes = Self.decodeHex(claimSecret)
+        guard let secretBytes else {
+            try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
+            throw HTTPError(.notFound, message: "No such pairing request")
+        }
+        let suppliedHash = SHA256.hash(data: secretBytes).map { String(format: "%02x", $0) }.joined()
+        guard Self.constantTimeEquals(entry.claimHash, suppliedHash) else {
+            try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
+            throw HTTPError(.notFound, message: "No such pairing request")
+        }
+        try recordClaimAttempt(remoteAddress: remoteAddress, cost: 1, at: claimedAt)
+        if entry.request.expiresAt <= claimedAt {
             entry.state = .expired
             entries[id] = entry
         }
@@ -355,6 +392,36 @@ actor PairRequestService {
             difference |= (index < left.count ? left[index] : 0) ^ (index < right.count ? right[index] : 0)
         }
         return difference == 0
+    }
+
+    private func recordCreateAttempt(remoteAddress: String, at: Date) throws {
+        pruneAttempts(olderThan: at.addingTimeInterval(-rateLimitWindow))
+        let attempts = createAttempts[remoteAddress, default: []]
+        guard attempts.count < createLimitPerMinute else {
+            throw HTTPError(.tooManyRequests, message: "Too many connection request creations. Wait a minute and try again.")
+        }
+        createAttempts[remoteAddress, default: []].append(at)
+    }
+
+    private func recordClaimAttempt(remoteAddress: String, cost: Int, at: Date) throws {
+        pruneAttempts(olderThan: at.addingTimeInterval(-rateLimitWindow))
+        let attempts = claimAttempts[remoteAddress, default: []]
+        let used = attempts.reduce(0) { $0 + $1.cost }
+        guard used + cost <= claimLimitPerMinute else {
+            throw HTTPError(.tooManyRequests, message: "Too many connection request claims. Wait a minute and try again.")
+        }
+        claimAttempts[remoteAddress, default: []].append(ClaimAttempt(at: at, cost: cost))
+    }
+
+    private func pruneAttempts(olderThan cutoff: Date) {
+        for remoteAddress in Array(createAttempts.keys) {
+            createAttempts[remoteAddress]?.removeAll { $0 < cutoff }
+            if createAttempts[remoteAddress]?.isEmpty == true { createAttempts[remoteAddress] = nil }
+        }
+        for remoteAddress in Array(claimAttempts.keys) {
+            claimAttempts[remoteAddress]?.removeAll { $0.at < cutoff }
+            if claimAttempts[remoteAddress]?.isEmpty == true { claimAttempts[remoteAddress] = nil }
+        }
     }
 }
 

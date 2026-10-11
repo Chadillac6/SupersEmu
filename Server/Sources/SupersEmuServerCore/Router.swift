@@ -35,6 +35,13 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil) ->
         let deviceID: String? = { if case .device(let id) = auth.credential { return id }; return nil }()
         return MeResponse(user: auth.user, deviceID: deviceID, scopes: scopes)
     }
+    authed.delete("devices/self") { _, context in
+        let auth = try context.caller()
+        guard let device = try store.revokeOwnDevice(by: auth) else {
+            throw HTTPError(.unauthorized, message: "Device is no longer active")
+        }
+        return device
+    }
     authed.get("library") { _, context in
         let auth = try context.caller()
         try auth.require(.libraryRead)

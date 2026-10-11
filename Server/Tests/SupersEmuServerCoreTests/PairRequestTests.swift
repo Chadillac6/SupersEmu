@@ -146,10 +146,101 @@ final class PairRequestTests: XCTestCase {
         }
     }
 
-    func testPendingCapDropsOldestAndRequestCreationIsRateLimited() async throws {
-        let limited = PairingService(store: store, limiter: PairingRateLimiter(maxFailures: 1))
+    func testCreateRateLimitIsPerIPAndDoesNotBlockPairCodePairing() async throws {
+        let digest = SHA256.hash(data: Data(repeating: 0x11, count: 32)).map { String(format: "%02x", $0) }.joined()
+        let body = PairRequestCreate(deviceName: "iPhone", platform: "ios", claimHash: digest)
+        let isolated = PairRequestService(store: store, pairing: pairing)
+        for _ in 0..<5 {
+            _ = try await isolated.create(body, remoteAddress: "192.0.2.10")
+        }
+        do {
+            _ = try await isolated.create(body, remoteAddress: "192.0.2.10")
+            XCTFail("Expected per-IP creation limit")
+        } catch {
+            XCTAssertEqual((error as? HTTPError)?.status, .tooManyRequests)
+        }
+        _ = try await isolated.create(body, remoteAddress: "192.0.2.11")
+
+        let code = try pairing.createCode(for: nil, caller: makeCaller()).code
+        try await buildApplication(store: store, configuration: .init()).test(.router) { client in
+            for _ in 0..<5 {
+                try await client.execute(uri: "/v1/pair/requests", method: .post,
+                                         headers: [.contentType: "application/json"],
+                                         body: ByteBuffer(data: try SupersEmuJSON.encoder().encode(body))) {
+                    XCTAssertEqual($0.status, .created)
+                }
+            }
+            try await client.execute(uri: "/v1/pair/requests", method: .post,
+                                     headers: [.contentType: "application/json"],
+                                     body: ByteBuffer(data: try SupersEmuJSON.encoder().encode(body))) {
+                XCTAssertEqual($0.status, .tooManyRequests)
+            }
+            let pairingBody = PairRequest(code: code, deviceName: "iPhone", platform: "ios")
+            try await client.execute(uri: "/v1/pair", method: .post,
+                                     headers: [.contentType: "application/json"],
+                                     body: ByteBuffer(data: try SupersEmuJSON.encoder().encode(pairingBody))) {
+                XCTAssertEqual($0.status, .ok)
+            }
+        }
+    }
+
+    func testWrongAndUnknownClaimsCostFiveAndAreRateLimited() async throws {
+        let claimSecret = String(repeating: "11", count: 32)
+        let expectedHash = SHA256.hash(data: Data(repeating: 0x22, count: 32))
+            .map { String(format: "%02x", $0) }.joined()
+        let request = try await service.create(
+            PairRequestCreate(deviceName: "iPhone", platform: "ios", claimHash: expectedHash),
+            remoteAddress: "192.0.2.10"
+        )
+        for _ in 0..<6 {
+            do {
+                _ = try await service.claim(id: request.requestID, claimSecret: claimSecret,
+                                            remoteAddress: "192.0.2.12")
+                XCTFail("Expected wrong secret")
+            } catch {
+                XCTAssertEqual((error as? HTTPError)?.status, .notFound)
+            }
+        }
+        for _ in 0..<6 {
+            do {
+                _ = try await service.claim(id: UUID(), claimSecret: claimSecret, remoteAddress: "192.0.2.12")
+                XCTFail("Expected unknown request")
+            } catch {
+                XCTAssertEqual((error as? HTTPError)?.status, .notFound)
+            }
+        }
+        do {
+            _ = try await service.claim(id: UUID(), claimSecret: claimSecret, remoteAddress: "192.0.2.12")
+            XCTFail("Expected claim rate limit")
+        } catch {
+            XCTAssertEqual((error as? HTTPError)?.status, .tooManyRequests)
+        }
+    }
+
+    func testClaimRouteRateLimitsMalformedIDsByClientIP() async throws {
+        let body = PairRequestClaim(claimSecret: String(repeating: "11", count: 32))
+        func encoded<T: Encodable>(_ value: T) throws -> ByteBuffer {
+            ByteBuffer(data: try SupersEmuJSON.encoder().encode(value))
+        }
+
+        try await buildApplication(store: store, configuration: .init()).test(.router) { client in
+            for _ in 0..<12 {
+                try await client.execute(uri: "/v1/pair/requests/not-a-uuid/claim", method: .post,
+                                         headers: [.contentType: "application/json"], body: try encoded(body)) {
+                    XCTAssertEqual($0.status, .notFound)
+                }
+            }
+            try await client.execute(uri: "/v1/pair/requests/not-a-uuid/claim", method: .post,
+                                     headers: [.contentType: "application/json"], body: try encoded(body)) {
+                XCTAssertEqual($0.status, .tooManyRequests)
+            }
+        }
+    }
+
+    func testPerIPPendingCapReplacesOldestAndCreateLimitApplies() async throws {
         let clock = TestClock(Date(timeIntervalSince1970: 1_800_000_000))
-        let capped = PairRequestService(store: store, pairing: limited, now: { clock.now }, maximumPending: 2)
+        let capped = PairRequestService(store: store, pairing: pairing, now: { clock.now },
+                                        maximumPendingPerClient: 2)
         let hash = SHA256.hash(data: Data(repeating: 0x11, count: 32)).map { String(format: "%02x", $0) }.joined()
         let body = PairRequestCreate(deviceName: "iPhone", platform: "ios", claimHash: hash)
         let first = try await capped.create(body, remoteAddress: "ip")
@@ -165,8 +256,32 @@ final class PairRequestTests: XCTestCase {
         } catch {
             XCTAssertEqual((error as? HTTPError)?.status, .gone)
         }
-        XCTAssertTrue(limited.limiter.allowAttempt(client: "ip"))
-        limited.limiter.recordAttempt(client: "ip")
-        XCTAssertFalse(limited.limiter.allowAttempt(client: "ip"))
+        _ = try await capped.create(body, remoteAddress: "ip")
+        _ = try await capped.create(body, remoteAddress: "ip")
+        do {
+            _ = try await capped.create(body, remoteAddress: "ip")
+            XCTFail("Expected per-IP creation limit")
+        } catch {
+            XCTAssertEqual((error as? HTTPError)?.status, .tooManyRequests)
+        }
+    }
+
+    func testGlobalPendingCapRejectsWithoutEvictingExistingRequests() async throws {
+        let hash = SHA256.hash(data: Data(repeating: 0x11, count: 32)).map { String(format: "%02x", $0) }.joined()
+        let body = PairRequestCreate(deviceName: "iPhone", platform: "ios", claimHash: hash)
+        let capped = PairRequestService(store: store, pairing: pairing)
+        var existingIDs = Set<UUID>()
+        for index in 0..<10 {
+            let created = try await capped.create(body, remoteAddress: "192.0.2.\(index + 1)")
+            existingIDs.insert(created.requestID)
+        }
+        do {
+            _ = try await capped.create(body, remoteAddress: "192.0.2.50")
+            XCTFail("Expected global pending cap")
+        } catch {
+            XCTAssertEqual((error as? HTTPError)?.status, .tooManyRequests)
+        }
+        let stillPending = await capped.pending()
+        XCTAssertEqual(Set(stillPending.map(\.id)), existingIDs)
     }
 }

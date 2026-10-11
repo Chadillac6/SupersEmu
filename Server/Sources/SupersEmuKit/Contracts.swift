@@ -320,6 +320,7 @@ extension APIClient {
     public func users() async throws -> [UserInfo] { try await get("/v1/admin/users") }
     public func devices() async throws -> [DeviceInfo] { try await get("/v1/admin/devices") }
     public func revokeDevice(_ id: String) async throws -> DeviceInfo { try await send("DELETE", "/v1/admin/devices/\(id)", body: Optional<String>.none) }
+    public func revokeCurrentDevice() async throws -> DeviceInfo { try await send("DELETE", "/v1/devices/self", body: Optional<String>.none) }
     public func tokens() async throws -> [TokenInfo] { try await get("/v1/admin/tokens") }
     public func createToken(_ request: CreateTokenRequest) async throws -> TokenInfo { try await send("POST", "/v1/admin/tokens", body: request) }
     public func revokeToken(_ id: String) async throws -> TokenInfo { try await send("DELETE", "/v1/admin/tokens/\(id)", body: Optional<String>.none) }
