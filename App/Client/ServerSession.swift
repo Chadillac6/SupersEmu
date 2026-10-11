@@ -147,7 +147,7 @@ final class ServerSession {
             )
             let revocationFailure: String?
             do {
-                _ = try await client.revokeDevice(response.deviceID)
+                _ = try await client.revokeCurrentDevice()
                 revocationFailure = nil
             } catch {
                 if let clientError = error as? APIClientError, case .http(let status, _) = clientError {
