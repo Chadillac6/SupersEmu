@@ -303,6 +303,18 @@ extension NetworkTests {
             XCTFail("link-local IPv6 must not be returned without its interface scope")
         }
     }
+
+    func testBonjourResolveFallsBackToDualStackUnlessWaitingForLocalNetworkPermission() {
+        let refused = NWError.posix(.ECONNREFUSED)
+        let unreachable = NWError.posix(.ENETUNREACH)
+        let denied = NWError.dns(-65_570)
+
+        XCTAssertTrue(ResolveOutcome.shouldFallBack(after: .connection(refused, waitingError: nil)))
+        XCTAssertTrue(ResolveOutcome.shouldFallBack(after: .timedOut(nil)))
+        XCTAssertTrue(ResolveOutcome.shouldFallBack(after: .timedOut(unreachable)))
+        XCTAssertFalse(ResolveOutcome.shouldFallBack(after: .connection(denied, waitingError: nil)))
+        XCTAssertFalse(ResolveOutcome.shouldFallBack(after: .timedOut(denied)))
+    }
 }
 
 extension NetworkTests {
