@@ -82,7 +82,17 @@ struct UsersGamesView: View {
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
-    @ViewBuilder private var detail: some View {
+    private var detail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                detailContent
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder private var detailContent: some View {
         if model.isLoading && model.users.isEmpty {
             ProgressView("Loading users…").frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.error != nil && model.users.isEmpty {
@@ -151,22 +161,33 @@ struct UsersGamesView: View {
             if model.isLoadingAccess {
                 ProgressView("Loading game access…").frame(maxWidth: .infinity, minHeight: 180)
             } else {
-                HStack(spacing: 8) {
-                    TextField("Search games", text: $search).textFieldStyle(.roundedBorder).frame(width: 150)
-                    Menu(systemFilter.map(systemName) ?? "All Systems") {
-                        Button("All Systems") { systemFilter = nil }
-                        ForEach(SystemID.allCases, id: \.self) { system in
-                            Button(systemName(system)) { systemFilter = system }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        TextField("Search games", text: $search)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(minWidth: 100, maxWidth: .infinity)
+                            .layoutPriority(1)
+                        Menu(systemFilter.map(systemName) ?? "All Systems") {
+                            Button("All Systems") { systemFilter = nil }
+                            ForEach(SystemID.allCases, id: \.self) { system in
+                                Button(systemName(system)) { systemFilter = system }
+                            }
                         }
-                    }
-                    Menu("Show: \(visibilityFilter.rawValue)") {
-                        ForEach(VisibilityFilter.allCases, id: \.self) { filter in
-                            Button(filter.rawValue) { visibilityFilter = filter }
+                        .fixedSize()
+                        Menu("Show: \(visibilityFilter.rawValue)") {
+                            ForEach(VisibilityFilter.allCases, id: \.self) { filter in
+                                Button(filter.rawValue) { visibilityFilter = filter }
+                            }
                         }
+                        .fixedSize()
                     }
-                    Spacer(minLength: 4)
-                    Button("Select All Shown") { setShown(visible: true) }
-                    Button("Clear Shown") { setShown(visible: false) }
+                    HStack(spacing: 8) {
+                        Spacer()
+                        Button("Select All") { setShown(visible: true) }
+                            .fixedSize()
+                        Button("Clear") { setShown(visible: false) }
+                            .fixedSize()
+                    }
                 }
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -175,8 +196,10 @@ struct UsersGamesView: View {
                                 Toggle(game.title, isOn: Binding(
                                     get: { !model.hiddenGameIDs.contains(game.id) },
                                     set: { model.setVisible(game.id, visible: $0) }))
-                                    .toggleStyle(.checkbox)
+                                    .toggleStyle(VisibilityCheckboxStyle())
                                     .labelsHidden()
+                                    .accessibilityLabel(game.title)
+                                    .accessibilityValue(model.hiddenGameIDs.contains(game.id) ? "Hidden" : "Visible")
                                 Text(game.title).lineLimit(1)
                                 Text(systemName(game.system))
                                     .font(.caption2).foregroundStyle(.secondary)
@@ -226,6 +249,18 @@ struct UsersGamesView: View {
 
     private func errorLabel(_ message: String) -> some View {
         Label(message, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red)
+    }
+}
+
+private struct VisibilityCheckboxStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            Image(systemName: configuration.isOn ? "checkmark.square.fill" : "square")
+                .foregroundStyle(Color.accentColor)
+        }
+        .buttonStyle(.plain)
     }
 }
 
