@@ -42,7 +42,6 @@ release_require_env() {
   done
 }
 
-# Sets RELEASE_TMP (removed on exit) and ASC_KEY_FILE.
 release_normalize_p8() {
   local key_file="$1"
   local pem_file="${key_file}.pem"
@@ -57,6 +56,7 @@ release_normalize_p8() {
   fi
 }
 
+# Sets RELEASE_TMP (removed on exit) and ASC_KEY_FILE.
 release_prepare_key() {
   RELEASE_TMP="$(mktemp -d)"
   trap 'rm -rf "$RELEASE_TMP"' EXIT
