@@ -45,11 +45,10 @@ release_require_env() {
 release_normalize_p8() {
   local key_file="$1"
   local pem_file="${key_file}.pem"
-  if cmp -s <(head -n 1 "$key_file" 2>/dev/null) <(printf '%s\n' '-----BEGIN PRIVATE KEY-----'); then
-    return 0
-  fi
-  if ! (umask 077; openssl pkey -inform DER -in "$key_file" -out "$pem_file" 2>/dev/null) ||
-    ! mv "$pem_file" "$key_file" 2>/dev/null; then
+  if ! (umask 077
+        openssl pkey -in "$key_file" -out "$pem_file" 2>/dev/null ||
+          openssl pkey -inform DER -in "$key_file" -out "$pem_file" 2>/dev/null) ||
+     ! mv "$pem_file" "$key_file" 2>/dev/null; then
     rm -f "$pem_file" 2>/dev/null || true
     echo "error: the App Store Connect key is not a .p8 private key" >&2
     return 2
