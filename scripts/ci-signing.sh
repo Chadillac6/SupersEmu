@@ -25,6 +25,7 @@ umask 077
 mkdir "$secrets_dir"
 printf '%s' "$MAC_CERT_P12_BASE64" | base64 -D > "$secrets_dir/certificate.p12"
 printf '%s' "$SPARKLE_PRIVATE_KEY" > "$secrets_dir/sparkle.key"
+printf '%s' "$ASC_KEY_P8_BASE64" | base64 -D > "$secrets_dir/notarization.p8"
 password=$(openssl rand -hex 32)
 echo "::add-mask::$password"
 security list-keychains -d user > "$secrets_dir/original-keychains.txt"
@@ -37,6 +38,7 @@ security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password
 # Timestamp versions match the existing release convention; reruns get a fresh version.
 {
   echo "SUPERSEMU_BUILD_NUMBER=$(date -u +%Y%m%d.%H%M%S)"
+  echo "ASC_KEY_PATH=$secrets_dir/notarization.p8"
   echo "SPARKLE_ED_KEY_FILE=$secrets_dir/sparkle.key"
   echo "SPARKLE_GENERATE_APPCAST=build/release-mac/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast"
 } >> "$GITHUB_ENV"

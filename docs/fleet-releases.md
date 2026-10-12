@@ -27,6 +27,11 @@ Use the `mac-release` GitHub environment, restricted to the `main` branch. Store
 The Sparkle key must match the public key already installed on the fleet. Never
 regenerate it as a setup shortcut. The current Developer ID certificate expires
 February 1, 2027; renew it and replace the certificate secret before expiry.
+Raw credentials are scoped to the signing-preparation step. The archive receives
+only notarization IDs and a private staged key-file path, so Xcode does not inherit
+the certificate password or raw private-key values. Local release scripts also
+remove raw signing secrets from child-process environments after staging the key.
+
 Private files/passwords must stay outside the repository and workflow logs. Use
 `gh secret set NAME --env mac-release` with input from a file or pipe; do not place
 secrets in command-line arguments. GitHub encrypts secrets at rest.
