@@ -48,6 +48,7 @@ final class GameSession {
     @ObservationIgnored private var chordArmed = true
     @ObservationIgnored private var hotkeyHeldSince: ContinuousClock.Instant?
     @ObservationIgnored private let startFresh: Bool
+    @ObservationIgnored private var needsFreshCheckpoint = false
     /// False after the menu opens until the hotkey is released, so a still-held hotkey doesn't reopen it.
     @ObservationIgnored private var hotkeyArmed = true
     @ObservationIgnored private var overlayTimer: Timer?
@@ -88,6 +89,18 @@ final class GameSession {
     private func launch() async {
         isSyncing = true
         status = "Checking for newer saves…"
+        let autoState = AppPaths.autoState(for: game.id)
+        let hadPendingStartOver = AutoStateCheckpoint.isPending(autoState)
+        if startFresh {
+            do {
+                try AutoStateCheckpoint.markPending(autoState)
+            } catch {
+                isSyncing = false
+                errorMessage = "Couldn't preserve the fresh start: \(error.localizedDescription)"
+                startTask = nil
+                return
+            }
+        }
         // Battery saves are read when the core loads the game, so they sync before the host exists.
         await pull([SaveSync.nativeFile(for: game.id)])
         guard !Task.isCancelled else { return }
@@ -112,11 +125,24 @@ final class GameSession {
         #endif
         let core = SaveCore(id: host.coreID, version: host.coreVersion)
         self.core = core
-        let pulled = await pull([SaveSync.autoFile(for: game.id, core: core), SaveSync.manualFile(for: game.id, core: core)])
+        let stateFiles = [SaveSync.manualFile(for: game.id, core: core)]
+        let pulled = await pull(hadPendingStartOver
+            ? stateFiles
+            : [SaveSync.autoFile(for: game.id, core: core)] + stateFiles)
         isSyncing = false
         guard !Task.isCancelled, self.host === host else { return }
         hasManualState = FileManager.default.fileExists(atPath: AppPaths.manualState(for: game.id).path)
-        if startFresh {
+        if startFresh || hadPendingStartOver {
+            do {
+                try AutoStateCheckpoint.moveAside(autoState)
+            } catch {
+                host.shutdown()
+                self.host = nil
+                errorMessage = "Couldn't preserve the previous resume point: \(error.localizedDescription)"
+                startTask = nil
+                return
+            }
+            needsFreshCheckpoint = true
             status = "Started over"
         } else {
             status = pulled ?? ""
@@ -230,7 +256,10 @@ final class GameSession {
             displayLayer?.contents = image
         }
         if Self.logsFrameTime { logFrameTime(ContinuousClock.now - frameStart) }
-        if ContinuousClock.now - lastAutosave >= Self.autosaveInterval {
+        if needsFreshCheckpoint {
+            needsFreshCheckpoint = false
+            autosave(preservingStatus: true)
+        } else if ContinuousClock.now - lastAutosave >= Self.autosaveInterval {
             autosave()
         }
     }
@@ -252,14 +281,15 @@ final class GameSession {
         frameTimeCount = 0
     }
 
-    func autosave() {
+    func autosave(preservingStatus: Bool = false) {
         lastAutosave = .now
         // Before the game has started (still syncing) there's nothing new to save, and a fresh state would replace the resume point.
         guard let host, hasStarted else { return }
         host.flushSaveRAM()
         do {
             try host.saveState(to: AppPaths.autoState(for: game.id))
-            status = "Auto-saved on this device"
+            try? AutoStateCheckpoint.clearPending(AppPaths.autoState(for: game.id))
+            if !preservingStatus { status = "Auto-saved on this device" }
         } catch {
             status = "Auto-save failed"
             // The battery save was still flushed; sync it on its own.
@@ -489,6 +519,15 @@ final class GameSession {
         overlayHeld = held
         if isShowingControls { return }
         if isMenuOpen {
+            if isConfirmingRestart {
+                if !pressed.isDisjoint(with: [.south, .start]) {
+                    restart()
+                    closeMenu()
+                } else if !pressed.isDisjoint(with: [.east, .select, .home]) {
+                    isConfirmingRestart = false
+                }
+                return
+            }
             let items = menuItems
             if pressed.contains(.dpadUp) { menuSelection = max(menuSelection - 1, 0) }
             if pressed.contains(.dpadDown) { menuSelection = min(menuSelection + 1, items.count - 1) }

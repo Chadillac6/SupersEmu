@@ -891,6 +891,7 @@ targets:
     platform: macOS
     sources:
       - Tests/InputTests
+      - App/Input/AutoStateCheckpoint.swift
       - App/Input/PadInput.swift
       - App/Input/TouchZones.swift
       - App/Input/ConsoleLayout.swift

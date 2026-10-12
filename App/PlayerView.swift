@@ -91,57 +91,70 @@ struct PlayerView: View {
                 session.stop()
                 onExit()
             } label: {
-                Label("Library", systemImage: "chevron.left")
+                toolbarLabel("Library", systemImage: "chevron.left", compact: compact)
             }
             .fixedSize()
+            .accessibilityLabel("Library")
             .accessibilityIdentifier("exit-game")
-            Spacer()
+            if !compact { Spacer(minLength: 0) }
             Text(session.status)
                 .font(.caption)
-                .lineLimit(2)
-                .minimumScaleFactor(0.75)
+                .lineLimit(compact ? 1 : 2)
+                .minimumScaleFactor(compact ? 1 : 0.75)
                 .multilineTextAlignment(.center)
                 .truncationMode(.tail)
-                .layoutPriority(compact ? 1 : 0)
-                .frame(minWidth: compact ? 44 : 0, alignment: .center)
+                .layoutPriority(compact ? -1 : 0)
+                .frame(maxWidth: compact ? .infinity : nil, alignment: .center)
                 .foregroundStyle(.white.opacity(0.7))
                 .accessibilityIdentifier("session-status")
-            Spacer()
+            if !compact { Spacer(minLength: 0) }
             Button { session.openMenu() } label: {
-                Label("Menu", systemImage: "line.3.horizontal")
+                toolbarLabel("Menu", systemImage: "line.3.horizontal", compact: compact)
             }
             .fixedSize()
             .disabled(session.isSyncing || session.pendingConflict != nil)
             .help("In-game menu (hold Select + Start for 1 second, or hold Home on a controller)")
+            .accessibilityLabel("Menu")
             .accessibilityIdentifier("open-menu")
             Button { session.saveManualState() } label: {
-                Label("Save", systemImage: "square.and.arrow.down")
+                toolbarLabel("Save", systemImage: "square.and.arrow.down", compact: compact)
             }
             .fixedSize()
+            .accessibilityLabel("Save")
             .accessibilityIdentifier("save-state")
             Button { session.loadManualState() } label: {
-                Label("Load", systemImage: "arrow.counterclockwise")
+                toolbarLabel("Load", systemImage: "arrow.counterclockwise", compact: compact)
             }
             .fixedSize()
             .disabled(!session.hasManualState || session.isSyncing)
+            .accessibilityLabel("Load")
             .accessibilityIdentifier("load-state")
             if session.diskCount > 1 {
                 Button { session.openDiscPicker() } label: {
-                    Label("Swap disc", systemImage: "opticaldisc")
+                    toolbarLabel("Swap disc", systemImage: "opticaldisc", compact: compact)
                 }
                 .fixedSize()
                 .keyboardShortcut("d", modifiers: .command)
                 .disabled(session.isSyncing || session.pendingConflict != nil)
                 .help("Swap disc (Command-D, or L + R + Select on a controller)")
                 .accessibilityValue("Disc \(session.currentDisk + 1) of \(session.diskCount)")
+                .accessibilityLabel("Swap disc")
                 .accessibilityIdentifier("swap-disc")
             }
         }
         .buttonStyle(.borderless)
         .lineLimit(1)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, compact ? 8 : 16)
         .padding(.vertical, 10)
         .background(.black)
+    }
+
+    @ViewBuilder private func toolbarLabel(_ title: String, systemImage: String, compact: Bool) -> some View {
+        if compact {
+            Image(systemName: systemImage).frame(width: 32, height: 32)
+        } else {
+            Label(title, systemImage: systemImage)
+        }
     }
 }
 
