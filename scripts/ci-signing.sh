@@ -2,6 +2,8 @@
 # Ephemeral GitHub-hosted runner only; never changes the developer's login keychain.
 set -euo pipefail
 [ "${GITHUB_ACTIONS:-}" = true ] || { echo 'GitHub Actions only' >&2; exit 2; }
+# shellcheck source=scripts/release-common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/release-common.sh"
 keychain="$RUNNER_TEMP/supersemu-release.keychain-db"
 secrets_dir="$RUNNER_TEMP/supersemu-release-secrets"
 if [ "${1:-}" = cleanup ]; then
@@ -26,6 +28,7 @@ mkdir "$secrets_dir"
 printf '%s' "$MAC_CERT_P12_BASE64" | base64 -D > "$secrets_dir/certificate.p12"
 printf '%s' "$SPARKLE_PRIVATE_KEY" > "$secrets_dir/sparkle.key"
 printf '%s' "$ASC_KEY_P8_BASE64" | base64 -D > "$secrets_dir/notarization.p8"
+release_normalize_p8 "$secrets_dir/notarization.p8" || exit 2
 password=$(openssl rand -hex 32)
 echo "::add-mask::$password"
 security list-keychains -d user > "$secrets_dir/original-keychains.txt"

@@ -8,7 +8,7 @@ Required environment:
   SUPERSEMU_TEAM_ID   Apple Developer Team ID (10 characters, developer.apple.com > Membership details)
   ASC_KEY_ID          App Store Connect API key ID
   ASC_ISSUER_ID       App Store Connect API issuer ID (UUID)
-  ASC_KEY_P8_BASE64   base64 of the AuthKey_<ID>.p8 file, or
+  ASC_KEY_P8_BASE64   base64 of the AuthKey_<ID>.p8 file or raw DER key, or
   ASC_KEY_PATH        path to the AuthKey_<ID>.p8 file
 Optional:
   SUPERSEMU_BUILD_NUMBER  CFBundleVersion to use (default: UTC timestamp, always increasing)
@@ -42,6 +42,19 @@ release_require_env() {
   done
 }
 
+release_normalize_p8() {
+  local key_file="$1"
+  local pem_file="${key_file}.pem"
+  if ! (umask 077
+        openssl pkey -in "$key_file" -out "$pem_file" 2>/dev/null ||
+          openssl pkey -inform DER -in "$key_file" -out "$pem_file" 2>/dev/null) ||
+     ! mv "$pem_file" "$key_file" 2>/dev/null; then
+    rm -f "$pem_file" 2>/dev/null || true
+    echo "error: the App Store Connect key is not a .p8 private key" >&2
+    return 2
+  fi
+}
+
 # Sets RELEASE_TMP (removed on exit) and ASC_KEY_FILE.
 release_prepare_key() {
   RELEASE_TMP="$(mktemp -d)"
@@ -57,6 +70,7 @@ release_prepare_key() {
       cp "$ASC_KEY_PATH" "$ASC_KEY_FILE"
     fi
   ) || exit 2
+  release_normalize_p8 "$ASC_KEY_FILE" || exit 2
   openssl pkey -in "$ASC_KEY_FILE" -noout 2>/dev/null ||
     { echo "error: the App Store Connect key is not a .p8 private key" >&2; exit 2; }
   # shellcheck disable=SC2034 # used by the sourcing scripts
