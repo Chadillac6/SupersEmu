@@ -9,7 +9,7 @@ extension LibraryResponse: ResponseEncodable {}
 extension GameDetail: ResponseEncodable {}
 extension APIErrorBody: ResponseEncodable {}
 
-public enum RouterExposure: Sendable, Equatable {
+public enum RouterExposure: Sendable, Hashable {
     case local
     case publicInternet
 }
@@ -20,7 +20,7 @@ public enum ServerInfo {
 
 public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
                         exposure: RouterExposure = .local, certificateSHA256: String? = nil,
-                        publicURL: URL? = nil) -> Router<SERequestContext> {
+                        publicURL: URL? = nil, pairing: PairingServices? = nil) -> Router<SERequestContext> {
     let router = Router(context: SERequestContext.self)
     router.add(middleware: LogRequestsMiddleware(.info))
     if exposure == .publicInternet {
@@ -65,6 +65,7 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
     registerLibraryRoutes(authed, store: store)
     registerBIOSRoutes(authed, store: store)
     registerPairingRoutes(public: router.group("v1"), authed: authed, store: store,
+                          services: pairing ?? PairingServices(store: store), exposure: exposure,
                           includeAdminRoutes: exposure == .local)
     registerSaveRoutes(authed, store: store)
     if exposure == .local {

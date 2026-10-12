@@ -1,5 +1,6 @@
 {
 	# SUPERSEMU_ACME_EMAIL
+	skip_install_trust
 	servers {
 		timeouts {
 			read_header 10s

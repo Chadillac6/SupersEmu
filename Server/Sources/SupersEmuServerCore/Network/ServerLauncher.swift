@@ -51,17 +51,18 @@ public enum ServerLauncher {
         }()
         let environment = PairingEnvironment(urls: urls, certificateSHA256: pin, publicURL: publicAccess?.publicURL)
         let metadata = options.metadata ? MetadataService.standard(store: store) : nil
+        let pairing = PairingServices(store: store)
         metadata?.enqueue()
         metadata?.startPeriodicRetry()
         let application = Application(
             router: buildRouter(store: store, metadata: metadata, certificateSHA256: pin,
-                                 publicURL: publicAccess?.publicURL), server: server,
+                                 publicURL: publicAccess?.publicURL, pairing: pairing), server: server,
             configuration: .init(address: .hostname(options.hostname, port: options.port), serverName: "SupersEmu"),
             onServerRunning: onServerRunning)
         let publicApplication = publicAccess.map { access in
             Application(
                 router: buildRouter(store: store, metadata: metadata, exposure: .publicInternet,
-                                    certificateSHA256: pin, publicURL: access.publicURL),
+                                    certificateSHA256: pin, publicURL: access.publicURL, pairing: pairing),
                 server: .http1(),
                 configuration: .init(address: .hostname(Self.publicListenHost, port: access.listenPort), serverName: "SupersEmu"))
         }

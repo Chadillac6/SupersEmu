@@ -387,11 +387,14 @@ final class ServerSession {
     }
 
     private func learnPublicURL(_ publicURL: URL?, credential: ServerCredential, reachedAt url: URL) {
-        guard credential.publicURL == nil, url.scheme?.lowercased() == "https",
+        let currentPublicHost = credential.publicURL?.host?.lowercased()
+        guard url.scheme?.lowercased() == "https",
               credential.certificateSHA256 != nil, let publicURL,
               publicURL.scheme?.lowercased() == "https", publicURL.host != nil,
               publicURL.user == nil, publicURL.password == nil,
-              publicURL.query == nil, publicURL.fragment == nil else { return }
+              publicURL.query == nil, publicURL.fragment == nil,
+              publicURL != credential.publicURL,
+              url.host?.lowercased() != currentPublicHost else { return }
         var updated = credential
         updated.publicURL = publicURL
         try? store.save(updated)
