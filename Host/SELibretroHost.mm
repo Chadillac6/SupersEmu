@@ -825,13 +825,19 @@ static __weak SELibretroHost *gActiveHost;
 }
 
 - (void)setAudioEnabled:(BOOL)audioEnabled {
-    if (audioEnabled == _audioEnabled || !_loaded) return;
+    if (!_loaded) return;
+    if (audioEnabled == _audioEnabled) {
+#if TARGET_OS_IOS
+        if (!audioEnabled) [self stopAudioDeactivatingSession:YES];
+#endif
+        return;
+    }
     _audioEnabled = audioEnabled;
     g.audioEnabled = audioEnabled;
     if (audioEnabled) {
         [self startAudio];
     } else {
-        [self stopAudio];
+        [self stopAudioDeactivatingSession:YES];
     }
 }
 
@@ -896,7 +902,7 @@ static __weak SELibretroHost *gActiveHost;
                                         usingBlock:^(NSNotification *notification) {
         SELibretroHost *host = weakSelf;
         if (!host || !host->_audioEnabled || !host->_loaded || !g.audioEnabled.load()) return;
-        [host stopAudio];
+        [host stopAudioDeactivatingSession:NO];
         if (host->_audioEnabled && host->_loaded && g.audioEnabled.load()) [host startAudio];
     }];
     [observers addObject:resetObserver];
@@ -904,7 +910,7 @@ static __weak SELibretroHost *gActiveHost;
 }
 #endif
 
-- (void)stopAudio {
+- (void)stopAudioDeactivatingSession:(BOOL)deactivateSession {
 #if TARGET_OS_IOS
     for (id observer in _audioObservers) [NSNotificationCenter.defaultCenter removeObserver:observer];
     _audioObservers = nil;
@@ -912,6 +918,16 @@ static __weak SELibretroHost *gActiveHost;
     [_engine stop];
     _engine = nil;
     _sourceNode = nil;
+#if TARGET_OS_IOS
+    if (deactivateSession) {
+        NSError *error = nil;
+        if (![AVAudioSession.sharedInstance setActive:NO
+                                          withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
+                                                error:&error]) {
+            NSLog(@"SupersEmu: audio session deactivation error: %@", error.localizedDescription);
+        }
+    }
+#endif
 }
 
 - (void)startAudio {
@@ -952,7 +968,16 @@ static __weak SELibretroHost *gActiveHost;
 }
 
 - (void)shutdown {
+#if TARGET_OS_IOS
+    if (!_loaded) {
+        _audioEnabled = NO;
+        g.audioEnabled = false;
+        [self stopAudioDeactivatingSession:YES];
+        return;
+    }
+#else
     if (!_loaded) return;
+#endif
     [self flushSaveRAM];
     self.audioEnabled = NO;
     if (g.hw.requested) hwMakeCurrent();

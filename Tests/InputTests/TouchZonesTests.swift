@@ -29,6 +29,20 @@ final class TouchZonesTests: XCTestCase {
         XCTAssertTrue(TouchZones.controls(at: CGPoint(x: 0, y: 0), zones: [dpad]).isEmpty)
     }
 
+    func testActualPillFrameWinsOverDPadExtendedRadius() {
+        let dpad = TouchZone(id: "DPad", frame: CGRect(x: 0, y: 0, width: 100, height: 100), kind: .dpad)
+        let pill = TouchZone(id: "Select", frame: CGRect(x: 100, y: 40, width: 40, height: 20), kind: .button)
+
+        XCTAssertEqual(TouchZones.controls(at: CGPoint(x: 100, y: 50), zones: [dpad, pill]), ["Select"])
+    }
+
+    func testDPadExtendedRingWinsOverInflatedButtonFrame() {
+        let dpad = TouchZone(id: "DPad", frame: CGRect(x: 0, y: 0, width: 100, height: 100), kind: .dpad)
+        let button = TouchZone(id: "A", frame: CGRect(x: 120, y: 40, width: 40, height: 20), kind: .button)
+
+        XCTAssertEqual(TouchZones.controls(at: CGPoint(x: 110, y: 50), zones: [dpad, button]), ["Right"])
+    }
+
     func testButtonAcceptsTouchJustAboveTopEdge() {
         let button = TouchZone(id: "A", frame: CGRect(x: 100, y: 100, width: 40, height: 40), kind: .button)
 

@@ -14,7 +14,12 @@ struct TouchZone: Equatable {
 
 enum TouchZones {
     static func controls(at point: CGPoint, zones: [TouchZone]) -> Set<String> {
-        var controls = Set<String>()
+        let buttons = zones.filter { $0.kind == .button }
+        if let button = buttons
+            .filter({ $0.frame.contains(point) })
+            .min(by: { distance(from: point, to: $0.frame) < distance(from: point, to: $1.frame) }) {
+            return [button.id]
+        }
 
         if let zone = zones.first(where: { $0.kind == .dpad }) {
             let center = CGPoint(x: zone.frame.midX, y: zone.frame.midY)
@@ -25,6 +30,7 @@ enum TouchZones {
             if distance >= radius * 0.18, distance <= radius * 1.25 {
                 let degrees = atan2(dy, dx) * 180 / .pi
                 let sector = (Int((degrees / 45).rounded()) % 8 + 8) % 8
+                var controls = Set<String>()
                 switch sector {
                 case 0: controls.insert("Right")
                 case 1: controls.formUnion(["Up", "Right"])
@@ -35,20 +41,17 @@ enum TouchZones {
                 case 6: controls.insert("Down")
                 default: controls.formUnion(["Down", "Right"])
                 }
+                return controls
             }
         }
 
-        let buttons = zones.filter {
-            $0.kind == .button && $0.frame.insetBy(dx: -14, dy: -14).contains(point)
+        let inflatedButtons = buttons.filter { $0.frame.insetBy(dx: -14, dy: -14).contains(point) }
+        if let nearest = inflatedButtons.min(by: {
+            distance(from: point, to: $0.frame) < distance(from: point, to: $1.frame)
+        }) {
+            return [nearest.id]
         }
-        if let nearest = buttons.min(by: { distance(from: point, to: $0.frame) < distance(from: point, to: $1.frame) }) {
-            controls.insert(nearest.id)
-        }
-
-        if let stick = stickZone(at: point, zones: zones) {
-            controls.insert(stick.id)
-        }
-        return controls
+        return []
     }
 
     static func controls(for points: [CGPoint], zones: [TouchZone]) -> Set<String> {
