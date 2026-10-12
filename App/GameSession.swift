@@ -90,17 +90,6 @@ final class GameSession {
         isSyncing = true
         status = "Checking for newer saves…"
         let autoState = AppPaths.autoState(for: game.id)
-        let hadPendingStartOver = AutoStateCheckpoint.isPending(autoState)
-        if startFresh {
-            do {
-                try AutoStateCheckpoint.markPending(autoState)
-            } catch {
-                isSyncing = false
-                errorMessage = "Couldn't preserve the fresh start: \(error.localizedDescription)"
-                startTask = nil
-                return
-            }
-        }
         // Battery saves are read when the core loads the game, so they sync before the host exists.
         await pull([SaveSync.nativeFile(for: game.id)])
         guard !Task.isCancelled else { return }
@@ -126,13 +115,13 @@ final class GameSession {
         let core = SaveCore(id: host.coreID, version: host.coreVersion)
         self.core = core
         let stateFiles = [SaveSync.manualFile(for: game.id, core: core)]
-        let pulled = await pull(hadPendingStartOver
+        let pulled = await pull(startFresh
             ? stateFiles
             : [SaveSync.autoFile(for: game.id, core: core)] + stateFiles)
         isSyncing = false
         guard !Task.isCancelled, self.host === host else { return }
         hasManualState = FileManager.default.fileExists(atPath: AppPaths.manualState(for: game.id).path)
-        if startFresh || hadPendingStartOver {
+        if startFresh {
             do {
                 try AutoStateCheckpoint.moveAside(autoState)
             } catch {
@@ -142,6 +131,7 @@ final class GameSession {
                 startTask = nil
                 return
             }
+            // If the app exits before this checkpoint, the old resume point can return on the next launch.
             needsFreshCheckpoint = true
             status = "Started over"
         } else {
@@ -288,7 +278,6 @@ final class GameSession {
         host.flushSaveRAM()
         do {
             try host.saveState(to: AppPaths.autoState(for: game.id))
-            try? AutoStateCheckpoint.clearPending(AppPaths.autoState(for: game.id))
             if !preservingStatus { status = "Auto-saved on this device" }
         } catch {
             status = "Auto-save failed"
