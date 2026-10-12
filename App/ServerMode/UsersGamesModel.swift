@@ -29,6 +29,8 @@ final class UsersGamesModel {
     private var updateOrder: [String] = []
     private var updateWorker: Task<Void, Never>?
     private var resetGeneration = 0
+    private var mutationRevision = 0
+    private var refreshSequence = 0
     private var selectionGeneration = 0
 
     init(server: ServerModeModel) {
@@ -63,19 +65,45 @@ final class UsersGamesModel {
     }
 
     func refresh() async {
+        await refresh(retryOnMutation: true)
+    }
+
+    private func refresh(retryOnMutation: Bool) async {
         let generation = resetGeneration
+        refreshSequence += 1
+        let sequence = refreshSequence
+        let revision = mutationRevision
         isLoading = true
-        defer { if generation == resetGeneration { isLoading = false } }
+        defer {
+            if generation == resetGeneration && sequence == refreshSequence {
+                isLoading = false
+            }
+        }
         do {
             let client = try server.adminClient()
             let refreshedUsers = try await client.adminUsers()
-            guard generation == resetGeneration else { return }
+            guard await canContinueRefresh(
+                generation: generation,
+                sequence: sequence,
+                revision: revision,
+                retryOnMutation: retryOnMutation
+            ) else { return }
             users = refreshedUsers
             let refreshedDevices = try await client.devices()
-            guard generation == resetGeneration else { return }
+            guard await canContinueRefresh(
+                generation: generation,
+                sequence: sequence,
+                revision: revision,
+                retryOnMutation: retryOnMutation
+            ) else { return }
             devices = refreshedDevices
             let refreshedGames = try await client.library().games
-            guard generation == resetGeneration else { return }
+            guard await canContinueRefresh(
+                generation: generation,
+                sequence: sequence,
+                revision: revision,
+                retryOnMutation: retryOnMutation
+            ) else { return }
             games = refreshedGames
             error = nil
             let gameIDs = Set(refreshedGames.map(\.id))
@@ -92,11 +120,42 @@ final class UsersGamesModel {
                 ?? users.first(where: { $0.role == .player })?.id
                 ?? users.first?.id
             await selectUser(nextSelection)
-            guard generation == resetGeneration else { return }
+            guard await canContinueRefresh(
+                generation: generation,
+                sequence: sequence,
+                revision: revision,
+                retryOnMutation: retryOnMutation
+            ) else { return }
         } catch {
-            guard generation == resetGeneration else { return }
+            guard await canContinueRefresh(
+                generation: generation,
+                sequence: sequence,
+                revision: revision,
+                retryOnMutation: retryOnMutation
+            ) else { return }
             self.error = LibraryManagerModel.describe(error)
         }
+    }
+
+    private func isCurrentRefresh(generation: Int, sequence: Int, revision: Int) -> Bool {
+        generation == resetGeneration && sequence == refreshSequence && revision == mutationRevision
+    }
+
+    private func canContinueRefresh(
+        generation: Int,
+        sequence: Int,
+        revision: Int,
+        retryOnMutation: Bool
+    ) async -> Bool {
+        if isCurrentRefresh(generation: generation, sequence: sequence, revision: revision) {
+            return true
+        }
+        guard retryOnMutation,
+              generation == resetGeneration,
+              sequence == refreshSequence,
+              revision != mutationRevision else { return false }
+        await refresh(retryOnMutation: false)
+        return false
     }
 
     func selectUser(_ userID: String?) async {
@@ -138,6 +197,7 @@ final class UsersGamesModel {
         guard generation == resetGeneration else { throw ServerSelectionChangedError() }
         users.append(created)
         users.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        mutationRevision += 1
         await selectUser(created.id)
         guard generation == resetGeneration else { throw ServerSelectionChangedError() }
         return created
@@ -151,6 +211,7 @@ final class UsersGamesModel {
         guard generation == resetGeneration else { throw ServerSelectionChangedError() }
         if let index = users.firstIndex(where: { $0.id == updated.id }) { users[index] = updated }
         error = nil
+        mutationRevision += 1
     }
 
     func createPairingCode(for userID: String) async throws -> PairingCode {
@@ -175,6 +236,7 @@ final class UsersGamesModel {
             optimisticHiddenByUser.removeValue(forKey: userID)
             pendingUpdates.removeValue(forKey: userID)
             updateOrder.removeAll { $0 == userID }
+            mutationRevision += 1
             if selectedUserID == userID {
                 let nextSelection = users.first(where: { $0.role == .player })?.id ?? users.first?.id
                 await selectUser(nextSelection)
@@ -195,6 +257,7 @@ final class UsersGamesModel {
             guard generation == resetGeneration else { return }
             if let index = devices.firstIndex(where: { $0.id == revoked.id }) { devices[index] = revoked }
             error = nil
+            mutationRevision += 1
         } catch {
             guard generation == resetGeneration else { return }
             self.error = LibraryManagerModel.describe(error)
