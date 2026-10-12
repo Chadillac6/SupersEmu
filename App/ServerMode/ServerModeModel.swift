@@ -38,6 +38,8 @@ final class ServerModeModel {
     static let daemonPlistName = "com.chadillac6.supersemu.server.plist"
     static let daemonPort = 8487
     static let sessionPort = 8488
+    private static let daemonLocalURL = URL(string: "https://127.0.0.1:8487")!
+    private static let sessionLocalURL = URL(string: "https://127.0.0.1:8488")!
 
     var source: Source {
         didSet {
@@ -103,7 +105,7 @@ final class ServerModeModel {
 
     private func port(for source: Source) -> Int { source == .daemon ? Self.daemonPort : Self.sessionPort }
     var port: Int { port(for: source) }
-    private func localURL(for source: Source) -> URL { URL(string: "https://127.0.0.1:\(port(for: source))")! }
+    private func localURL(for source: Source) -> URL { source == .daemon ? Self.daemonLocalURL : Self.sessionLocalURL }
     var localURL: URL { localURL(for: source) }
     private(set) var pairedURL: URL?
     private func serverURL(for source: Source) -> URL {

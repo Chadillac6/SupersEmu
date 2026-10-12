@@ -60,6 +60,32 @@ public struct UserInfo: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+public struct UserGameAccess: Codable, Sendable, Equatable {
+    public var userID: String
+    public var hiddenGameIDs: [String]
+
+    public init(userID: String, hiddenGameIDs: [String]) {
+        self.userID = userID
+        self.hiddenGameIDs = hiddenGameIDs
+    }
+}
+
+public struct SetUserGamesRequest: Codable, Sendable, Equatable {
+    public var hiddenGameIDs: [String]
+
+    public init(hiddenGameIDs: [String]) {
+        self.hiddenGameIDs = hiddenGameIDs
+    }
+}
+
+public struct UpdateUserRequest: Codable, Sendable, Equatable {
+    public var displayName: String
+
+    public init(displayName: String) {
+        self.displayName = displayName
+    }
+}
+
 public struct MeResponse: Codable, Sendable, Equatable {
     public var user: UserInfo
     /// Set when the caller is a paired device.

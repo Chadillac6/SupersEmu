@@ -8,7 +8,9 @@ struct GameDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let item: LibraryItem
     let onPlay: (Game) -> Void
+    let onStartFresh: (Game) -> Void
     @State private var detail: GameDetail?
+    @State private var isConfirmingStartOver = false
 
     var body: some View {
         let theme = SystemTheme.theme(for: item.system)
@@ -203,16 +205,39 @@ struct GameDetailView: View {
     @ViewBuilder private var actions: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let game = playableGame {
-                Button {
-                    dismiss()
-                    onPlay(game)
-                } label: {
-                    Label(game.hasResumePoint ? "Resume" : "Play", systemImage: "play.fill").frame(minWidth: 140)
+                HStack(spacing: 10) {
+                    Button {
+                        dismiss()
+                        onPlay(game)
+                    } label: {
+                        Label(game.hasResumePoint ? "Resume" : "Play", systemImage: "play.fill").frame(minWidth: 140)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(bios.isMissing(item.system) || bios.isSyncing && item.system?.requiresBIOS == true)
+                    .accessibilityIdentifier("detail-play")
+
+                    if game.hasResumePoint {
+                        Button {
+                            isConfirmingStartOver = true
+                        } label: {
+                            Label("Start Over", systemImage: "arrow.counterclockwise").frame(minWidth: 140)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        .disabled(bios.isMissing(item.system) || bios.isSyncing && item.system?.requiresBIOS == true)
+                        .accessibilityIdentifier("detail-start-over")
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(bios.isMissing(item.system) || bios.isSyncing && item.system?.requiresBIOS == true)
-                .accessibilityIdentifier("detail-play")
+                .confirmationDialog("Start over from the beginning?", isPresented: $isConfirmingStartOver, titleVisibility: .visible) {
+                    Button("Start Over", role: .destructive) {
+                        dismiss()
+                        onStartFresh(game)
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Unsaved progress since your last in-game save will be lost. In-game saves are kept.")
+                }
             }
             if item.source == .server {
                 switch downloads.states[item.id] {

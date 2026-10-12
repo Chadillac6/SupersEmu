@@ -190,8 +190,6 @@ final class SaveRoutesTests: XCTestCase {
         let alexPhone = try store.createDeviceToken(userID: alex.id, deviceName: "Alex's iPhone")
         try await store.db.write { db in
             try db.execute(sql: "INSERT INTO games (id, title, system, created_at) VALUES (?, 'Shared', 'snes', ?)", arguments: [self.game, Date()])
-            try db.execute(sql: "INSERT INTO game_permissions (game_id, principal_type, principal_id) VALUES (?, 'user', ?)",
-                           arguments: [self.game, alex.id])
         }
         try await app().test(.router) { client in
             let chadSave = try await self.upload(client, token: self.iPhone.token, kind: .manual, slot: "slot1", body: "chad")!
@@ -213,7 +211,7 @@ final class SaveRoutesTests: XCTestCase {
             let chadAfter = try await self.list(client, token: self.iPhone.token)
             XCTAssertEqual(chadAfter.map(\.id), [chadSave.revision.id])
 
-            // Players only reach games Permissions lets them see.
+            // Unknown games remain inaccessible even though real games are shared by default.
             let hidden = String(repeating: "cd", count: 32)
             try await client.execute(uri: "/v1/saves/\(hidden)", method: .get, headers: self.bearer(alexPhone.token)) {
                 XCTAssertEqual($0.status, .notFound)

@@ -65,6 +65,21 @@
     CGImageRelease(image);
 }
 
+- (void)testResetClearsInputAndFramesContinue {
+    if ([self fixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    SELibretroHost *host = [self makeHost];
+    [host runFrames:2];
+    [host setButtons:SEJoypadButtonA forPort:0];
+
+    [host reset];
+
+    XCTAssertEqual([host buttonsForPort:0], (SEJoypadButtons)0);
+    [host runFrames:2];
+    XCTAssertGreaterThan(host.frameWidth, 0);
+    XCTAssertGreaterThan(host.frameHeight, 0);
+    XCTAssertGreaterThan(host.frameBufferData.length, 0u);
+}
+
 - (void)testStateRestoreIsDeterministic {
     if ([self fixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
     SELibretroHost *host = [self makeHost];

@@ -55,7 +55,7 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
     #endif
     @AppStorage("onboardingSkipped") private var onboardingSkipped = false
-    @State private var playing: Game?
+    @State private var playing: LaunchRequest?
 
     /// M0 flows (and test launches with SUPERSEMU_IMPORT_DIR) go straight to the local library.
     private var showsOnboarding: Bool {
@@ -65,8 +65,8 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if let game = playing {
-                PlayerView(session: GameSession(game: game)) {
+            if let launch = playing {
+                PlayerView(session: GameSession(game: launch.game, startFresh: launch.startFresh)) {
                     playing = nil
                     library.refresh()
                     downloads.reload()
@@ -74,7 +74,10 @@ struct RootView: View {
             } else if showsOnboarding {
                 OnboardingView { onboardingSkipped = true }
             } else {
-                LibraryView { game in Task { await launch(game) } }
+                LibraryView(
+                    onPlay: { game in Task { await launch(game) } },
+                    onStartFresh: { game in Task { await launch(game, startFresh: true) } }
+                )
             }
         }
         .task {
@@ -103,11 +106,16 @@ struct RootView: View {
     }
 
     /// Disc games need their BIOS in the system directory before the core loads them.
-    private func launch(_ game: Game) async {
+    private func launch(_ game: Game, startFresh: Bool = false) async {
         if let system = downloads.downloaded[game.id]?.detail.game.system, system.requiresBIOS {
             await bios.sync(using: server)
             guard !bios.isMissing(system) else { return }
         }
-        playing = game
+        playing = LaunchRequest(game: game, startFresh: startFresh)
+    }
+
+    private struct LaunchRequest {
+        let game: Game
+        let startFresh: Bool
     }
 }

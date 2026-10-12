@@ -1,4 +1,5 @@
 import CryptoKit
+import Network
 import SupersEmuKit
 import SwiftUI
 #if os(iOS)
@@ -362,7 +363,12 @@ struct OnboardingView: View {
         #endif
     }
 
-    private func recordDiagnostic(_ error: Error, endpoint: URL, safeDetail: String? = nil) {
+    private func recordDiagnostic(
+        _ error: Error,
+        endpoint: URL?,
+        endpointDescription: String? = nil,
+        safeDetail: String? = nil
+    ) {
         let diagnosis = ConnectionDiagnosis.from(error: error)
         errorMessage = diagnosis.message
         let nsError = error as NSError
@@ -373,18 +379,26 @@ struct OnboardingView: View {
             httpStatus = "none"
         }
         let info = Bundle.main.infoDictionary ?? [:]
-        var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
-        components?.user = nil
-        components?.password = nil
-        components?.path = ""
-        components?.query = nil
-        components?.fragment = nil
-        let safeEndpoint = components?.string ?? "\(endpoint.scheme ?? "https")://\(endpoint.host ?? "unknown")"
+        let safeEndpoint: String
+        let discoverySource: String
+        if let endpoint {
+            var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
+            components?.user = nil
+            components?.password = nil
+            components?.path = ""
+            components?.query = nil
+            components?.fragment = nil
+            safeEndpoint = components?.string ?? "\(endpoint.scheme ?? "https")://\(endpoint.host ?? "unknown")"
+            discoverySource = selectedServerAddress == endpoint ? "Bonjour" : "manual"
+        } else {
+            safeEndpoint = endpointDescription ?? "unknown"
+            discoverySource = endpointDescription?.hasPrefix("bonjour ") == true ? "Bonjour" : "unknown"
+        }
         diagnostics = """
         timestamp: \(ISO8601DateFormatter().string(from: Date()))
         app: \(info["CFBundleShortVersionString"] ?? "unknown") (\(info["CFBundleVersion"] ?? "unknown"))
         endpoint: \(safeEndpoint)
-        discovery source: \(selectedServerAddress == endpoint ? "Bonjour" : "manual")
+        discovery source: \(discoverySource)
         diagnosis: \(diagnosis)
         error: \(nsError.domain) \(nsError.code)
         HTTP status: \(httpStatus)
@@ -438,7 +452,14 @@ struct OnboardingView: View {
             selectedServerAddress = resolvedAddress
             address = resolvedAddress.absoluteString
         } catch {
-            recordDiagnostic(error, endpoint: URL(string: "https://\(server.name).local")!)
+            recordDiagnostic(error, endpoint: nil, endpointDescription: "bonjour \"\(server.name)\"")
+            #if os(iOS)
+            if isLocalNetworkPolicyError(error) {
+                errorMessage = """
+                Couldn't find the address of "\(server.serverName)". On iPhone or iPad, check Settings > Privacy & Security > Local Network is on for SupersEmu, then try again, or scan the server's QR code.
+                """
+            }
+            #endif
         }
     }
 
@@ -528,9 +549,18 @@ struct OnboardingView: View {
         do {
             try await server.pair(payload, confirmedCertificateSHA256: confirmedCertificateSHA256)
         } catch {
-            recordDiagnostic(error, endpoint: payload.urls.first ?? URL(string: "https://unknown")!)
+            recordDiagnostic(error, endpoint: payload.urls.first)
         }
     }
+
+    #if os(iOS)
+    private func isLocalNetworkPolicyError(_ error: Error) -> Bool {
+        guard let networkError = error as? NWError else { return false }
+        if case .dns(let code) = networkError, Int(code) == -65_570 { return true }
+        let description = "\(networkError) \(networkError.localizedDescription)".lowercased()
+        return description.contains("local network") || description.contains("policy")
+    }
+    #endif
 }
 
 #if os(iOS)

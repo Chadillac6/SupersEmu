@@ -33,7 +33,7 @@ const SECoreAPI *SE_ENTRY(SE_CORE_ID)(void) {
         retro_set_environment, retro_set_video_refresh, retro_set_audio_sample,
         retro_set_audio_sample_batch, retro_set_input_poll, retro_set_input_state,
         retro_init, SE_CORE_DEINIT, retro_get_system_info, retro_get_system_av_info,
-        retro_set_controller_port_device, retro_run, retro_serialize_size, retro_serialize,
+        retro_set_controller_port_device, retro_run, retro_reset, retro_serialize_size, retro_serialize,
         SE_CORE_UNSERIALIZE, SE_CORE_LOAD_GAME, retro_unload_game, retro_get_memory_data,
         retro_get_memory_size,
     };

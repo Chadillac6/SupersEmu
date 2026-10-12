@@ -44,11 +44,12 @@ struct ServerModeCommands: Commands {
 
 /// Sidebar sections of the Server Mode window. Each is a self-contained view; add a case to add a section.
 enum ServerModeSection: String, CaseIterable, Identifiable {
-    case server, library, review, bios, storage
+    case server, users, library, review, bios, storage
     var id: String { rawValue }
     var title: String {
         switch self {
         case .server: return "Server"
+        case .users: return "Users & Games"
         case .library: return "Add Games"
         case .review: return "Review Needed"
         case .bios: return "BIOS"
@@ -58,6 +59,7 @@ enum ServerModeSection: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .server: return "server.rack"
+        case .users: return "person.2"
         case .library: return "square.and.arrow.down.on.square"
         case .review: return "exclamationmark.bubble"
         case .bios: return "cpu"
@@ -69,6 +71,7 @@ enum ServerModeSection: String, CaseIterable, Identifiable {
 struct ServerModeView: View {
     @State private var model = ServerModeModel()
     @State private var library: LibraryManagerModel?
+    @State private var usersGames: UsersGamesModel?
     @State private var section: ServerModeSection? = .server
     @State private var navigation = ServerModeNavigation.shared
     @State private var selectedPairingUserID: String?
@@ -95,12 +98,15 @@ struct ServerModeView: View {
         }
         .task {
             if library == nil { library = LibraryManagerModel(server: model) }
+            if usersGames == nil { usersGames = UsersGamesModel(server: model) }
             await library?.refreshStorage()
+            await usersGames?.refresh()
         }
         .onChange(of: model.source) {
             library?.reset()
+            usersGames?.reset()
             selectedPairingUserID = nil
-            Task { await model.refresh(); await library?.refreshAll() }
+            Task { await model.refresh(); await library?.refreshAll(); await usersGames?.refresh() }
         }
         .onAppear {
             consumeNavigationRequest()
@@ -112,11 +118,12 @@ struct ServerModeView: View {
     }
 
     @ViewBuilder private var detail: some View {
-        switch (section ?? .server, library) {
-        case (.library, let library?): LibraryImportView(model: library, onReview: { section = .review })
-        case (.review, let library?): ReviewNeededView(model: library)
-        case (.bios, let library?): BIOSView(model: library)
-        case (.storage, let library?): StorageView(model: library)
+        switch (section ?? .server, library, usersGames) {
+        case (.users, _, let usersGames?): UsersGamesView(model: usersGames)
+        case (.library, let library?, _): LibraryImportView(model: library, onReview: { section = .review })
+        case (.review, let library?, _): ReviewNeededView(model: library)
+        case (.bios, let library?, _): BIOSView(model: library)
+        case (.storage, let library?, _): StorageView(model: library)
         default: overview
         }
     }

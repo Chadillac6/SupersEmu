@@ -8,8 +8,12 @@ struct LibraryView: View {
     @Environment(ServerSession.self) private var server
     @Environment(DownloadCenter.self) private var downloads
     @Environment(BIOSCenter.self) private var bios
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
     @AppStorage("home.system") private var selectedSystem = ""
     let onPlay: (Game) -> Void
+    let onStartFresh: (Game) -> Void
     @State private var isImporting = false
     @State private var isConnecting = false
     @State private var selected: LibraryItem?
@@ -22,6 +26,14 @@ struct LibraryView: View {
 
     /// Offline, only games that launch without the server are listed.
     private var online: Bool { server.isOnline || !server.isPaired }
+
+    private var compact: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
+    }
 
     var body: some View {
         let all = LibraryShelves.home(items, system: nil, online: online)
@@ -109,7 +121,7 @@ struct LibraryView: View {
                 if case .success(let urls) = result { library.importFiles(urls) }
             }
             .sheet(item: $selected) { item in
-                NavigationStack { GameDetailView(item: liveItem(item), onPlay: onPlay) }
+                NavigationStack { GameDetailView(item: liveItem(item), onPlay: onPlay, onStartFresh: onStartFresh) }
                     .environment(server)
                     .environment(downloads)
                     .environment(bios)
@@ -199,7 +211,8 @@ struct LibraryView: View {
             if results.isEmpty {
                 Text("No games match \u{201C}\(query)\u{201D}").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 80)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 18)], spacing: 22) {
+                LazyVGrid(columns: GameGridLayout.columns(compact: compact, regularSpacing: 18),
+                          spacing: GameGridLayout.rowSpacing(compact: compact, regularSpacing: 22)) {
                     ForEach(results) { item in
                         Button { open(item) } label: { GameCard(item: item, state: downloads.states[item.id]) }
                             .buttonStyle(.plain)
@@ -237,30 +250,42 @@ struct LibraryView: View {
 }
 
 struct GameCard: View {
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
     let item: LibraryItem
     let state: DownloadCenter.State?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: compact ? 4 : 6) {
             ZStack(alignment: .bottomLeading) {
                 CoverArt(item: item)
                     .opacity(item.isCloudOnly ? 0.85 : 1)
                 HStack {
                     if item.playable?.hasResumePoint == true {
-                        Label("Continue", systemImage: "play.fill").labelStyle(.iconOnly).font(.caption.bold())
-                            .padding(6).background(.ultraThinMaterial, in: Circle())
+                        Label("Continue", systemImage: "play.fill").labelStyle(.iconOnly)
+                            .font(compact ? .caption2.bold() : .caption.bold())
+                            .padding(compact ? 4 : 6).background(.ultraThinMaterial, in: Circle())
                     }
                     Spacer()
                     badge
                 }
-                .padding(8)
+                .padding(compact ? 5 : 8)
             }
             if case .downloading(let progress) = state {
                 ProgressView(value: progress.fraction).tint(.accentColor)
             }
-            Text(item.title).font(.subheadline.bold()).lineLimit(2)
-            Text(item.console).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(item.title).font(compact ? .caption.bold() : .subheadline.bold()).lineLimit(2)
+            Text(item.console).font(compact ? .caption2 : .caption).foregroundStyle(.secondary).lineLimit(1)
         }
+    }
+
+    private var compact: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
     }
 
     @ViewBuilder private var badge: some View {
@@ -270,8 +295,8 @@ struct GameCard: View {
             return item.isDownloaded ? "checkmark.circle.fill" : "icloud.fill"
         }()
         Image(systemName: symbol)
-            .font(.caption.bold())
-            .padding(6)
+            .font(compact ? .caption2.bold() : .caption.bold())
+            .padding(compact ? 4 : 6)
             .background(.ultraThinMaterial, in: Circle())
             .accessibilityLabel(item.isCloudOnly ? "In the cloud" : item.isLocalCopy ? "On this device" : "Downloaded")
             .accessibilityIdentifier(item.isCloudOnly ? "badge-cloud" : "badge-downloaded")

@@ -30,6 +30,98 @@ extension ServerStore {
         }
     }
 
+    public func userGameAccess(userID: String) throws -> UserGameAccess {
+        try db.read { db in
+            guard try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND revoked_at IS NULL)",
+                                   arguments: [userID]) == true else {
+                throw HTTPError(.notFound, message: "No user \(userID)")
+            }
+            return try Self.userGameAccess(db, userID: userID)
+        }
+    }
+
+    public func setUserGames(userID: String, hiddenGameIDs: [String], by auth: AuthContext) throws -> UserGameAccess {
+        guard hiddenGameIDs.count <= 10_000 else {
+            throw HTTPError(.badRequest, message: "At most 10000 game IDs are allowed")
+        }
+        let requested = Array(Set(hiddenGameIDs)).sorted()
+        return try db.write { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT * FROM users WHERE id = ? AND revoked_at IS NULL",
+                                             arguments: [userID]) else {
+                throw HTTPError(.notFound, message: "No user \(userID)")
+            }
+            guard Role(rawValue: row["role"]) == .player else {
+                throw HTTPError(.badRequest, message: "Admins see every game")
+            }
+
+            var existing = Set<String>()
+            for start in stride(from: 0, to: requested.count, by: 500) {
+                let end = min(start + 500, requested.count)
+                let chunk = Array(requested[start..<end])
+                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+                existing.formUnion(try String.fetchAll(
+                    db, sql: "SELECT id FROM games WHERE id IN (\(placeholders))", arguments: StatementArguments(chunk)))
+            }
+            let unknown = Set(requested).subtracting(existing)
+            guard unknown.isEmpty else {
+                throw HTTPError(.badRequest, message: "Unknown game IDs: \(unknown.sorted().joined(separator: ", "))")
+            }
+
+            try db.execute(sql: "DELETE FROM user_hidden_games WHERE user_id = ?", arguments: [userID])
+            for gameID in requested {
+                try db.execute(sql: """
+                    INSERT INTO user_hidden_games (user_id, game_id) VALUES (?, ?)
+                    """, arguments: [userID, gameID])
+            }
+            try Self.insertAudit(db, auth, action: "library.user_games",
+                                 detail: "user=\(userID) hidden=\(requested.count)")
+            return try Self.userGameAccess(db, userID: userID)
+        }
+    }
+
+    public func updateUser(id: String, displayName: String, by auth: AuthContext) throws -> UserInfo {
+        try db.write { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT * FROM users WHERE id = ? AND revoked_at IS NULL",
+                                             arguments: [id]) else {
+                throw HTTPError(.notFound, message: "No user \(id)")
+            }
+            let user = UserInfo(id: id, displayName: displayName, role: Role(rawValue: row["role"]) ?? .player)
+            try db.execute(sql: "UPDATE users SET display_name = ? WHERE id = ?", arguments: [displayName, id])
+            try Self.insertAudit(db, auth, action: "users.rename", detail: "user=\(id)")
+            return user
+        }
+    }
+
+    public func removeUser(id: String, by auth: AuthContext) throws -> UserInfo {
+        try db.write { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT * FROM users WHERE id = ? AND revoked_at IS NULL",
+                                             arguments: [id]) else {
+                throw HTTPError(.notFound, message: "No user \(id)")
+            }
+            let user = Self.user(from: row)
+            guard user.role == .player else {
+                throw HTTPError(.badRequest, message: "Admins cannot be removed")
+            }
+            let revokedAt = Date()
+            try db.execute(sql: "UPDATE users SET revoked_at = ? WHERE id = ?", arguments: [revokedAt, id])
+            try db.execute(sql: "UPDATE devices SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+                           arguments: [revokedAt, id])
+            try db.execute(sql: "DELETE FROM game_permissions WHERE principal_type = 'user' AND principal_id = ?",
+                           arguments: [id])
+            try db.execute(sql: "DELETE FROM group_members WHERE user_id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM user_hidden_games WHERE user_id = ?", arguments: [id])
+            try Self.insertAudit(db, auth, action: "users.remove", detail: "user=\(id)")
+            return user
+        }
+    }
+
+    private static func userGameAccess(_ db: Database, userID: String) throws -> UserGameAccess {
+        let hiddenGameIDs = try String.fetchAll(db, sql: """
+            SELECT game_id FROM user_hidden_games WHERE user_id = ? ORDER BY game_id
+            """, arguments: [userID])
+        return UserGameAccess(userID: userID, hiddenGameIDs: hiddenGameIDs)
+    }
+
     public func listDevices() throws -> [DeviceInfo] {
         try db.read { db in
             try Row.fetchAll(db, sql: Self.deviceColumns + " ORDER BY created_at")
