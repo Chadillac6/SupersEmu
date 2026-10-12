@@ -70,7 +70,7 @@ final class CoreTests: XCTestCase {
         }
     }
 
-    func testLibraryIsFilteredByPermission() async throws {
+    func testLibraryShowsAllExceptHiddenGames() async throws {
         try insertGame("g1", title: "Alpha")
         try insertGame("g2", title: "Bravo")
         let player = try store.createUser(displayName: "Alex", role: .player)
@@ -81,6 +81,13 @@ final class CoreTests: XCTestCase {
         try await app().test(.router) { client in
             try await client.execute(uri: "/v1/library", method: .get, headers: [.authorization: "Bearer \(self.adminToken!)"]) {
                 XCTAssertEqual(try self.decode(LibraryResponse.self, $0).games.map(\.title), ["Alpha", "Bravo"])
+            }
+            try await client.execute(uri: "/v1/library", method: .get, headers: [.authorization: "Bearer \(playerToken)"]) {
+                XCTAssertEqual(try self.decode(LibraryResponse.self, $0).games.map(\.title), ["Alpha", "Bravo"])
+            }
+            try await self.store.db.write { db in
+                try db.execute(sql: "INSERT INTO user_hidden_games (user_id, game_id) VALUES (?, 'g1')",
+                               arguments: [player.id])
             }
             try await client.execute(uri: "/v1/library", method: .get, headers: [.authorization: "Bearer \(playerToken)"]) {
                 XCTAssertEqual(try self.decode(LibraryResponse.self, $0).games.map(\.title), ["Bravo"])

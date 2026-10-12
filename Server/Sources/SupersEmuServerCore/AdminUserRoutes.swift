@@ -4,6 +4,7 @@ import SupersEmuKit
 
 extension AdminStatus: ResponseEncodable {}
 extension UserInfo: ResponseEncodable {}
+extension UserGameAccess: ResponseEncodable {}
 extension DeviceInfo: ResponseEncodable {}
 extension TokenInfo: ResponseEncodable {}
 
@@ -19,6 +20,12 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
         return auth
     }
 
+    @Sendable func libraryAdminCaller(_ context: SERequestContext) throws -> AuthContext {
+        let auth = try adminCaller(context)
+        try auth.require(.libraryWrite)
+        return auth
+    }
+
     admin.get("status") { _, context in
         _ = try adminCaller(context)
         return try store.adminStatus()
@@ -27,6 +34,36 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
     admin.get("users") { _, context in
         _ = try adminCaller(context)
         return try store.listUsers()
+    }
+
+    admin.get("users/:id/games") { _, context in
+        _ = try adminCaller(context)
+        let id = try context.parameters.require("id")
+        return try store.userGameAccess(userID: id)
+    }
+
+    admin.put("users/:id/games") { request, context in
+        let auth = try libraryAdminCaller(context)
+        let id = try context.parameters.require("id")
+        let body = try await request.decode(as: SetUserGamesRequest.self, context: context)
+        return try store.setUserGames(userID: id, hiddenGameIDs: body.hiddenGameIDs, by: auth)
+    }
+
+    admin.patch("users/:id") { request, context in
+        let auth = try adminCaller(context)
+        let id = try context.parameters.require("id")
+        let body = try await request.decode(as: UpdateUserRequest.self, context: context)
+        let name = body.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 100 else {
+            throw HTTPError(.badRequest, message: "displayName must be 1 to 100 characters")
+        }
+        return try store.updateUser(id: id, displayName: name, by: auth)
+    }
+
+    admin.delete("users/:id") { _, context in
+        let auth = try adminCaller(context)
+        let id = try context.parameters.require("id")
+        return try store.removeUser(id: id, by: auth)
     }
 
     admin.post("users") { request, context in

@@ -85,22 +85,18 @@ public struct TokenAuthMiddleware: RouterMiddleware {
     }
 }
 
-/// The single place that decides which games a caller can see. Phase 1: the admin sees everything.
-/// Phase 2: players see games granted to everyone, to them, or to one of their groups.
+/// The single place that decides which games a caller can see. Admins see everything;
+/// players see every game except those they have hidden.
 public enum Permissions {
     public static func visibleGameIDsSQL(for auth: AuthContext) -> (sql: String, arguments: StatementArguments) {
         if auth.isAdmin { return ("SELECT id FROM games", []) }
-        return ("""
-            SELECT game_id FROM game_permissions
-            WHERE principal_type = 'everyone'
-               OR (principal_type = 'user' AND principal_id = ?)
-               OR (principal_type = 'group' AND principal_id IN (SELECT group_id FROM group_members WHERE user_id = ?))
-            """, [auth.user.id, auth.user.id])
+        return ("SELECT id FROM games WHERE id NOT IN (SELECT game_id FROM user_hidden_games WHERE user_id = ?)",
+                [auth.user.id])
     }
 
     public static func canSee(gameID: String, auth: AuthContext, db: Database) throws -> Bool {
         let visible = visibleGameIDsSQL(for: auth)
-        return try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM (\(visible.sql)) v WHERE v.\(auth.isAdmin ? "id" : "game_id") = ?)",
+        return try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM (\(visible.sql)) v WHERE v.id = ?)",
                                  arguments: visible.arguments + [gameID]) ?? false
     }
 }
