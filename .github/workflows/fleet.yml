@@ -1,0 +1,84 @@
+name: Fleet CI and release
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+permissions:
+  contents: read
+concurrency:
+  group: fleet-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  checks:
+    name: Mac and server checks
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Prepare build tools and pinned cores
+        run: |
+          brew install xcodegen
+          git submodule update --init --depth 1
+          git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
+          xcodegen generate
+      - name: Fetch existing homebrew test fixtures
+        run: scripts/fetch-test-roms.sh
+      - name: Test server
+        run: swift test --package-path Server
+      - name: Test Mac app
+        run: xcodebuild test -project SupersEmu.xcodeproj -scheme SupersEmu-macOS -destination 'platform=macOS' -derivedDataPath build/ci -resultBundlePath build/ci-tests.xcresult CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES
+      - name: Build iOS simulator app
+        run: xcodebuild build -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ci-ios CODE_SIGNING_ALLOWED=NO
+      - name: Keep test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mac-test-results
+          path: build/ci-tests.xcresult
+          retention-days: 7
+          if-no-files-found: ignore
+  release:
+    name: Publish fleet update
+    needs: checks
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 120
+    environment: mac-release
+    permissions:
+      contents: write
+    env:
+      SUPERSEMU_TEAM_ID: '967UEY5R3M'
+      MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+      MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+      SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Prepare isolated signing keychain
+        run: scripts/ci-signing.sh
+      - name: Build and notarize universal Mac release
+        run: |
+          brew install xcodegen
+          scripts/release-mac.sh
+      - name: Publish signed Sparkle update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh api repos/Chadillac6/SupersEmu/git/ref/heads/main --jq .object.sha)
+          if [ "$latest" != "$GITHUB_SHA" ]; then
+            echo 'A newer main commit exists; this release will not be published.'
+            exit 0
+          fi
+          scripts/publish-mac-update.sh "build/release-mac/$SUPERSEMU_BUILD_NUMBER" "mac-$SUPERSEMU_BUILD_NUMBER" "$GITHUB_SHA"
+      - name: Remove temporary signing credentials
+        if: always()
+        run: scripts/ci-signing.sh cleanup

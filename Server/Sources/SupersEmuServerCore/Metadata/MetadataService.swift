@@ -4,6 +4,31 @@ import GRDB
 import Logging
 import SupersEmuKit
 
+// GRDB rows are not Sendable; extract values before leaving the database queue.
+private struct PendingMetadataJob: Sendable {
+    var id: String
+    var system: String
+    var title: String
+    var matchStatus: String?
+    var datasetVersion: String?
+    var artworkStatus: String?
+    var artworkVersion: String?
+    var searchTitle: String?
+    var providerRef: String?
+
+    init(row: Row) {
+        id = row["id"]
+        system = row["system"]
+        title = row["title"]
+        matchStatus = row["match_status"]
+        datasetVersion = row["dataset_version"]
+        artworkStatus = row["artwork_status"]
+        artworkVersion = row["artwork_version"]
+        searchTitle = row["search_title"]
+        providerRef = row["provider_ref"]
+    }
+}
+
 private struct MetadataRecordFingerprint: Encodable {
     var provider: String
     var providerRef: String?
@@ -123,7 +148,7 @@ public actor MetadataService {
     }
 
     private func enrich(with provider: any MetadataProvider) async throws -> Int {
-        let pending = try await store.db.read { db in
+        let pending: [PendingMetadataJob] = try await store.db.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT g.id, g.system, g.title, j.match_status, j.dataset_version, j.artwork_status, j.artwork_version,
                     j.search_title, m.provider_ref FROM games g
@@ -132,18 +157,18 @@ public actor MetadataService {
                 WHERE g.needs_review = 0 AND (j.game_id IS NULL OR j.match_status IS NULL OR j.dataset_version IS NOT ?
                     OR j.match_status IN ('matched', 'unmatched', 'partial'))
                 ORDER BY g.created_at DESC
-                """, arguments: [provider.id, provider.version])
+                """, arguments: [provider.id, provider.version]).map(PendingMetadataJob.init(row:))
         }
         var changed = 0
         var unavailable = Set<SystemID>()
         for row in pending {
-            let id: String = row["id"]
-            guard let system = SystemID(rawValue: row["system"]), !unavailable.contains(system) else { continue }
-            let status: String? = row["match_status"]
-            let previousRef: String? = row["provider_ref"]
-            let title = try await knownTitle(gameID: id, excluding: provider.id) ?? row["title"]
-            let betterTitle = status == "unmatched" && (row["search_title"] as String?) != title
-            if status == nil || status == "partial" || (row["dataset_version"] as String?) != provider.version || betterTitle {
+            let id: String = row.id
+            guard let system = SystemID(rawValue: row.system), !unavailable.contains(system) else { continue }
+            let status: String? = row.matchStatus
+            let previousRef: String? = row.providerRef
+            let title = try await knownTitle(gameID: id, excluding: provider.id) ?? row.title
+            let betterTitle = status == "unmatched" && row.searchTitle != title
+            if status == nil || status == "partial" || row.datasetVersion != provider.version || betterTitle {
                 let game = MetadataLookup(gameID: id, system: system, title: title, files: try candidateFiles(gameID: id))
                 let result = (try? await provider.lookup(game)) ?? .unavailable
                 switch result {
@@ -168,8 +193,8 @@ public actor MetadataService {
                     logger.info("\(provider.id) matched \(id.prefix(12)) to \"\(record.providerRef ?? record.title ?? "?")\"")
                     changed += 1
                 }
-            } else if status != "matched" || ((row["artwork_status"] as String?) == "done"
-                        && (row["artwork_version"] as String?) == provider.artworkVersion(system: system)) {
+            } else if status != "matched" || (row.artworkStatus == "done"
+                        && row.artworkVersion == provider.artworkVersion(system: system)) {
                 continue
             }
             try await fetchArtwork(gameID: id, system: system, provider: provider)

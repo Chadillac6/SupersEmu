@@ -185,16 +185,24 @@ final class MetadataProviderTests: XCTestCase {
             + "ON j.game_id = m.game_id AND j.provider = m.provider WHERE m.provider = 'wikipedia'"
 
         _ = await metadata.enrichPending()
-        var saved = try await store.db.read { try Row.fetchOne($0, sql: sql) }
-        XCTAssertEqual(saved?["description"], "Super Metroid is a 1994 game.")
-        XCTAssertNil(saved?["reception"] as String?)
-        XCTAssertEqual(saved?["match_status"], "partial")
+        var saved: (description: String?, reception: String?, matchStatus: String?)? = try await store.db.read { db in
+            try Row.fetchOne(db, sql: sql).map {
+                (description: $0["description"], reception: $0["reception"], matchStatus: $0["match_status"])
+            }
+        }
+        XCTAssertEqual(saved?.description, "Super Metroid is a 1994 game.")
+        XCTAssertNil(saved?.reception)
+        XCTAssertEqual(saved?.matchStatus, "partial")
 
         failure.failing = false
         _ = await metadata.enrichPending()
-        saved = try await store.db.read { try Row.fetchOne($0, sql: sql) }
-        XCTAssertNotNil(saved?["reception"] as String?)
-        XCTAssertEqual(saved?["match_status"], "matched")
+        saved = try await store.db.read { db in
+            try Row.fetchOne(db, sql: sql).map {
+                (description: $0["description"], reception: $0["reception"], matchStatus: $0["match_status"])
+            }
+        }
+        XCTAssertNotNil(saved?.reception)
+        XCTAssertEqual(saved?.matchStatus, "matched")
     }
 
     func testIGDBDisabledWithoutCredentials() async throws {

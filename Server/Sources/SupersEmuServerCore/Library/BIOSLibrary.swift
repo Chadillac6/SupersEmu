@@ -102,17 +102,18 @@ func registerBIOSRoutes(_ group: RouterGroup<SERequestContext>, store: ServerSto
     group.get("bios/:sha256") { request, context -> Response in
         try context.caller().require(.libraryRead)
         let sha = try context.parameters.require("sha256")
-        let row = try await store.db.read { db in
-            try Row.fetchOne(db, sql: "SELECT filename, stored_path FROM bios_files WHERE id = ? AND verified = 1", arguments: [sha])
+        let bios: (filename: String, storedPath: String?)? = try await store.db.read { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT filename, stored_path FROM bios_files WHERE id = ? AND verified = 1", arguments: [sha]) else { return nil }
+            return (row["filename"], row["stored_path"])
         }
         let biosRoot = store.paths.bios.resolvingSymlinksInPath().standardizedFileURL.path + "/"
-        guard let row, let stored: String = row["stored_path"], !stored.split(separator: "/").contains(".."),
+        guard let bios, let stored = bios.storedPath, !stored.split(separator: "/").contains(".."),
               case let path = store.paths.libraryFile(stored).resolvingSymlinksInPath().standardizedFileURL.path,
               path.hasPrefix(biosRoot),
               let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue else {
             throw HTTPError(.notFound, message: "BIOS not found")
         }
         return try await LibraryHTTP.serveImmutableFile(request, context: context, fileIO: fileIO, path: path, size: size,
-                                                        filename: row["filename"], eTag: "\"\(sha)\"")
+                                                        filename: bios.filename, eTag: "\"\(sha)\"")
     }
 }
