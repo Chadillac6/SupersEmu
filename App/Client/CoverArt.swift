@@ -17,11 +17,14 @@ final class ArtworkRevision {
 /// Cover art from the server (authenticated), cached on disk for offline use, with a generated fallback tile.
 struct CoverArt: View {
     @Environment(ServerSession.self) private var server
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
     let item: LibraryItem
     @State private var image: Image?
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 14)
+        RoundedRectangle(cornerRadius: compact ? 10 : 14)
             .fill(LinearGradient(colors: ArtworkCache.palette(item.id).map { $0.opacity(0.22) }, startPoint: .topLeading, endPoint: .bottomTrailing))
             .aspectRatio(4 / 3, contentMode: .fit)
             .overlay {
@@ -30,17 +33,26 @@ struct CoverArt: View {
                         .padding(6)
                 } else {
                     VStack(spacing: 8) {
-                        Image(systemName: "gamecontroller.fill").font(.system(size: 34))
-                        Text(item.title).font(.caption.bold()).multilineTextAlignment(.center).lineLimit(3).padding(.horizontal, 8)
+                        Image(systemName: "gamecontroller.fill").font(.system(size: compact ? 22 : 34))
+                        Text(item.title).font(compact ? .caption2.bold() : .caption.bold())
+                            .multilineTextAlignment(.center).lineLimit(3).padding(.horizontal, 8)
                     }
                     .foregroundStyle(.white.opacity(0.9))
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .contentShape(RoundedRectangle(cornerRadius: 14))
+            .clipShape(RoundedRectangle(cornerRadius: compact ? 10 : 14))
+            .contentShape(RoundedRectangle(cornerRadius: compact ? 10 : 14))
             .task(id: ArtworkCache.taskID(item.coverPath, server)) {
                 await ArtworkCache.load(item.coverPath, key: item.id, server: server) { image = $0 }
             }
+    }
+
+    private var compact: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
     }
 }
 
