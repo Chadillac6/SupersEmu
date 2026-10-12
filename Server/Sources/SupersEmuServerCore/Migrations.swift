@@ -1,6 +1,6 @@
 import GRDB
 
-/// Schema for Phase 1, already shaped for Phase 2 (users, groups, per-game permissions).
+/// Schema for Phase 1, already shaped for Phase 2 (users, groups, per-user game visibility).
 /// Tracks add later migrations in their own files and append them in `registerTrackMigrations`.
 public enum ServerMigrations {
     public static var migrator: DatabaseMigrator {
@@ -106,5 +106,6 @@ public enum ServerMigrations {
         MetadataMigrations.registerReviews(&migrator)
         LibraryRevisionMigrations.register(&migrator)
         MetadataMigrations.registerArtworkRecordHash(&migrator)
+        UserHiddenGamesMigrations.register(&migrator)
     }
 }

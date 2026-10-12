@@ -490,7 +490,7 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(actions, ["library.import"])
     }
 
-    func testDetailAndFilesArePermissionChecked() async throws {
+    func testDetailAndFilesRespectHiddenGamesAndLegacyPermissions() async throws {
         let rom = ROMFixtures.gba(seed: 8)
         let id = try await importer.importPaths([try write(rom, "Advance.gba").path], auth: nil).imported[0].id
         let player = try store.createUser(displayName: "Alex", role: .player)
@@ -505,10 +505,10 @@ final class LibraryTests: XCTestCase {
             XCTAssertEqual(detail.game.totalSize, Int64(rom.count))
             XCTAssertEqual(detail.files, [GameFileInfo(id: id, filename: "Advance.gba", role: .rom, size: Int64(rom.count), discNumber: nil)])
 
-            // Phase 2: a player sees nothing until the game is granted.
-            try await client.execute(uri: "/v1/games/\(id)", method: .get, headers: self.auth(playerToken)) { XCTAssertEqual($0.status, .notFound) }
+            // New player visibility is opt-out; legacy grants don't affect it.
+            try await client.execute(uri: "/v1/games/\(id)", method: .get, headers: self.auth(playerToken)) { XCTAssertEqual($0.status, .ok) }
             try await client.execute(uri: "/v1/games/\(id)/files/\(id)", method: .get, headers: self.auth(playerToken)) {
-                XCTAssertEqual($0.status, .notFound)
+                XCTAssertEqual($0.status, .ok)
             }
             let grant = PermissionGrant(gameID: id, principalType: .user, principalID: player.id)
             try await client.execute(uri: "/v1/admin/permissions", method: .put, headers: self.auth(playerToken), body: try self.json(grant)) {
@@ -527,6 +527,23 @@ final class LibraryTests: XCTestCase {
                     XCTAssertEqual($0.status, .ok)
                     XCTAssertEqual(try self.decode(PermissionGrant.self, $0), grant)
                 }
+            }
+            try await client.execute(uri: "/v1/games/\(id)", method: .get, headers: self.auth(playerToken)) {
+                XCTAssertEqual($0.status, .ok)
+            }
+            try await client.execute(uri: "/v1/admin/users/\(player.id)/games", method: .put,
+                                     headers: self.auth(self.adminToken),
+                                     body: try self.json(SetUserGamesRequest(hiddenGameIDs: [id]))) {
+                XCTAssertEqual($0.status, .ok)
+            }
+            try await client.execute(uri: "/v1/games/\(id)", method: .get, headers: self.auth(playerToken)) { XCTAssertEqual($0.status, .notFound) }
+            try await client.execute(uri: "/v1/games/\(id)/files/\(id)", method: .get, headers: self.auth(playerToken)) {
+                XCTAssertEqual($0.status, .notFound)
+            }
+            try await client.execute(uri: "/v1/admin/users/\(player.id)/games", method: .put,
+                                     headers: self.auth(self.adminToken),
+                                     body: try self.json(SetUserGamesRequest(hiddenGameIDs: []))) {
+                XCTAssertEqual($0.status, .ok)
             }
             try await client.execute(uri: "/v1/games/\(id)", method: .get, headers: self.auth(playerToken)) { XCTAssertEqual($0.status, .ok) }
             try await client.execute(uri: "/v1/games/\(id)/files/\(id)", method: .get, headers: self.auth(playerToken)) {

@@ -45,7 +45,7 @@ Phase 1: only Chad's devices. Phase 2: friends' devices use the same paths, via 
 ```
 Mac mini
  ├─ supersemu-server   launch daemon (headless): HTTP API, SQLite (GRDB), library + user data
- ├─ SupersEmu.app      "Server" admin mode: status, import, review queue, users, permissions, tokens
+ ├─ SupersEmu.app      "Server" admin mode: status, import, review queue, users and game visibility, tokens
  └─ supersemu (CLI)    talks to the API with a token; used by Chad, scripts and OpenClaw
 
 Player devices (Mac, iPhone, iPad)
@@ -62,7 +62,7 @@ Player devices (Mac, iPhone, iPad)
 ## Data on the server
 ```
 /Library/Application Support/SupersEmu Server/
- ├─ library.sqlite          games, files, hashes, metadata, artwork refs, disc groups, permissions
+ ├─ library.sqlite          games, files, hashes, metadata, artwork refs, disc groups, visibility
  ├─ games/<sha256>/…        imported game files (content-addressed, originals never modified)
  ├─ artwork/…
  ├─ metadata/               pinned libretro-database DATs (docs/specs/metadata-and-artwork.md)
@@ -72,8 +72,11 @@ Player devices (Mac, iPhone, iPad)
 ```
 - Import sources: a watched `Incoming` folder on the Mac mini, drag-drop in the admin UI, and
   `supersemu library import <path>`. The pipeline in `import-and-library.md` now runs on the server.
-- Chad publishes games and assigns them per user or per group ("Everyone", "Kids", …). A user only
-  ever sees games they're allowed.
+- Every active friend sees every game Chad imports by default. Chad can hide individual games for
+  each friend in Server Mode; hiding a game never deletes that friend's saves. New imports are
+  shared automatically. Admins always see every game.
+- The legacy `/v1/admin/permissions` API remains available for compatibility and auditing, but its
+  grants no longer control player visibility.
 
 ## Accounts and sign-in
 Phase 1: Chad's account is created at server setup (admin). He pairs his own devices by scanning a QR
@@ -186,13 +189,13 @@ supersemu backup create | list [--verify] | restore <id> --yes | config [--desti
 | Phase | Who | Server scope |
 |---|---|---|
 | **1** | Chad only | Daemon at boot, Server mode admin UI, import/organise on the server, Chad's admin account, pair his devices by QR, library + downloads/cache, save sync across his devices, LAN + his Tailscale network, CLI + scoped tokens (OpenClaw) |
-| **2 goal** | Chad + <10 invited friends | Invites, player role, per-user/group game permissions, private per-user saves and history, Tailscale machine sharing to friends, revoke users/devices, users screen in admin, webhooks, server backups, "server offline" UX |
+| **2 goal** | Chad + <10 invited friends | Invites, player role, per-user hidden-game lists, private per-user saves and history, Tailscale machine sharing to friends, revoke users/devices, users screen in admin, webhooks, server backups, "server offline" UX |
 
 Built in Phase 1 so Phase 2 is additive, not a rewrite:
 - A `users` table from day one, with Chad as the only admin. Saves and profiles live under `users/<id>/`.
-- Every API request resolves token → device → user, then runs a permission check. In Phase 1 the
-  admin passes every check; Phase 2 adds rules, not a new code path.
-- The library API only returns games the requesting user may see (all games for Chad).
+- Every API request resolves token → device → user, then applies role and scope checks. Admins see
+  every game; friends see every game except those hidden for them.
+- The library API only returns games visible to the requesting user (all games for admins).
 - Device pairing is the same code the Phase 2 invite uses.
 
 ## Legal note (not legal advice)
@@ -219,4 +222,3 @@ responsibility. SupersEmu ships no games or BIOS files.
   then removes the old copy; on any failure the partial copy is removed and nothing switches. If the library's drive
   is missing at boot the server still starts, creates nothing in its place, reports `available: false`, and refuses
   imports/uploads with 503 until the drive is back.
-

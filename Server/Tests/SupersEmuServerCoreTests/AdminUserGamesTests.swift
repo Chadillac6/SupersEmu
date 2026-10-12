@@ -47,68 +47,88 @@ final class AdminUserGamesTests: XCTestCase {
         return try XCTUnwrap(report.imported.first?.id)
     }
 
-    func testPutReplacesDirectGrantsAndPlayerSeesCombinedPermissions() async throws {
-        let directA = try await createGame("DirectA", seed: 1)
-        let directB = try await createGame("DirectB", seed: 2)
-        let directC = try await createGame("DirectC", seed: 3)
-        let everyone = try await createGame("Everyone", seed: 4)
-        let group = try await createGame("Group", seed: 5)
+    func testHiddenGamesAreOptOutAndScopedToOnePlayer() async throws {
         let player = try store.createUser(displayName: "Alex", role: .player)
         let playerToken = try store.createDeviceToken(userID: player.id, deviceName: "Alex's iPhone").token
-
-        try await store.db.write { db in
-            try db.execute(sql: "INSERT INTO groups (id, name) VALUES ('friends', 'Friends')")
-            try db.execute(sql: "INSERT INTO group_members (group_id, user_id) VALUES ('friends', ?)", arguments: [player.id])
-            try db.execute(sql: """
-                INSERT INTO game_permissions (game_id, principal_type, principal_id) VALUES
-                (?, 'everyone', ''), (?, 'group', 'friends')
-                """, arguments: [everyone, group])
-        }
+        let other = try store.createUser(displayName: "Jordan", role: .player)
+        let otherToken = try store.createDeviceToken(userID: other.id, deviceName: "Jordan's iPhone").token
+        let gameA = try await createGame("GameA", seed: 1)
+        let gameB = try await createGame("GameB", seed: 2)
+        let gameC = try await createGame("GameC", seed: 3)
+        let initialRevision = try store.libraryRevision()
 
         try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/library", method: .get, headers: self.bearer(playerToken)) { response in
+                XCTAssertEqual(response.status, .ok)
+                XCTAssertEqual(try self.decode(LibraryResponse.self, response).games.map(\.id).sorted(),
+                               [gameA, gameB, gameC].sorted())
+            }
+            try await client.execute(uri: "/v1/library", method: .get, headers: self.bearer(otherToken)) { response in
+                XCTAssertEqual(response.status, .ok)
+                XCTAssertEqual(try self.decode(LibraryResponse.self, response).games.map(\.id).sorted(),
+                               [gameA, gameB, gameC].sorted())
+            }
+
             let first = try await client.execute(
                 uri: "/v1/admin/users/\(player.id)/games", method: .put, headers: self.bearer(self.adminDevice.token),
-                body: try self.json(SetUserGamesRequest(gameIDs: [directA, directB, directA]))) { response in
+                body: try self.json(SetUserGamesRequest(hiddenGameIDs: [gameA, gameA]))) { response in
                     XCTAssertEqual(response.status, .ok)
                     return try self.decode(UserGameAccess.self, response)
                 }
             XCTAssertEqual(first.userID, player.id)
-            XCTAssertEqual(first.gameIDs, [directA, directB].sorted())
-            XCTAssertEqual(first.everyoneGameIDs, [everyone])
-            XCTAssertEqual(first.groupGameIDs, [group])
-            try await client.execute(uri: "/v1/games/\(directA)/files/\(directA)", method: .get,
-                                     headers: self.bearer(playerToken)) {
-                XCTAssertEqual($0.status, .ok)
-            }
-
-            let replaced = try await client.execute(
-                uri: "/v1/admin/users/\(player.id)/games", method: .put, headers: self.bearer(self.adminDevice.token),
-                body: try self.json(SetUserGamesRequest(gameIDs: [directC, directB]))) { response in
-                    XCTAssertEqual(response.status, .ok)
-                    return try self.decode(UserGameAccess.self, response)
-                }
-            XCTAssertEqual(replaced.gameIDs, [directB, directC].sorted())
+            XCTAssertEqual(first.hiddenGameIDs, [gameA])
+            XCTAssertNotEqual(try self.store.libraryRevision(), initialRevision)
 
             try await client.execute(uri: "/v1/admin/users/\(player.id)/games", method: .get,
                                      headers: self.bearer(self.adminDevice.token)) { response in
                 XCTAssertEqual(response.status, .ok)
-                XCTAssertEqual(try self.decode(UserGameAccess.self, response), replaced)
+                XCTAssertEqual(try self.decode(UserGameAccess.self, response), first)
             }
             try await client.execute(uri: "/v1/library", method: .get, headers: self.bearer(playerToken)) { response in
                 XCTAssertEqual(response.status, .ok)
-                let ids = try self.decode(LibraryResponse.self, response).games.map(\.id)
-                XCTAssertEqual(ids.sorted(), [directB, directC, everyone, group].sorted())
+                XCTAssertEqual(try self.decode(LibraryResponse.self, response).games.map(\.id).sorted(),
+                               [gameB, gameC].sorted())
             }
-            try await client.execute(uri: "/v1/games/\(directA)/files/\(directA)", method: .get,
+            try await client.execute(uri: "/v1/library", method: .get, headers: self.bearer(otherToken)) { response in
+                XCTAssertEqual(response.status, .ok)
+                XCTAssertEqual(try self.decode(LibraryResponse.self, response).games.map(\.id).sorted(),
+                               [gameA, gameB, gameC].sorted())
+            }
+            try await client.execute(uri: "/v1/games/\(gameA)/files/\(gameA)", method: .get,
                                      headers: self.bearer(playerToken)) {
                 XCTAssertEqual($0.status, .notFound)
+            }
+            try await client.execute(uri: "/v1/saves/\(gameA)", method: .get,
+                                     headers: self.bearer(playerToken)) {
+                XCTAssertEqual($0.status, .notFound)
+            }
+            try await client.execute(uri: "/v1/saves/\(gameA)/manual?slot=slot1&core=Snes9x&coreVersion=1.62",
+                                     method: .put, headers: self.bearer(playerToken), body: ByteBuffer(string: "save")) {
+                XCTAssertEqual($0.status, .notFound)
+            }
+
+            let unhidden = try await client.execute(
+                uri: "/v1/admin/users/\(player.id)/games", method: .put, headers: self.bearer(self.adminDevice.token),
+                body: try self.json(SetUserGamesRequest(hiddenGameIDs: []))) { response in
+                    XCTAssertEqual(response.status, .ok)
+                    return try self.decode(UserGameAccess.self, response)
+                }
+            XCTAssertEqual(unhidden.hiddenGameIDs, [])
+            try await client.execute(uri: "/v1/library", method: .get, headers: self.bearer(playerToken)) { response in
+                XCTAssertEqual(response.status, .ok)
+                XCTAssertEqual(try self.decode(LibraryResponse.self, response).games.map(\.id).sorted(),
+                               [gameA, gameB, gameC].sorted())
+            }
+            try await client.execute(uri: "/v1/games/\(gameA)/files/\(gameA)", method: .get,
+                                     headers: self.bearer(playerToken)) {
+                XCTAssertEqual($0.status, .ok)
             }
         }
 
         let details = try await store.db.read { db in
             try String.fetchAll(db, sql: "SELECT detail FROM audit_log WHERE action = 'library.user_games' ORDER BY id")
         }
-        XCTAssertEqual(details, ["user=\(player.id) count=2", "user=\(player.id) count=2"])
+        XCTAssertEqual(details, ["user=\(player.id) hidden=1", "user=\(player.id) hidden=0"])
     }
 
     func testSetUserGamesValidatesTargetsAndScopes() async throws {
@@ -123,12 +143,12 @@ final class AdminUserGamesTests: XCTestCase {
         try await app().test(.router) { client in
             let uri = "/v1/admin/users/\(player.id)/games"
             try await client.execute(uri: uri, method: .put, headers: self.bearer(self.adminDevice.token),
-                                     body: try self.json(SetUserGamesRequest(gameIDs: [game]))) {
+                                     body: try self.json(SetUserGamesRequest(hiddenGameIDs: [game]))) {
                 XCTAssertEqual($0.status, .ok)
             }
             try await client.execute(uri: "/v1/admin/users/\(admin.id)/games", method: .put,
                                      headers: self.bearer(self.adminDevice.token),
-                                     body: try self.json(SetUserGamesRequest(gameIDs: []))) { response in
+                                     body: try self.json(SetUserGamesRequest(hiddenGameIDs: []))) { response in
                 XCTAssertEqual(response.status, .badRequest)
                 XCTAssertTrue(String(buffer: response.body).contains("Admins see every game"))
             }
@@ -141,19 +161,19 @@ final class AdminUserGamesTests: XCTestCase {
             }
 
             try await client.execute(uri: uri, method: .put, headers: self.bearer(self.adminDevice.token),
-                                     body: try self.json(SetUserGamesRequest(gameIDs: [game, "missing-game"]))) {
+                                     body: try self.json(SetUserGamesRequest(hiddenGameIDs: [game, "missing-game"]))) {
                 XCTAssertEqual($0.status, .badRequest)
             }
             try await client.execute(uri: uri, method: .put, headers: self.bearer(self.adminDevice.token),
-                                     body: try self.json(SetUserGamesRequest(gameIDs: Array(repeating: game, count: 10_001)))) {
+                                     body: try self.json(SetUserGamesRequest(hiddenGameIDs: Array(repeating: game, count: 10_001)))) {
                 XCTAssertEqual($0.status, .badRequest)
             }
             try await client.execute(uri: uri, method: .put, headers: self.bearer(playerToken),
-                                     body: try self.json(SetUserGamesRequest(gameIDs: []))) {
+                                     body: try self.json(SetUserGamesRequest(hiddenGameIDs: []))) {
                 XCTAssertEqual($0.status, .forbidden)
             }
             try await client.execute(uri: uri, method: .put, headers: self.bearer(usersAdminToken),
-                                     body: try self.json(SetUserGamesRequest(gameIDs: []))) {
+                                     body: try self.json(SetUserGamesRequest(hiddenGameIDs: []))) {
                 XCTAssertEqual($0.status, .forbidden)
             }
             try await client.execute(uri: "/v1/admin/users/\(player.id)/games", method: .get,
@@ -165,7 +185,7 @@ final class AdminUserGamesTests: XCTestCase {
             }
             try await client.execute(uri: uri, method: .get, headers: self.bearer(self.adminDevice.token)) { response in
                 XCTAssertEqual(response.status, .ok)
-                XCTAssertEqual(try self.decode(UserGameAccess.self, response).gameIDs, [game])
+                XCTAssertEqual(try self.decode(UserGameAccess.self, response).hiddenGameIDs, [game])
             }
             try await client.execute(uri: "/v1/admin/users/missing-user/games", method: .get,
                                      headers: self.bearer(self.adminDevice.token)) {
@@ -176,7 +196,7 @@ final class AdminUserGamesTests: XCTestCase {
         let details = try await store.db.read { db in
             try String.fetchAll(db, sql: "SELECT detail FROM audit_log WHERE action = 'library.user_games' ORDER BY id")
         }
-        XCTAssertEqual(details, ["user=\(player.id) count=1"])
+        XCTAssertEqual(details, ["user=\(player.id) hidden=1"])
     }
 
     func testUpdateUserTrimsAndValidatesDisplayName() async throws {
@@ -264,6 +284,9 @@ final class AdminUserGamesTests: XCTestCase {
 
         let savedFile = store.paths.userDirectory(player.id).appendingPathComponent("saves/\(game)/\(revisionID)")
         XCTAssertTrue(FileManager.default.fileExists(atPath: savedFile.path))
+        try await store.db.write { db in
+            try db.execute(sql: "INSERT INTO user_hidden_games (user_id, game_id) VALUES (?, ?)", arguments: [player.id, game])
+        }
 
         try await app().test(.router) { client in
             try await client.execute(uri: "/v1/admin/users/\(player.id)", method: .delete,
@@ -308,6 +331,7 @@ final class AdminUserGamesTests: XCTestCase {
                 userGrants: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM game_permissions WHERE principal_type = 'user' AND principal_id = ?",
                                              arguments: [player.id]) ?? 0,
                 memberships: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM group_members WHERE user_id = ?", arguments: [player.id]) ?? 0,
+                hiddenGames: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM user_hidden_games WHERE user_id = ?", arguments: [player.id]) ?? 0,
                 save: try Row.fetchOne(db, sql: "SELECT stored_path FROM save_revisions WHERE id = ?", arguments: [revisionID]),
                 audit: try String.fetchOne(db, sql: "SELECT detail FROM audit_log WHERE action = 'users.remove' ORDER BY id DESC LIMIT 1")
             )
@@ -316,6 +340,7 @@ final class AdminUserGamesTests: XCTestCase {
         XCTAssertEqual(persisted.revokedDevices, 2)
         XCTAssertEqual(persisted.userGrants, 0)
         XCTAssertEqual(persisted.memberships, 0)
+        XCTAssertEqual(persisted.hiddenGames, 0)
         XCTAssertEqual(persisted.save?["stored_path"] as String?, "users/\(player.id)/saves/\(game)/\(revisionID)")
         XCTAssertTrue(FileManager.default.fileExists(atPath: savedFile.path))
         XCTAssertEqual(try Data(contentsOf: savedFile), Data("preserve this save".utf8))

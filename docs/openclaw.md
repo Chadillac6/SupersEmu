@@ -20,13 +20,15 @@ Pick the smallest scopes that cover the job:
 
 | Scope | Allows |
 |---|---|
-| `library:read` | List and read games |
+| `library:read` | List and read games; admin tokens see all games |
 | `library:write` | Import and organise games (library commands) |
 | `saves:read` | Read save metadata |
 | `users:admin` | Users, devices and tokens (`users`, `devices`, `tokens`, admin `server status`) |
 
 `library:write` and `users:admin` only work for tokens owned by an admin (Chad). No scope can delete
-game files or overwrite a user's save.
+game files or overwrite a user's save. Friends see all imported games by default; per-friend hidden
+games are managed in Server Mode's Users & Games screen. The legacy permission-grant API does not
+change friend visibility.
 
 ## 2. Give the token to the bot
 Either set environment variables for the process that runs the CLI:

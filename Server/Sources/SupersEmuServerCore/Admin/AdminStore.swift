@@ -40,11 +40,11 @@ extension ServerStore {
         }
     }
 
-    public func setUserGames(userID: String, gameIDs: [String], by auth: AuthContext) throws -> UserGameAccess {
-        guard gameIDs.count <= 10_000 else {
+    public func setUserGames(userID: String, hiddenGameIDs: [String], by auth: AuthContext) throws -> UserGameAccess {
+        guard hiddenGameIDs.count <= 10_000 else {
             throw HTTPError(.badRequest, message: "At most 10000 game IDs are allowed")
         }
-        let requested = Array(Set(gameIDs)).sorted()
+        let requested = Array(Set(hiddenGameIDs)).sorted()
         return try db.write { db in
             guard let row = try Row.fetchOne(db, sql: "SELECT * FROM users WHERE id = ? AND revoked_at IS NULL",
                                              arguments: [userID]) else {
@@ -67,14 +67,14 @@ extension ServerStore {
                 throw HTTPError(.badRequest, message: "Unknown game IDs: \(unknown.sorted().joined(separator: ", "))")
             }
 
-            try db.execute(sql: "DELETE FROM game_permissions WHERE principal_type = 'user' AND principal_id = ?",
-                           arguments: [userID])
+            try db.execute(sql: "DELETE FROM user_hidden_games WHERE user_id = ?", arguments: [userID])
             for gameID in requested {
                 try db.execute(sql: """
-                    INSERT INTO game_permissions (game_id, principal_type, principal_id) VALUES (?, 'user', ?)
-                    """, arguments: [gameID, userID])
+                    INSERT INTO user_hidden_games (user_id, game_id) VALUES (?, ?)
+                    """, arguments: [userID, gameID])
             }
-            try Self.insertAudit(db, auth, action: "library.user_games", detail: "user=\(userID) count=\(requested.count)")
+            try Self.insertAudit(db, auth, action: "library.user_games",
+                                 detail: "user=\(userID) hidden=\(requested.count)")
             return try Self.userGameAccess(db, userID: userID)
         }
     }
@@ -109,26 +109,17 @@ extension ServerStore {
             try db.execute(sql: "DELETE FROM game_permissions WHERE principal_type = 'user' AND principal_id = ?",
                            arguments: [id])
             try db.execute(sql: "DELETE FROM group_members WHERE user_id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM user_hidden_games WHERE user_id = ?", arguments: [id])
             try Self.insertAudit(db, auth, action: "users.remove", detail: "user=\(id)")
             return user
         }
     }
 
     private static func userGameAccess(_ db: Database, userID: String) throws -> UserGameAccess {
-        let gameIDs = try String.fetchAll(db, sql: """
-            SELECT game_id FROM game_permissions WHERE principal_type = 'user' AND principal_id = ? ORDER BY game_id
+        let hiddenGameIDs = try String.fetchAll(db, sql: """
+            SELECT game_id FROM user_hidden_games WHERE user_id = ? ORDER BY game_id
             """, arguments: [userID])
-        let everyoneGameIDs = try String.fetchAll(db, sql: """
-            SELECT game_id FROM game_permissions WHERE principal_type = 'everyone' ORDER BY game_id
-            """)
-        let groupGameIDs = try String.fetchAll(db, sql: """
-            SELECT DISTINCT p.game_id FROM game_permissions p
-            JOIN group_members m ON m.group_id = p.principal_id
-            WHERE p.principal_type = 'group' AND m.user_id = ?
-            ORDER BY p.game_id
-            """, arguments: [userID])
-        return UserGameAccess(userID: userID, gameIDs: gameIDs,
-                              everyoneGameIDs: everyoneGameIDs, groupGameIDs: groupGameIDs)
+        return UserGameAccess(userID: userID, hiddenGameIDs: hiddenGameIDs)
     }
 
     public func listDevices() throws -> [DeviceInfo] {

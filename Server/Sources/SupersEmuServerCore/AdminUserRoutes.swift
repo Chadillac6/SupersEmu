@@ -46,7 +46,7 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
         let auth = try libraryAdminCaller(context)
         let id = try context.parameters.require("id")
         let body = try await request.decode(as: SetUserGamesRequest.self, context: context)
-        return try store.setUserGames(userID: id, gameIDs: body.gameIDs, by: auth)
+        return try store.setUserGames(userID: id, hiddenGameIDs: body.hiddenGameIDs, by: auth)
     }
 
     admin.patch("users/:id") { request, context in

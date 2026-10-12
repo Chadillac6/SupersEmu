@@ -56,23 +56,19 @@ public struct UserInfo: Codable, Sendable, Equatable, Identifiable {
 
 public struct UserGameAccess: Codable, Sendable, Equatable {
     public var userID: String
-    public var gameIDs: [String]
-    public var everyoneGameIDs: [String]
-    public var groupGameIDs: [String]
+    public var hiddenGameIDs: [String]
 
-    public init(userID: String, gameIDs: [String], everyoneGameIDs: [String], groupGameIDs: [String]) {
+    public init(userID: String, hiddenGameIDs: [String]) {
         self.userID = userID
-        self.gameIDs = gameIDs
-        self.everyoneGameIDs = everyoneGameIDs
-        self.groupGameIDs = groupGameIDs
+        self.hiddenGameIDs = hiddenGameIDs
     }
 }
 
 public struct SetUserGamesRequest: Codable, Sendable, Equatable {
-    public var gameIDs: [String]
+    public var hiddenGameIDs: [String]
 
-    public init(gameIDs: [String]) {
-        self.gameIDs = gameIDs
+    public init(hiddenGameIDs: [String]) {
+        self.hiddenGameIDs = hiddenGameIDs
     }
 }
 

@@ -15,8 +15,8 @@ extension APIClient {
         try await get("/v1/admin/users/\(userID)/games")
     }
 
-    public func setUserGames(userID: String, gameIDs: [String]) async throws -> UserGameAccess {
-        try await send("PUT", "/v1/admin/users/\(userID)/games", body: SetUserGamesRequest(gameIDs: gameIDs))
+    public func setUserGames(userID: String, hiddenGameIDs: [String]) async throws -> UserGameAccess {
+        try await send("PUT", "/v1/admin/users/\(userID)/games", body: SetUserGamesRequest(hiddenGameIDs: hiddenGameIDs))
     }
 
     public func updateUser(id: String, displayName: String) async throws -> UserInfo {
