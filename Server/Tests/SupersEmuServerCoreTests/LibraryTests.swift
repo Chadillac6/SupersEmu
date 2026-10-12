@@ -570,9 +570,9 @@ final class LibraryTests: XCTestCase {
         var adminRevisionID: String?
 
         try await app().test(.router) { client in
-            try await client.execute(uri: "/v1/admin/permissions", method: .put, headers: self.auth(self.adminToken),
-                                     body: try self.json(PermissionGrant(gameID: grantedGameID, principalType: .user,
-                                                                         principalID: player.id))) {
+            try await client.execute(uri: "/v1/admin/users/\(player.id)/games", method: .put,
+                                     headers: self.auth(self.adminToken),
+                                     body: try self.json(SetUserGamesRequest(hiddenGameIDs: [privateGameID]))) {
                 XCTAssertEqual($0.status, .ok)
             }
             try await client.execute(uri: "/v1/saves/\(grantedGameID)/auto?core=TestCore&coreVersion=1",
