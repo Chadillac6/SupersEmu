@@ -32,14 +32,15 @@ public struct ServerProfile: Codable, Sendable, Equatable {
 
     /// Whether a device token may be sent to `url`: only over HTTPS with a pinned certificate, unless opted out.
     public func isTrustedTransport(_ url: URL) -> Bool {
-        let isPublicHost = url.host.map { $0.lowercased() } == publicURL?.host?.lowercased()
+        let endpoint = WebPKIEndpoint.key(for: url)
+        let isPublicEndpoint = endpoint != nil && endpoint == publicURL.flatMap { WebPKIEndpoint.key(for: $0) }
         return allowsInsecureTransport || (url.scheme?.lowercased() == "https" &&
-            (certificateSHA256 != nil || isPublicHost))
+            (certificateSHA256 != nil || isPublicEndpoint))
     }
 }
 
 extension ServerProfile {
-    var webPKIHosts: Set<String> { Set([publicURL?.host].compactMap { $0?.lowercased() }) }
+    var webPKIEndpoints: Set<String> { WebPKIEndpoint.keys(for: publicURL) }
 
     /// Tolerates profiles saved before `tokenAccount` / `allowsInsecureTransport` existed.
     public init(from decoder: any Decoder) throws {
@@ -84,7 +85,7 @@ public actor ServerConnection {
         self.profile = profile
         self.tokenStore = tokenStore
         self.session = session ?? PinnedCertificateDelegate.session(certificateSHA256: profile.certificateSHA256, timeout: 8,
-                                                                    webPKIHosts: profile.webPKIHosts)
+                                                                    webPKIEndpoints: profile.webPKIEndpoints)
         self.onProfileChange = onProfileChange
     }
 

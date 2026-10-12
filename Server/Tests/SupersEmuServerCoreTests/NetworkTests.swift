@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import Hummingbird
 import HummingbirdTesting
+import Logging
 import NIOCore
 import Security
 import SupersEmuKit
@@ -489,6 +490,25 @@ final class PublicAccessTests: XCTestCase {
         XCTAssertNotNil(result.publicApplication)
         XCTAssertEqual(ServerLauncher.publicListenHost, "127.0.0.1")
     }
+
+    func testInvalidPublicAccessFileDisablesURLAndPortOverrides() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("{".utf8).write(to: root.appendingPathComponent("public-access.json"))
+
+        var options = ServerRunOptions()
+        options.publicURL = URL(string: "https://games.example.com")
+        options.publicPort = 8490
+        let resolved = ServerLauncher.resolvePublicAccess(root: root, options: options, logger: Logger(label: "test"))
+        XCTAssertNil(resolved.publicAccess)
+        XCTAssertNil(resolved.publicURL)
+        XCTAssertNil(resolved.publicPort)
+
+        let result = try ServerLauncher.makeApplication(store: store, options: resolved)
+        XCTAssertNil(result.publicApplication)
+        XCTAssertNil(result.environment.publicURL)
+    }
 }
 
 final class TestBox<Value>: @unchecked Sendable {
@@ -500,15 +520,18 @@ final class TestBox<Value>: @unchecked Sendable {
 }
 
 extension NetworkTests {
-    func testPublicWebPKIHostUsesSystemTrustWithoutPinningOtherHosts() throws {
-        let hosts: Set<String> = ["games.example.com"]
+    func testPublicWebPKIUsesSystemTrustOnlyForConfiguredHostAndPort() throws {
+        let endpoints = WebPKIEndpoint.keys(for: URL(string: "https://games.example.com")!)
         let authMethod = NSURLAuthenticationMethodServerTrust
         XCTAssertEqual(PinnedCertificateDelegate.decision(authenticationMethod: authMethod, trust: nil,
                                                           pin: "wrong-pin", host: "GAMES.EXAMPLE.COM",
-                                                          webPKIHosts: hosts), .defaultHandling)
+                                                          port: 443, webPKIEndpoints: endpoints), .defaultHandling)
+        XCTAssertEqual(PinnedCertificateDelegate.decision(authenticationMethod: authMethod, trust: nil,
+                                                          pin: "wrong-pin", host: "games.example.com",
+                                                          port: 8487, webPKIEndpoints: endpoints), .reject)
         XCTAssertEqual(PinnedCertificateDelegate.decision(authenticationMethod: authMethod, trust: nil,
                                                           pin: "wrong-pin", host: "other.example.com",
-                                                          webPKIHosts: hosts), .reject)
+                                                          port: 443, webPKIEndpoints: endpoints), .reject)
     }
 
     func testPublicProfileTrustAndCandidateOrder() {
@@ -516,6 +539,7 @@ extension NetworkTests {
         let internet = URL(string: "https://games.example.com")!
         let profile = ServerProfile(serverName: "Mini", urls: [lan], certificateSHA256: nil, publicURL: internet)
         XCTAssertTrue(profile.isTrustedTransport(internet))
+        XCTAssertFalse(profile.isTrustedTransport(URL(string: "https://games.example.com:8487")!))
         XCTAssertFalse(profile.isTrustedTransport(URL(string: "https://other.example.com")!))
         XCTAssertEqual(ServerConnection.candidateOrder(urls: [lan], lastGood: nil, publicURL: internet), [lan, internet])
         XCTAssertEqual(ServerConnection.candidateOrder(urls: [lan], lastGood: internet, publicURL: internet), [internet, lan])

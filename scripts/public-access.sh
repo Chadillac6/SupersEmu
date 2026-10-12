@@ -94,7 +94,7 @@ write_caddyfile() {
   local email=${SUPERSEMU_ACME_EMAIL:-}
   if [[ -n "$email" && ! "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
     echo "SUPERSEMU_ACME_EMAIL must be a valid email address."
-    exit 2
+    return 2
   fi
   if [[ -n "$email" ]]; then
     sed "s|# SUPERSEMU_ACME_EMAIL|email $email|" "$template" | sed "s|# SUPERSEMU_TLS_DIRECTIVE|$([[ $local_test == 1 ]] && echo 'tls internal')|" >"$caddyfile"
@@ -108,6 +108,32 @@ launchctl_cmd() {
   if command -v launchctl >/dev/null 2>&1; then launchctl "$@"; else return 1; fi
 }
 
+rollback_enable() {
+  local status=$?
+  trap - ERR
+  if ((caddy_started)); then
+    if ((no_launchd)); then
+      if [[ -n "$started_caddy_pid" ]]; then
+        kill "$started_caddy_pid" 2>/dev/null || true
+        wait "$started_caddy_pid" 2>/dev/null || true
+      fi
+      rm -f "$caddy_dir/caddy.pid"
+    else
+      launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
+      rm -f "$plist"
+    fi
+  fi
+  if ((config_write_attempted)); then
+    if ((previous_config_existed)); then
+      mv -f "$previous_config_backup" "$config_file" || true
+    else
+      rm -f "$config_file" "$config_file.tmp"
+    fi
+  fi
+  [[ -z "$previous_config_backup" ]] || rm -f "$previous_config_backup"
+  exit "$status"
+}
+
 case "$action" in
   enable)
     if [[ -z "$caddy_bin" ]]; then
@@ -115,20 +141,50 @@ case "$action" in
       exit 1
     fi
     [[ -f "$template" ]] || { echo "Missing Caddy template: $template"; exit 1; }
-    SUPERSEMU_PUBLIC_HOST=$host SUPERSEMU_PUBLIC_PORT=$port SUPERSEMU_CADDY_DATA_DIR=$caddy_dir \
-      write_access_config true
+    caddy_started=0
+    config_write_attempted=0
+    previous_config_existed=0
+    previous_config_backup=
+    started_caddy_pid=
+    trap 'rollback_enable' ERR
+    if [[ -f "$config_file" ]]; then
+      previous_config_backup=$(mktemp "$caddy_dir/public-access.XXXXXX")
+      cp -p "$config_file" "$previous_config_backup"
+      previous_config_existed=1
+    fi
     write_caddyfile
     SUPERSEMU_PUBLIC_HOST=$host SUPERSEMU_PUBLIC_PORT=$port SUPERSEMU_CADDY_DATA_DIR=$caddy_dir \
       XDG_DATA_HOME=$caddy_dir caddy validate --config "$caddyfile" --adapter caddyfile
     if ((no_launchd)); then
-      if [[ -f "$caddy_dir/caddy.pid" ]] && kill -0 "$(cat "$caddy_dir/caddy.pid")" 2>/dev/null; then
-        kill "$(cat "$caddy_dir/caddy.pid")"
+      if [[ -f "$caddy_dir/caddy.pid" ]]; then
+        old_pid=$(cat "$caddy_dir/caddy.pid")
+        if kill -0 "$old_pid" 2>/dev/null; then
+          kill "$old_pid"
+          for _ in {1..50}; do
+            kill -0 "$old_pid" 2>/dev/null || break
+            sleep 0.1
+          done
+          if kill -0 "$old_pid" 2>/dev/null; then
+            echo "Caddy did not stop for reconfiguration."
+            false
+          fi
+        fi
+        rm -f "$caddy_dir/caddy.pid"
       fi
       SUPERSEMU_PUBLIC_HOST=$host SUPERSEMU_PUBLIC_PORT=$port SUPERSEMU_CADDY_DATA_DIR=$caddy_dir \
         XDG_DATA_HOME=$caddy_dir nohup "$caddy_bin" run --config "$caddyfile" --adapter caddyfile \
         >>"$caddy_dir/caddy.log" 2>&1 &
-      echo "$!" >"$caddy_dir/caddy.pid"
+      started_caddy_pid=$!
+      caddy_started=1
+      printf '%s\n' "$started_caddy_pid" >"$caddy_dir/caddy.pid"
       chmod 600 "$caddy_dir/caddy.pid"
+      for _ in {1..20}; do
+        if ! kill -0 "$started_caddy_pid" 2>/dev/null; then
+          echo "Caddy exited during startup."
+          false
+        fi
+        sleep 0.1
+      done
     else
       python3 - "$plist" "$caddy_bin" "$caddyfile" "$caddy_dir" "$host" "$port" <<'PY'
 import os
@@ -156,10 +212,16 @@ os.chmod(path, 0o600)
 PY
       chmod 600 "$plist"
       launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
+      caddy_started=1
       launchctl_cmd bootstrap system "$plist"
     fi
+    config_write_attempted=1
+    SUPERSEMU_PUBLIC_HOST=$host SUPERSEMU_PUBLIC_PORT=$port SUPERSEMU_CADDY_DATA_DIR=$caddy_dir \
+      write_access_config true
     if ((no_launchd == 0)); then launchctl_cmd kickstart -k "$server_label"; fi
     echo "Public HTTPS configured for https://$host; admin routes return 404."
+    [[ -z "$previous_config_backup" ]] || rm -f "$previous_config_backup"
+    trap - ERR
     ;;
   disable)
     write_access_config false

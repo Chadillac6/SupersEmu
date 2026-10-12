@@ -102,9 +102,9 @@ final class ServerSession {
             throw PairingError.fingerprintConfirmationRequired
         }
         var lastError: Error = APIClientError.invalidResponse
-        let webPKIHosts = Set([payload.publicURL?.host].compactMap { $0?.lowercased() })
+        let webPKIEndpoints = WebPKIEndpoint.keys(for: payload.publicURL)
         for url in candidates {
-            let trust = PinnedCertificateDelegate(certificateSHA256: pin, webPKIHosts: webPKIHosts)
+            let trust = PinnedCertificateDelegate(certificateSHA256: pin, webPKIEndpoints: webPKIEndpoints)
             let pairingSession = URLSession(configuration: Self.configuration, delegate: trust, delegateQueue: nil)
             defer { pairingSession.finishTasksAndInvalidate() }
             let client = APIClient(baseURL: url, token: nil, session: pairingSession)
@@ -147,7 +147,7 @@ final class ServerSession {
                 baseURL: url,
                 token: response.token,
                 session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256,
-                                                            webPKIHosts: Set([publicURL?.host].compactMap { $0?.lowercased() }))
+                                                            webPKIEndpoints: WebPKIEndpoint.keys(for: publicURL))
             )
             let revocationFailure: String?
             do {
@@ -354,9 +354,9 @@ final class ServerSession {
     func downloader(cache: GameCache) -> GameDownloader? {
         guard let client = client() else { return nil }
         let pin = credential?.certificateSHA256
-        let webPKIHosts = Set([credential?.publicURL?.host].compactMap { $0?.lowercased() })
+        let webPKIEndpoints = WebPKIEndpoint.keys(for: credential?.publicURL)
         return GameDownloader(client: client, cache: cache,
-                              trust: { PinnedCertificateDelegate.disposition(for: $0, pin: pin, webPKIHosts: webPKIHosts) })
+                              trust: { PinnedCertificateDelegate.disposition(for: $0, pin: pin, webPKIEndpoints: webPKIEndpoints) })
     }
 
     private func apply(_ games: [GameSummary]) {
@@ -376,8 +376,8 @@ final class ServerSession {
 
     private func session(pin: String?) -> URLSession {
         if let urlSession { return urlSession }
-        let webPKIHosts = Set([credential?.publicURL?.host].compactMap { $0?.lowercased() })
-        let delegate = PinnedCertificateDelegate(certificateSHA256: pin, webPKIHosts: webPKIHosts)
+        let webPKIEndpoints = WebPKIEndpoint.keys(for: credential?.publicURL)
+        let delegate = PinnedCertificateDelegate(certificateSHA256: pin, webPKIEndpoints: webPKIEndpoints)
         let session = URLSession(configuration: Self.configuration, delegate: delegate, delegateQueue: nil)
         if credential != nil {
             urlSession = session

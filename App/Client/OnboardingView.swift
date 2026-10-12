@@ -275,7 +275,7 @@ struct OnboardingView: View {
             let client = APIClient(baseURL: endpoint, token: nil,
                                    session: PinnedCertificateDelegate.session(
                                     certificateSHA256: fingerprint,
-                                    webPKIHosts: Set([publicURL?.host].compactMap { $0?.lowercased() })))
+                                    webPKIEndpoints: WebPKIEndpoint.keys(for: publicURL)))
             let created = try await client.createPairRequest(PairRequestCreate(
                 deviceName: pairingDeviceName, platform: pairingPlatform, claimHash: claimHash))
             guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
@@ -421,8 +421,8 @@ struct OnboardingView: View {
     }
 
     private func publicHealth(at url: URL) async -> HealthResponse? {
-        guard let host = url.host?.lowercased() else { return nil }
-        let session = PinnedCertificateDelegate.session(certificateSHA256: nil, webPKIHosts: [host])
+        let session = PinnedCertificateDelegate.session(certificateSHA256: nil,
+                                                        webPKIEndpoints: WebPKIEndpoint.keys(for: url))
         defer { session.finishTasksAndInvalidate() }
         return try? await APIClient(baseURL: url, token: nil, session: session).health()
     }

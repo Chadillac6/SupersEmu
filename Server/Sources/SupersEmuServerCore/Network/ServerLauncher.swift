@@ -45,10 +45,7 @@ public enum ServerLauncher {
         let urls = options.advertiseURLs.isEmpty
             ? LocalNetwork.advertisedURLs(scheme: scheme, port: options.port, tailscaleHost: options.tailscaleHost)
             : options.advertiseURLs
-        let publicAccess = options.publicAccess ?? {
-            guard let publicURL = options.publicURL else { return nil }
-            return try? PublicAccessConfiguration(enabled: true, publicURL: publicURL, listenPort: options.publicPort ?? 8489)
-        }()
+        let publicAccess = options.publicAccess
         let environment = PairingEnvironment(urls: urls, certificateSHA256: pin, publicURL: publicAccess?.publicURL)
         let metadata = options.metadata ? MetadataService.standard(store: store) : nil
         let pairing = PairingServices(store: store)
@@ -71,6 +68,20 @@ public enum ServerLauncher {
 
     public static let publicListenHost = "127.0.0.1"
 
+    static func resolvePublicAccess(root: URL, options: ServerRunOptions, logger: Logger) -> ServerRunOptions {
+        var resolved = options
+        do {
+            resolved.publicAccess = try PublicAccessConfiguration.load(
+                root: root, publicURL: options.publicURL, listenPort: options.publicPort)
+        } catch {
+            resolved.publicAccess = nil
+            resolved.publicURL = nil
+            resolved.publicPort = nil
+            logger.warning("Ignoring invalid public-access.json or public access override; public listener disabled")
+        }
+        return resolved
+    }
+
     /// Runs until SIGTERM/SIGINT. The launch daemon calls this. Also runs the daily backup, and for a restore stops
     /// serving, closes the database, restores and starts serving again from the restored data.
     public static func run(store initial: ServerStore, options: ServerRunOptions) async throws {
@@ -78,13 +89,7 @@ public enum ServerLauncher {
         var logger = Logger(label: "supersemu-server")
         logger.logLevel = .info
         var options = options
-        do {
-            options.publicAccess = try PublicAccessConfiguration.load(
-                root: store.paths.root, publicURL: options.publicURL, listenPort: options.publicPort)
-        } catch {
-            options.publicAccess = nil
-            logger.warning("Ignoring invalid public-access.json or public access override; public listener disabled")
-        }
+        options = resolvePublicAccess(root: store.paths.root, options: options, logger: logger)
         while true {
             let (application, publicApplication, environment) = try makeApplication(store: store, options: options)
             PairingEnvironment.current = environment
