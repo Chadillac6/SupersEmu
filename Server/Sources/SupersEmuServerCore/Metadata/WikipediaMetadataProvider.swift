@@ -20,7 +20,7 @@ public actor WikipediaMetadataProvider: MetadataProvider {
         guard let data = try await http.get(Self.searchURL(title: title, system: game.system)) else { return .unmatched }
         let results = try JSONDecoder().decode(SearchResponse.self, from: data).query?.search.map(\.title) ?? []
         for page in Self.candidates(results, title: title).prefix(2) {
-            guard let data = try await http.get(Self.summaryURL(page)) else { continue }
+            guard let summaryURL = Self.summaryURL(page), let data = try await http.get(summaryURL) else { continue }
             let summary = try JSONDecoder().decode(Summary.self, from: data)
             guard summary.type == "standard", summary.description?.lowercased().contains("game") == true else { continue }
             let pageURL = summary.content_urls?.desktop?.page ?? "https://en.wikipedia.org/wiki/" + Self.encodedTitle(page)
@@ -60,7 +60,7 @@ public actor WikipediaMetadataProvider: MetadataProvider {
         return components.url!
     }
 
-    static func summaryURL(_ page: String) -> URL { URL(string: summaryBase + encodedTitle(page))! }
+    static func summaryURL(_ page: String) -> URL? { URL(string: summaryBase + encodedTitle(page)) }
 
     static func extractURL(_ page: String) -> URL {
         var components = URLComponents(url: api, resolvingAgainstBaseURL: false)!

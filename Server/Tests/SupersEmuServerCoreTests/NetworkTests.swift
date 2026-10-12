@@ -1,8 +1,9 @@
 import Foundation
 import Hummingbird
 import NIOCore
+import Network
 import Security
-import SupersEmuKit
+@testable import SupersEmuKit
 @testable import SupersEmuServerCore
 import XCTest
 
@@ -169,6 +170,9 @@ final class NetworkTests: XCTestCase {
         XCTAssertEqual(txt["fp"], "abcd")
         XCTAssertEqual(SupersEmuBonjour.url(scheme: "https", host: "fe80::1%en0", port: 8487)?.absoluteString, "https://[fe80::1]:8487")
         XCTAssertEqual(SupersEmuBonjour.url(scheme: "https", host: "192.168.1.2", port: 8487)?.absoluteString, "https://192.168.1.2:8487")
+        XCTAssertEqual(SupersEmuBonjour.url(scheme: "https", host: "mini.local", port: 8487)?.absoluteString, "https://mini.local:8487")
+        XCTAssertEqual(SupersEmuBonjour.url(scheme: "https", host: "[2001:db8::1]", port: 8487)?.absoluteString,
+                       "https://[2001:db8::1]:8487")
 
         let discovered = DiscoveredServer(name: "Mini", txt: txt, endpoint: .hostPort(host: "localhost", port: 1))
         XCTAssertTrue(discovered.matches(ServerProfile(serverName: "Mini", urls: [], certificateSHA256: "abcd")))
@@ -268,6 +272,36 @@ extension NetworkTests {
             XCTFail("resolved a service that doesn't exist")
         } catch {}
         XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+    }
+
+    func testBonjourResolveOutcomeWaitsForReadyAndRejectsLinkLocalIPv6() throws {
+        let waitingError = NWError.posix(.ENETUNREACH)
+        if case .keepWaiting(let error) = ResolveOutcome.next(
+            state: .waiting(waitingError), remoteEndpoint: nil, scheme: "https"
+        ) {
+            XCTAssertEqual(error, waitingError)
+        } else {
+            XCTFail("waiting must keep resolving")
+        }
+
+        let failedError = NWError.posix(.ECONNREFUSED)
+        if case .failed(let error) = ResolveOutcome.next(
+            state: .failed(failedError), remoteEndpoint: nil, scheme: "https"
+        ) {
+            XCTAssertEqual(error as? NWError, failedError)
+        } else {
+            XCTFail("failed must be final")
+        }
+
+        let linkLocal = NWEndpoint.hostPort(
+            host: .ipv6(IPv6Address("fe80::1")!),
+            port: NWEndpoint.Port(rawValue: 8487)!
+        )
+        if case .failed(let error) = ResolveOutcome.next(state: .ready, remoteEndpoint: linkLocal, scheme: "https") {
+            XCTAssertEqual((error as? URLError)?.code, .cannotFindHost)
+        } else {
+            XCTFail("link-local IPv6 must not be returned without its interface scope")
+        }
     }
 }
 

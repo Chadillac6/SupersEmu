@@ -28,7 +28,7 @@ public actor SteamGridDBMetadataProvider: MetadataProvider {
     public func lookup(_ game: MetadataLookup) async throws -> MetadataLookupResult {
         guard let key = key() else { return .unavailable }
         let title = CanonicalName.title(game.title)
-        guard let data = try await get(Self.searchURL(title), key: key) else { return .unmatched }
+        guard let searchURL = Self.searchURL(title), let data = try await get(searchURL, key: key) else { return .unmatched }
         guard let match = try JSONDecoder().decode(Response<[SearchResult]>.self, from: data).data?
             .first(where: { TitleMatch.same($0.name, title) }) else { return .unmatched }
         var urls: [ArtworkKind: URL] = [:]
@@ -57,10 +57,11 @@ public actor SteamGridDBMetadataProvider: MetadataProvider {
         return try await http.send(request)
     }
 
-    static func searchURL(_ title: String) -> URL {
+    static func searchURL(_ title: String) -> URL? {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._~")
-        return URL(string: api + "search/autocomplete/" + (title.addingPercentEncoding(withAllowedCharacters: allowed) ?? title))!
+        guard let encodedTitle = title.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        return URL(string: api + "search/autocomplete/" + encodedTitle)
     }
 
     static func imagesURL(_ path: String, gameID: Int, mimes: String) -> URL {
