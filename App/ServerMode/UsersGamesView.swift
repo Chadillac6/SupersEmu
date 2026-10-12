@@ -36,13 +36,13 @@ struct UsersGamesView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("Users & Games")
-        .task { if model.users.isEmpty { await model.refresh() } }
+        .task { await model.refresh() }
         .sheet(isPresented: $showingAddFriend) {
             AddFriendSheet { name in try await model.createFriend(displayName: name) }
         }
         .sheet(isPresented: $showingRename) {
             if let user = model.selectedUser {
-                RenameFriendSheet(name: user.displayName) { name in await model.renameSelectedUser(displayName: name) }
+                RenameFriendSheet(name: user.displayName) { name in try await model.renameSelectedUser(displayName: name) }
             }
         }
         .sheet(isPresented: $showingInvite) {
@@ -294,20 +294,27 @@ private struct AddFriendSheet: View {
 private struct RenameFriendSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State var name: String
-    let rename: (String) async -> Void
+    @State private var error: String?
+    let rename: (String) async throws -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Rename Friend").font(.title2.weight(.semibold))
             TextField("Name", text: $name).textFieldStyle(.roundedBorder)
+            if let error { Text(error).font(.callout).foregroundStyle(.red) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
-                Button("Save") { Task { await rename(name); dismiss() } }.buttonStyle(.borderedProminent)
+                Button("Save") { Task { await submit() } }.buttonStyle(.borderedProminent)
             }
         }
         .padding(22)
         .frame(width: 360)
+    }
+
+    private func submit() async {
+        do { try await rename(name); dismiss() }
+        catch { self.error = LibraryManagerModel.describe(error) }
     }
 }
 
