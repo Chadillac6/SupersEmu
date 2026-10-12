@@ -5,6 +5,9 @@ struct PlayerView: View {
     @State var session: GameSession
     let onExit: () -> Void
     @Environment(\.scenePhase) private var scenePhase
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
 
     var body: some View {
         ZStack {
@@ -78,7 +81,12 @@ struct PlayerView: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: 16) {
+        #if os(iOS)
+        let compact = horizontalSizeClass == .compact
+        #else
+        let compact = false
+        #endif
+        return HStack(spacing: compact ? 8 : 16) {
             Button {
                 session.stop()
                 onExit()
@@ -94,6 +102,8 @@ struct PlayerView: View {
                 .minimumScaleFactor(0.75)
                 .multilineTextAlignment(.center)
                 .truncationMode(.tail)
+                .layoutPriority(compact ? 1 : 0)
+                .frame(minWidth: compact ? 44 : 0, alignment: .center)
                 .foregroundStyle(.white.opacity(0.7))
                 .accessibilityIdentifier("session-status")
             Spacer()
@@ -215,7 +225,7 @@ struct InGameMenu: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(index == session.menuSelection ? .isSelected : [])
-                    .accessibilityIdentifier("menu-\(item.rawValue)")
+                    .accessibilityIdentifier(item == .restart ? "menu-restart" : "menu-\(item.rawValue)")
                 }
             }
             HStack {
@@ -233,6 +243,15 @@ struct InGameMenu: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("in-game-menu")
+        .confirmationDialog("Restart the game?", isPresented: $session.isConfirmingRestart, titleVisibility: .visible) {
+            Button("Restart", role: .destructive) {
+                session.restart()
+                session.closeMenu()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Unsaved progress since your last in-game save will be lost. In-game saves are kept.")
+        }
     }
 }
 

@@ -85,6 +85,8 @@ FOUNDATION_EXPORT NSString *const SECoreIDMupen64PlusNext;
 
 - (void)runFrame;
 - (void)runFrames:(NSInteger)count;
+/// Resets the loaded core and clears held joypad and analog input.
+- (void)reset;
 
 /// Current frame as an XRGB8888 image, or NULL before the first frame.
 - (nullable CGImageRef)copyFrameImage CF_RETURNS_RETAINED;

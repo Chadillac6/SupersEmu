@@ -13,6 +13,7 @@ struct LibraryView: View {
     #endif
     @AppStorage("home.system") private var selectedSystem = ""
     let onPlay: (Game) -> Void
+    let onStartFresh: (Game) -> Void
     @State private var isImporting = false
     @State private var isConnecting = false
     @State private var selected: LibraryItem?
@@ -120,7 +121,7 @@ struct LibraryView: View {
                 if case .success(let urls) = result { library.importFiles(urls) }
             }
             .sheet(item: $selected) { item in
-                NavigationStack { GameDetailView(item: liveItem(item), onPlay: onPlay) }
+                NavigationStack { GameDetailView(item: liveItem(item), onPlay: onPlay, onStartFresh: onStartFresh) }
                     .environment(server)
                     .environment(downloads)
                     .environment(bios)

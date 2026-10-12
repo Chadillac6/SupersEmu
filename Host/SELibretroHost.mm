@@ -714,6 +714,12 @@ static __weak SELibretroHost *gActiveHost;
     for (NSInteger i = 0; i < count; i++) [self runFrame];
 }
 
+- (void)reset {
+    if (!_loaded) return;
+    resetInput();
+    g.core->reset();
+}
+
 - (NSInteger)diskCount {
     return _loaded && g.disk.get_num_images ? NSInteger(g.disk.get_num_images()) : 0;
 }

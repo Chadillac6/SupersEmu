@@ -24,6 +24,7 @@ final class GameSession {
     /// The in-game menu (Select+Start held 1 s, long-press Home/Guide, or the Menu button) is open; the game is paused.
     private(set) var isMenuOpen = false
     var menuSelection = 0
+    var isConfirmingRestart = false
     var isShowingControls = false
     /// Set when the player picks "Exit to Library" from the in-game menu.
     private(set) var wantsExit = false
@@ -46,6 +47,7 @@ final class GameSession {
     /// The chord opens the picker only after it has been released since it last fired.
     @ObservationIgnored private var chordArmed = true
     @ObservationIgnored private var hotkeyHeldSince: ContinuousClock.Instant?
+    @ObservationIgnored private let startFresh: Bool
     /// False after the menu opens until the hotkey is released, so a still-held hotkey doesn't reopen it.
     @ObservationIgnored private var hotkeyArmed = true
     @ObservationIgnored private var overlayTimer: Timer?
@@ -54,8 +56,9 @@ final class GameSession {
 
     private static let autosaveInterval = Duration.seconds(30)
 
-    init(game: Game, sync: SaveSync? = nil) {
+    init(game: Game, startFresh: Bool = false, sync: SaveSync? = nil) {
         self.game = game
+        self.startFresh = startFresh
         self.sync = sync ?? .shared
         hasManualState = FileManager.default.fileExists(atPath: AppPaths.manualState(for: game.id).path)
         input.layout = ConsoleLayout.forSystem(Self.system(for: game))
@@ -113,15 +116,19 @@ final class GameSession {
         isSyncing = false
         guard !Task.isCancelled, self.host === host else { return }
         hasManualState = FileManager.default.fileExists(atPath: AppPaths.manualState(for: game.id).path)
-        status = pulled ?? ""
-        let autoState = AppPaths.autoState(for: game.id)
-        if FileManager.default.fileExists(atPath: autoState.path) {
-            do {
-                try host.loadState(from: autoState)
-                status = pulled ?? "Resumed where you left off"
-            } catch {
-                preserveIncompatibleState(at: autoState)
-                status = "Couldn't resume; old save kept, started fresh"
+        if startFresh {
+            status = "Started over"
+        } else {
+            status = pulled ?? ""
+            let autoState = AppPaths.autoState(for: game.id)
+            if FileManager.default.fileExists(atPath: autoState.path) {
+                do {
+                    try host.loadState(from: autoState)
+                    status = pulled ?? "Resumed where you left off"
+                } catch {
+                    preserveIncompatibleState(at: autoState)
+                    status = "Couldn't resume; old save kept, started fresh"
+                }
             }
         }
         host.audioEnabled = true
@@ -310,6 +317,15 @@ final class GameSession {
         }
     }
 
+    func restart() {
+        guard let host, hasStarted else { return }
+        #if os(macOS)
+        input.releaseAll()
+        #endif
+        host.reset()
+        status = "Restarted"
+    }
+
     func discLabel(_ index: Int) -> String? { host?.label(forDisk: index) }
 
     private func clearHostInput() {
@@ -323,8 +339,8 @@ final class GameSession {
 
     // MARK: In-game menu
 
-    enum MenuItem: String, CaseIterable, Identifiable {
-        case resume = "Resume", save = "Save State", load = "Load State", swapDisc = "Swap Disc"
+    enum MenuItem: String, CaseIterable, Identifiable, Equatable {
+        case resume = "Resume", restart = "Restart Game", save = "Save State", load = "Load State", swapDisc = "Swap Disc"
         case controls = "Controls", exit = "Exit to Library"
         var id: String { rawValue }
     }
@@ -371,6 +387,7 @@ final class GameSession {
     func closeMenu() {
         guard isMenuOpen else { return }
         isMenuOpen = false
+        isConfirmingRestart = false
         isShowingControls = false
         if disconnectedController == nil { stopOverlayPolling() }
         resume()
@@ -380,6 +397,8 @@ final class GameSession {
         switch item {
         case .resume:
             closeMenu()
+        case .restart:
+            isConfirmingRestart = true
         case .save:
             saveManualState()
             closeMenu()
