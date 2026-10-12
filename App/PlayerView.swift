@@ -45,6 +45,10 @@ struct PlayerView: View {
             }
         }
         .foregroundStyle(.white)
+        #if os(iOS)
+        .defersSystemGestures(on: .all)
+        .persistentSystemOverlays(.hidden)
+        #endif
         .sheet(isPresented: $session.isShowingControls) {
             NavigationStack {
                 ControlsView(fixedSystem: session.input.layout.system, gameID: session.game.id, gameTitle: session.game.title)

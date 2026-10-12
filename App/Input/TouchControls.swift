@@ -1,45 +1,110 @@
 #if os(iOS)
-import simd
+import Observation
 import SwiftUI
+import UIKit
 
-/// On-screen pad for the running console. Controls press the console's default positions, so they work the same
-/// whatever a physical controller is remapped to.
+@MainActor
+@Observable
+private final class TouchPadModel {
+    var pressed: Set<String> = []
+    var stick = SIMD2<Float>.zero
+}
+
+@MainActor
 struct TouchControls: View {
     let input: GameInput
-    @State private var pressed: Set<String> = []
-    @State private var stick: SIMD2<Float> = .zero
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var model = TouchPadModel()
+    @State private var frames: [String: CGRect] = [:]
+    @State private var availableWidth: CGFloat = 375
 
-    var body: some View {
-        // Fits a 375-pt-wide portrait iPhone: 2 x 118 (pads) + 106 (pills) + 20 (padding).
-        Group {
-            switch input.layout.system {
-            case "n64": n64
-            case "genesis", "segacd", "sega32x": genesis
-            case "psx": psx
-            case "gb", "gbc", "gba": handheld
-            default: snes
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 12)
+    private static let coordinateSpace = "touch-controls"
+    private var isCompactPortrait: Bool {
+        horizontalSizeClass == .compact && verticalSizeClass != .compact
+    }
+    private var scale: CGFloat {
+        isCompactPortrait ? min(1.3, max(0.85, availableWidth / 375)) : 1
     }
 
-    private var snes: some View {
+    var body: some View {
+        Group {
+            if isCompactPortrait {
+                portraitLayout(scale: scale)
+            } else {
+                landscapeLayout
+            }
+        }
+        .padding(.horizontal, isCompactPortrait ? 0 : 10)
+        .padding(.vertical, isCompactPortrait ? 8 : 12)
+        .frame(maxWidth: .infinity)
+        .coordinateSpace(name: Self.coordinateSpace)
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { availableWidth = geometry.size.width }
+                    .onChange(of: geometry.size.width) { _, width in availableWidth = width }
+            }
+        }
+        .overlay {
+            TouchPadSurface(input: input, model: model, zones: touchZones)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onPreferenceChange(TouchZoneFramesKey.self) { frames = $0 }
+    }
+
+    private var touchZones: [TouchZone] {
+        frames.compactMap { entry in
+            let (id, frame) = entry
+            guard !["Up", "Down", "Left", "Right"].contains(id) else { return nil }
+            let kind: TouchZone.Kind
+            switch id {
+            case "DPad": kind = .dpad
+            case "Stick": kind = .stick
+            default: kind = .button
+            }
+            return TouchZone(id: id, frame: frame, kind: kind)
+        }
+    }
+
+    @ViewBuilder
+    private var landscapeLayout: some View {
+        switch input.layout.system {
+        case "n64": legacyN64
+        case "genesis", "segacd", "sega32x": legacyGenesis
+        case "psx": legacyPSX
+        case "gb", "gbc", "gba": legacyHandheld
+        default: legacySNES
+        }
+    }
+
+    @ViewBuilder
+    private func portraitLayout(scale: CGFloat) -> some View {
+        switch input.layout.system {
+        case "n64": n64Portrait(scale: scale)
+        case "genesis", "segacd", "sega32x": genesisPortrait(scale: scale)
+        case "psx": psxPortrait(scale: scale)
+        case "gb", "gbc", "gba": handheldPortrait(scale: scale)
+        default: snesPortrait(scale: scale)
+        }
+    }
+
+    private var legacySNES: some View {
         HStack(alignment: .center, spacing: 0) {
-            dpad
+            legacyDpad()
             Spacer(minLength: 0)
             VStack(spacing: 10) {
                 HStack(spacing: 6) { pill("L"); pill("R") }
                 HStack(spacing: 6) { pill("Select"); pill("Start") }
             }
             Spacer(minLength: 0)
-            diamond(top: "X", left: "Y", right: "A", bottom: "B")
+            legacyDiamond(top: "X", left: "Y", right: "A", bottom: "B")
         }
     }
 
-    private var handheld: some View {
+    private var legacyHandheld: some View {
         HStack(alignment: .center, spacing: 0) {
-            dpad
+            legacyDpad()
             Spacer(minLength: 0)
             VStack(spacing: 10) {
                 if input.layout.system == "gba" { HStack(spacing: 6) { pill("L"); pill("R") } }
@@ -50,9 +115,9 @@ struct TouchControls: View {
         }
     }
 
-    private var genesis: some View {
+    private var legacyGenesis: some View {
         HStack(alignment: .center, spacing: 0) {
-            dpad
+            legacyDpad()
             Spacer(minLength: 0)
             HStack(spacing: 6) { pill("Mode"); pill("Start") }
             Spacer(minLength: 0)
@@ -64,9 +129,9 @@ struct TouchControls: View {
         }
     }
 
-    private var psx: some View {
+    private var legacyPSX: some View {
         HStack(alignment: .center, spacing: 0) {
-            dpad
+            legacyDpad()
             Spacer(minLength: 0)
             VStack(spacing: 8) {
                 HStack(spacing: 6) { pill("L1"); pill("R1") }
@@ -74,49 +139,159 @@ struct TouchControls: View {
                 HStack(spacing: 6) { pill("Select"); pill("Start") }
             }
             Spacer(minLength: 0)
-            diamond(top: "Triangle", left: "Square", right: "Circle", bottom: "Cross",
-                    labels: ["Triangle": "△", "Square": "□", "Circle": "○", "Cross": "✕"])
+            legacyDiamond(top: "Triangle", left: "Square", right: "Circle", bottom: "Cross",
+                          labels: ["Triangle": "△", "Square": "□", "Circle": "○", "Cross": "✕"])
         }
     }
 
-    private var n64: some View {
+    private var legacyN64: some View {
         HStack(alignment: .center, spacing: 0) {
             VStack(spacing: 8) {
                 pill("Z")
-                AnalogStick(value: $stick) { setStick($0) }
-                    .accessibilityIdentifier("pad-Stick")
+                analogStick(radius: 46)
             }
             .frame(width: 118)
             Spacer(minLength: 0)
             VStack(spacing: 8) {
                 HStack(spacing: 6) { pill("L"); pill("R") }
                 pill("Start")
-                dpad(size: 26)
+                legacyDpad(size: 26)
             }
             Spacer(minLength: 0)
             VStack(spacing: 4) {
-                VStack(spacing: 0) {
-                    pad("C-Up", label: "▲", size: 30)
-                    HStack(spacing: 26) { pad("C-Left", label: "◀", size: 30); pad("C-Right", label: "▶", size: 30) }
-                    pad("C-Down", label: "▼", size: 30)
-                }
+                cButtonCross(size: 30, scale: 1)
                 HStack(spacing: 10) { pad("B").offset(y: -8); pad("A").offset(y: 8) }
             }
             .frame(width: 118)
         }
     }
 
-    private var dpad: some View { dpad(size: 44) }
+    private func snesPortrait(scale: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            portraitDpad(scale: scale)
+            Spacer(minLength: 0)
+            VStack(spacing: 6 * scale) {
+                pill("L", width: 64 * scale, height: 32 * scale)
+                pill("R", width: 64 * scale, height: 32 * scale)
+                pill("Select", width: 64 * scale, height: 32 * scale)
+                pill("Start", width: 64 * scale, height: 32 * scale)
+            }
+            Spacer(minLength: 0)
+            portraitDiamond(top: "X", left: "Y", right: "A", bottom: "B", scale: scale)
+        }
+    }
 
-    private func dpad(size: CGFloat) -> some View {
+    private func handheldPortrait(scale: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            portraitDpad(scale: scale)
+            Spacer(minLength: 0)
+            VStack(spacing: 6 * scale) {
+                if input.layout.system == "gba" {
+                    pill("L", width: 64 * scale, height: 32 * scale)
+                    pill("R", width: 64 * scale, height: 32 * scale)
+                }
+                pill("Select", width: 64 * scale, height: 32 * scale)
+                pill("Start", width: 64 * scale, height: 32 * scale)
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 8 * scale) {
+                pad("B", size: 62 * scale).offset(y: 12 * scale)
+                pad("A", size: 62 * scale).offset(y: -12 * scale)
+            }
+        }
+    }
+
+    private func psxPortrait(scale: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            portraitDpad(scale: scale)
+            Spacer(minLength: 0)
+            VStack(spacing: 6 * scale) {
+                pill("L1", width: 64 * scale, height: 32 * scale)
+                pill("R1", width: 64 * scale, height: 32 * scale)
+                pill("L2", width: 64 * scale, height: 32 * scale)
+                pill("R2", width: 64 * scale, height: 32 * scale)
+                pill("Select", width: 64 * scale, height: 32 * scale)
+                pill("Start", width: 64 * scale, height: 32 * scale)
+            }
+            Spacer(minLength: 0)
+            portraitDiamond(top: "Triangle", left: "Square", right: "Circle", bottom: "Cross",
+                            labels: ["Triangle": "△", "Square": "□", "Circle": "○", "Cross": "✕"], scale: scale)
+        }
+    }
+
+    private func genesisPortrait(scale: CGFloat) -> some View {
+        VStack(spacing: 6 * scale) {
+            HStack(spacing: 0) {
+                portraitDpad(scale: scale)
+                Spacer(minLength: 0)
+                VStack(spacing: 4 * scale) {
+                    HStack(spacing: 4 * scale) {
+                        pad("X", size: 62 * scale); pad("Y", size: 62 * scale); pad("Z", size: 62 * scale)
+                    }
+                    HStack(spacing: 4 * scale) {
+                        pad("A", size: 62 * scale); pad("B", size: 62 * scale); pad("C", size: 62 * scale)
+                    }
+                }
+            }
+            HStack(spacing: 8 * scale) {
+                pill("Mode", width: 64 * scale, height: 32 * scale)
+                pill("Start", width: 64 * scale, height: 32 * scale)
+            }
+        }
+    }
+
+    private func n64Portrait(scale: CGFloat) -> some View {
+        VStack(spacing: 6 * scale) {
+            HStack(spacing: 0) {
+                portraitDpad(scale: scale)
+                Spacer(minLength: 0)
+                VStack(spacing: 6 * scale) {
+                    pill("L", width: 64 * scale, height: 32 * scale)
+                    pill("R", width: 64 * scale, height: 32 * scale)
+                    pill("Start", width: 64 * scale, height: 32 * scale)
+                }
+                Spacer(minLength: 0)
+                cButtonCross(size: 52 * scale, scale: scale)
+            }
+            HStack(spacing: 0) {
+                VStack(spacing: 6 * scale) {
+                    pill("Z", width: 64 * scale, height: 32 * scale)
+                    analogStick(radius: 60 * scale)
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 10 * scale) {
+                    pad("B", size: 62 * scale).offset(y: -8 * scale)
+                    pad("A", size: 62 * scale).offset(y: 8 * scale)
+                }
+            }
+        }
+    }
+
+    private func portraitDpad(scale: CGFloat) -> some View {
+        let diameter = 156 * scale
+        let button = 56 * scale
+        return ZStack {
+            Circle().fill(.white.opacity(0.08)).frame(width: diameter, height: diameter)
+            pad("Up", label: "▲", size: button).position(x: diameter / 2, y: button / 2 + 2 * scale)
+            pad("Down", label: "▼", size: button).position(x: diameter / 2, y: diameter - button / 2 - 2 * scale)
+            pad("Left", label: "◀", size: button).position(x: button / 2 + 2 * scale, y: diameter / 2)
+            pad("Right", label: "▶", size: button).position(x: diameter - button / 2 - 2 * scale, y: diameter / 2)
+        }
+        .frame(width: diameter, height: diameter)
+        .background(zoneFrame("DPad"))
+    }
+
+    private func legacyDpad(size: CGFloat = 44) -> some View {
         VStack(spacing: 2) {
             pad("Up", label: "▲", size: size)
             HStack(spacing: size * 0.68) { pad("Left", label: "◀", size: size); pad("Right", label: "▶", size: size) }
             pad("Down", label: "▼", size: size)
         }
+        .background(zoneFrame("DPad"))
     }
 
-    private func diamond(top: String, left: String, right: String, bottom: String, labels: [String: String] = [:]) -> some View {
+    private func legacyDiamond(top: String, left: String, right: String, bottom: String,
+                               labels: [String: String] = [:]) -> some View {
         VStack(spacing: 2) {
             pad(top, label: labels[top] ?? top)
             HStack(spacing: 30) { pad(left, label: labels[left] ?? left); pad(right, label: labels[right] ?? right) }
@@ -124,73 +299,189 @@ struct TouchControls: View {
         }
     }
 
+    private func portraitDiamond(top: String, left: String, right: String, bottom: String,
+                                 labels: [String: String] = [:], scale: CGFloat) -> some View {
+        VStack(spacing: 2 * scale) {
+            pad(top, label: labels[top] ?? top, size: 62 * scale)
+            HStack(spacing: 10 * scale) {
+                pad(left, label: labels[left] ?? left, size: 62 * scale)
+                pad(right, label: labels[right] ?? right, size: 62 * scale)
+            }
+            pad(bottom, label: labels[bottom] ?? bottom, size: 62 * scale)
+        }
+    }
+
+    private func cButtonCross(size: CGFloat, scale: CGFloat) -> some View {
+        VStack(spacing: 2 * scale) {
+            pad("C-Up", label: "▲", size: size)
+            HStack(spacing: 12 * scale) {
+                pad("C-Left", label: "◀", size: size)
+                pad("C-Right", label: "▶", size: size)
+            }
+            pad("C-Down", label: "▼", size: size)
+        }
+    }
+
     private func pad(_ control: String, label: String? = nil, size: CGFloat = 44) -> some View {
         Circle()
-            .fill(.white.opacity(pressed.contains(control) ? 0.45 : 0.18))
+            .fill(.white.opacity(model.pressed.contains(control) ? 0.45 : 0.18))
             .frame(width: size, height: size)
             .overlay(Text(label ?? control).font(size < 40 ? .subheadline.bold() : .headline))
-            .gesture(press(control))
+            .background(zoneFrame(control))
             .accessibilityIdentifier("pad-\(control)")
     }
 
-    private func pill(_ control: String) -> some View {
+    private func pill(_ control: String, width: CGFloat = 50, height: CGFloat = 28) -> some View {
         Capsule()
-            .fill(.white.opacity(pressed.contains(control) ? 0.45 : 0.18))
-            .frame(width: 50, height: 28)
-            .overlay(Text(control).font(.caption.bold()))
-            .gesture(press(control))
+            .fill(.white.opacity(model.pressed.contains(control) ? 0.45 : 0.18))
+            .frame(width: width, height: height)
+            .overlay(Text(control).font(.caption.bold()).lineLimit(1).minimumScaleFactor(0.7))
+            .background(zoneFrame(control))
             .accessibilityIdentifier("pad-\(control)")
     }
 
-    private func press(_ control: String) -> some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { _ in set(control, pressed: true) }
-            .onEnded { _ in set(control, pressed: false) }
+    private func analogStick(radius: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .fill(.white.opacity(0.12))
+                .frame(width: radius * 2, height: radius * 2)
+            Circle()
+                .fill(.white.opacity(model.pressed.contains("Stick") ? 0.45 : 0.25))
+                .frame(width: radius * 0.72, height: radius * 0.72)
+                .offset(x: CGFloat(model.stick.x) * radius, y: -CGFloat(model.stick.y) * radius)
+        }
+        .frame(width: radius * 2, height: radius * 2)
+        .background(zoneFrame("Stick"))
+        .accessibilityIdentifier("pad-Stick")
     }
 
-    private func set(_ control: String, pressed isPressed: Bool) {
-        if isPressed { pressed.insert(control) } else { pressed.remove(control) }
-        sync()
-    }
-
-    private func setStick(_ value: SIMD2<Float>) {
-        stick = value
-        sync()
-    }
-
-    private func sync() {
-        let layout = input.layout
-        input.touchState = PadState(pressed: Set(pressed.compactMap { layout.control($0)?.defaultInput }), leftStick: stick)
+    private func zoneFrame(_ id: String) -> some View {
+        GeometryReader { geometry in
+            Color.clear.preference(
+                key: TouchZoneFramesKey.self,
+                value: [id: geometry.frame(in: .named(Self.coordinateSpace))]
+            )
+        }
     }
 }
 
-/// Drag-anywhere analog stick; reports -1...1 with +y up and springs back on release.
-private struct AnalogStick: View {
-    @Binding var value: SIMD2<Float>
-    let onChange: (SIMD2<Float>) -> Void
-    private let radius: CGFloat = 46
+private struct TouchZoneFramesKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
 
-    var body: some View {
-        Circle()
-            .fill(.white.opacity(0.12))
-            .frame(width: radius * 2, height: radius * 2)
-            .overlay(
-                Circle()
-                    .fill(.white.opacity(value == .zero ? 0.25 : 0.45))
-                    .frame(width: 42, height: 42)
-                    .offset(x: CGFloat(value.x) * radius, y: -CGFloat(value.y) * radius)
-            )
-            .contentShape(Circle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { drag in
-                        var vector = SIMD2<Float>(Float(drag.location.x - radius), Float(radius - drag.location.y)) / Float(radius)
-                        let length = simd_length(vector)
-                        if length > 1 { vector /= length }
-                        onChange(vector)
-                    }
-                    .onEnded { _ in onChange(.zero) }
-            )
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+@MainActor
+private struct TouchPadSurface: UIViewRepresentable {
+    let input: GameInput
+    let model: TouchPadModel
+    let zones: [TouchZone]
+
+    func makeUIView(context: Context) -> TouchPadSurfaceView {
+        let view = TouchPadSurfaceView()
+        view.configure(input: input, model: model, zones: zones)
+        return view
+    }
+
+    func updateUIView(_ view: TouchPadSurfaceView, context: Context) {
+        view.configure(input: input, model: model, zones: zones)
+    }
+}
+
+@MainActor
+private final class TouchPadSurfaceView: UIView {
+    private struct ActiveTouch {
+        var point: CGPoint
+        let ownsStick: Bool
+    }
+
+    private var input: GameInput?
+    private var model: TouchPadModel?
+    private var zones: [TouchZone] = []
+    private var activeTouches: [ObjectIdentifier: ActiveTouch] = [:]
+    private var touchOrder: [ObjectIdentifier] = []
+    private let feedback = UIImpactFeedbackGenerator(style: .light)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isMultipleTouchEnabled = true
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    func configure(input: GameInput, model: TouchPadModel, zones: [TouchZone]) {
+        self.input = input
+        self.model = model
+        self.zones = zones
+        updateState()
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        feedback.prepare()
+        for touch in touches {
+            let identifier = ObjectIdentifier(touch)
+            let point = touch.location(in: self)
+            activeTouches[identifier] = ActiveTouch(point: point, ownsStick: TouchZones.stickZone(at: point, zones: zones) != nil)
+            touchOrder.append(identifier)
+        }
+        updateState()
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        for touch in touches {
+            let identifier = ObjectIdentifier(touch)
+            activeTouches[identifier]?.point = touch.location(in: self)
+        }
+        updateState()
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        remove(touches)
+        updateState()
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        remove(touches)
+        updateState()
+    }
+
+    private func remove(_ touches: Set<UITouch>) {
+        for touch in touches {
+            let identifier = ObjectIdentifier(touch)
+            activeTouches.removeValue(forKey: identifier)
+            touchOrder.removeAll { $0 == identifier }
+        }
+    }
+
+    private func updateState() {
+        guard let input, let model else { return }
+        var pressed = Set<String>()
+        var stick = SIMD2<Float>.zero
+        for identifier in touchOrder {
+            guard let touch = activeTouches[identifier] else { continue }
+            if touch.ownsStick {
+                pressed.insert("Stick")
+                if stick == .zero, let zone = zones.first(where: { $0.kind == .stick }) {
+                    stick = TouchZones.stickVector(at: touch.point, zone: zone)
+                }
+            } else {
+                pressed.formUnion(TouchZones.controls(at: touch.point, zones: zones).subtracting(["Stick"]))
+            }
+        }
+        let newlyPressed = pressed.subtracting(model.pressed)
+        let padInputs = Set(pressed.compactMap { input.layout.control($0)?.defaultInput })
+        input.touchState = PadState(pressed: padInputs, leftStick: stick)
+        model.pressed = pressed
+        model.stick = stick
+        for _ in newlyPressed {
+            feedback.impactOccurred()
+            feedback.prepare()
+        }
     }
 }
 #endif

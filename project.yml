@@ -892,6 +892,7 @@ targets:
     sources:
       - Tests/InputTests
       - App/Input/PadInput.swift
+      - App/Input/TouchZones.swift
       - App/Input/ConsoleLayout.swift
       - App/Input/InputMapping.swift
       - App/Input/HIDReport.swift
