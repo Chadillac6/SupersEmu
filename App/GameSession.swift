@@ -24,6 +24,7 @@ final class GameSession {
     /// The in-game menu (Select+Start held 1 s, long-press Home/Guide, or the Menu button) is open; the game is paused.
     private(set) var isMenuOpen = false
     var menuSelection = 0
+    var isConfirmingRestart = false
     var isShowingControls = false
     /// Set when the player picks "Exit to Library" from the in-game menu.
     private(set) var wantsExit = false
@@ -46,6 +47,8 @@ final class GameSession {
     /// The chord opens the picker only after it has been released since it last fired.
     @ObservationIgnored private var chordArmed = true
     @ObservationIgnored private var hotkeyHeldSince: ContinuousClock.Instant?
+    @ObservationIgnored private let startFresh: Bool
+    @ObservationIgnored private var needsFreshCheckpoint = false
     /// False after the menu opens until the hotkey is released, so a still-held hotkey doesn't reopen it.
     @ObservationIgnored private var hotkeyArmed = true
     @ObservationIgnored private var overlayTimer: Timer?
@@ -54,8 +57,9 @@ final class GameSession {
 
     private static let autosaveInterval = Duration.seconds(30)
 
-    init(game: Game, sync: SaveSync? = nil) {
+    init(game: Game, startFresh: Bool = false, sync: SaveSync? = nil) {
         self.game = game
+        self.startFresh = startFresh
         self.sync = sync ?? .shared
         hasManualState = FileManager.default.fileExists(atPath: AppPaths.manualState(for: game.id).path)
         input.layout = ConsoleLayout.forSystem(Self.system(for: game))
@@ -85,6 +89,7 @@ final class GameSession {
     private func launch() async {
         isSyncing = true
         status = "Checking for newer saves…"
+        let autoState = AppPaths.autoState(for: game.id)
         // Battery saves are read when the core loads the game, so they sync before the host exists.
         await pull([SaveSync.nativeFile(for: game.id)])
         guard !Task.isCancelled else { return }
@@ -109,19 +114,37 @@ final class GameSession {
         #endif
         let core = SaveCore(id: host.coreID, version: host.coreVersion)
         self.core = core
-        let pulled = await pull([SaveSync.autoFile(for: game.id, core: core), SaveSync.manualFile(for: game.id, core: core)])
+        let stateFiles = [SaveSync.manualFile(for: game.id, core: core)]
+        let pulled = await pull(startFresh
+            ? stateFiles
+            : [SaveSync.autoFile(for: game.id, core: core)] + stateFiles)
         isSyncing = false
         guard !Task.isCancelled, self.host === host else { return }
         hasManualState = FileManager.default.fileExists(atPath: AppPaths.manualState(for: game.id).path)
-        status = pulled ?? ""
-        let autoState = AppPaths.autoState(for: game.id)
-        if FileManager.default.fileExists(atPath: autoState.path) {
+        if startFresh {
             do {
-                try host.loadState(from: autoState)
-                status = pulled ?? "Resumed where you left off"
+                try AutoStateCheckpoint.moveAside(autoState)
             } catch {
-                preserveIncompatibleState(at: autoState)
-                status = "Couldn't resume; old save kept, started fresh"
+                host.shutdown()
+                self.host = nil
+                errorMessage = "Couldn't preserve the previous resume point: \(error.localizedDescription)"
+                startTask = nil
+                return
+            }
+            // If the app exits before this checkpoint, the old resume point can return on the next launch.
+            needsFreshCheckpoint = true
+            status = "Started over"
+        } else {
+            status = pulled ?? ""
+            let autoState = AppPaths.autoState(for: game.id)
+            if FileManager.default.fileExists(atPath: autoState.path) {
+                do {
+                    try host.loadState(from: autoState)
+                    status = pulled ?? "Resumed where you left off"
+                } catch {
+                    preserveIncompatibleState(at: autoState)
+                    status = "Couldn't resume; old save kept, started fresh"
+                }
             }
         }
         host.audioEnabled = true
@@ -223,7 +246,10 @@ final class GameSession {
             displayLayer?.contents = image
         }
         if Self.logsFrameTime { logFrameTime(ContinuousClock.now - frameStart) }
-        if ContinuousClock.now - lastAutosave >= Self.autosaveInterval {
+        if needsFreshCheckpoint {
+            needsFreshCheckpoint = false
+            autosave(preservingStatus: true)
+        } else if ContinuousClock.now - lastAutosave >= Self.autosaveInterval {
             autosave()
         }
     }
@@ -245,14 +271,14 @@ final class GameSession {
         frameTimeCount = 0
     }
 
-    func autosave() {
+    func autosave(preservingStatus: Bool = false) {
         lastAutosave = .now
         // Before the game has started (still syncing) there's nothing new to save, and a fresh state would replace the resume point.
         guard let host, hasStarted else { return }
         host.flushSaveRAM()
         do {
             try host.saveState(to: AppPaths.autoState(for: game.id))
-            status = "Auto-saved on this device"
+            if !preservingStatus { status = "Auto-saved on this device" }
         } catch {
             status = "Auto-save failed"
             // The battery save was still flushed; sync it on its own.
@@ -310,6 +336,15 @@ final class GameSession {
         }
     }
 
+    func restart() {
+        guard let host, hasStarted else { return }
+        #if os(macOS)
+        input.releaseAll()
+        #endif
+        host.reset()
+        status = "Restarted"
+    }
+
     func discLabel(_ index: Int) -> String? { host?.label(forDisk: index) }
 
     private func clearHostInput() {
@@ -323,8 +358,8 @@ final class GameSession {
 
     // MARK: In-game menu
 
-    enum MenuItem: String, CaseIterable, Identifiable {
-        case resume = "Resume", save = "Save State", load = "Load State", swapDisc = "Swap Disc"
+    enum MenuItem: String, CaseIterable, Identifiable, Equatable {
+        case resume = "Resume", restart = "Restart Game", save = "Save State", load = "Load State", swapDisc = "Swap Disc"
         case controls = "Controls", exit = "Exit to Library"
         var id: String { rawValue }
     }
@@ -371,6 +406,7 @@ final class GameSession {
     func closeMenu() {
         guard isMenuOpen else { return }
         isMenuOpen = false
+        isConfirmingRestart = false
         isShowingControls = false
         if disconnectedController == nil { stopOverlayPolling() }
         resume()
@@ -380,6 +416,8 @@ final class GameSession {
         switch item {
         case .resume:
             closeMenu()
+        case .restart:
+            isConfirmingRestart = true
         case .save:
             saveManualState()
             closeMenu()
@@ -470,6 +508,15 @@ final class GameSession {
         overlayHeld = held
         if isShowingControls { return }
         if isMenuOpen {
+            if isConfirmingRestart {
+                if !pressed.isDisjoint(with: [.south, .start]) {
+                    restart()
+                    closeMenu()
+                } else if !pressed.isDisjoint(with: [.east, .select, .home]) {
+                    isConfirmingRestart = false
+                }
+                return
+            }
             let items = menuItems
             if pressed.contains(.dpadUp) { menuSelection = max(menuSelection - 1, 0) }
             if pressed.contains(.dpadDown) { menuSelection = min(menuSelection + 1, items.count - 1) }

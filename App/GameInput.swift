@@ -22,7 +22,7 @@ final class GameInput {
         126: .dpadUp, 125: .dpadDown, 123: .dpadLeft, 124: .dpadRight,
         6: .south, 7: .east, 0: .west, 1: .north, 12: .l1, 13: .r1, 14: .l2, 15: .r2,
         34: .rightStickUp, 40: .rightStickDown, 38: .rightStickLeft, 37: .rightStickRight,
-        36: .start, 76: .start, 48: .select, 60: .select,
+        36: .start, 76: .start, 48: .select, 60: .select, 53: .home,
     ]
     private var keyboardPressed: Set<PadInput> = []
     private var keyMonitor: Any?
@@ -93,7 +93,7 @@ final class GameInput {
             (.keyZ, .south), (.keyX, .east), (.keyA, .west), (.keyS, .north),
             (.keyQ, .l1), (.keyW, .r1), (.keyE, .l2), (.keyR, .r2),
             (.keyI, .rightStickUp), (.keyK, .rightStickDown), (.keyJ, .rightStickLeft), (.keyL, .rightStickRight),
-            (.returnOrEnter, .start), (.rightShift, .select), (.tab, .select),
+            (.returnOrEnter, .start), (.rightShift, .select), (.tab, .select), (.escape, .home),
         ]
         for (key, input) in mapping where keyboard.button(forKeyCode: key)?.isPressed == true {
             pressed.insert(input)

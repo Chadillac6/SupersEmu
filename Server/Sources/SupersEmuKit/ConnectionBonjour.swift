@@ -42,7 +42,10 @@ public enum SupersEmuBonjour {
 
     /// `https://host:port` with IPv6 bracketed and the interface scope dropped.
     public static func url(scheme: String, host: String, port: Int) -> URL? {
-        var host = host
+        var host = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if host.hasPrefix("[") && host.hasSuffix("]") {
+            host = String(host.dropFirst().dropLast())
+        }
         if let percent = host.firstIndex(of: "%") { host = String(host[..<percent]) }
         if host.contains(":") { host = "[\(host)]" }
         return URL(string: "\(scheme)://\(host):\(port)")
@@ -111,46 +114,163 @@ public final class ServerBrowser: @unchecked Sendable {
     }
 
     /// Resolves the service to a connectable `scheme://host:port` URL.
-    public static func resolve(_ server: DiscoveredServer, timeout: TimeInterval = 5) async throws -> URL {
-        let connection = NWConnection(to: server.endpoint, using: .tcp)
+    public static func resolve(_ server: DiscoveredServer, timeout: TimeInterval = 15) async throws -> URL {
+        guard timeout > 0 else { throw URLError(.timedOut) }
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let ipv4Parameters = NWParameters.tcp
+        guard let ipOptions = ipv4Parameters.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options else {
+            throw URLError(.cannotFindHost)
+        }
+        ipOptions.version = .v4
+        do {
+            return try await resolveAttempt(server, parameters: ipv4Parameters, timeout: min(timeout, 8))
+        } catch let failure as ResolveAttemptFailure {
+            guard ResolveOutcome.shouldFallBack(after: failure) else { throw failure.terminalError }
+            let remaining = timeout - (ProcessInfo.processInfo.systemUptime - startedAt)
+            guard remaining > 0 else { throw failure.terminalError }
+            do {
+                return try await resolveAttempt(server, parameters: .tcp, timeout: remaining)
+            } catch let fallbackFailure as ResolveAttemptFailure {
+                throw fallbackFailure.terminalError
+            }
+        }
+    }
+
+    private static func resolveAttempt(
+        _ server: DiscoveredServer,
+        parameters: NWParameters,
+        timeout: TimeInterval
+    ) async throws -> URL {
+        let connection = NWConnection(to: server.endpoint, using: parameters)
         let queue = DispatchQueue(label: "com.chadillac6.supersemu.bonjour-resolve")
+        let waitingErrors = LatestWaitingError()
         defer { connection.cancel() }
         return try await withThrowingTaskGroup(of: URL.self) { group in
             group.addTask {
                 try await withTaskCancellationHandler {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
-                    let resumed = ResumeOnce()
-                    connection.stateUpdateHandler = { state in
-                        switch state {
-                        case .ready:
-                            if case .hostPort(let host, let port)? = connection.currentPath?.remoteEndpoint,
-                               let url = SupersEmuBonjour.url(scheme: server.scheme, host: "\(host)", port: Int(port.rawValue)) {
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+                        let resumed = ResumeOnce()
+                        connection.stateUpdateHandler = { state in
+                            switch ResolveOutcome.next(
+                                state: state,
+                                remoteEndpoint: connection.currentPath?.remoteEndpoint,
+                                scheme: server.scheme
+                            ) {
+                            case .keepWaiting(let error):
+                                waitingErrors.store(error)
+                            case .resolved(let url):
                                 resumed.run { continuation.resume(returning: url) }
-                            } else {
-                                resumed.run { continuation.resume(throwing: URLError(.cannotFindHost)) }
+                            case .failed(let error):
+                                resumed.run {
+                                    continuation.resume(throwing: ResolveAttemptFailure.connection(
+                                        error,
+                                        waitingError: waitingErrors.latest
+                                    ))
+                                }
+                            case .cancelled:
+                                resumed.run { continuation.resume(throwing: CancellationError()) }
+                            case .ignore:
+                                break
                             }
-                        case .failed(let error), .waiting(let error):
-                            resumed.run { continuation.resume(throwing: error) }
-                        case .cancelled:
-                            resumed.run { continuation.resume(throwing: CancellationError()) }
-                        default: break
                         }
+                        connection.start(queue: queue)
                     }
-                    connection.start(queue: queue)
-                }
                 } onCancel: {
                     connection.cancel()
                 }
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                connection.cancel()
-                throw URLError(.timedOut)
+                throw ResolveAttemptFailure.timedOut(waitingErrors.latest)
             }
             let url = try await group.next()!
             group.cancelAll()
             return url
         }
+    }
+}
+
+enum ResolveOutcome {
+    case keepWaiting(NWError)
+    case resolved(URL)
+    case failed(Error)
+    case cancelled
+    case ignore
+
+    static func shouldFallBack(after failure: ResolveAttemptFailure) -> Bool {
+        switch failure {
+        case .connection(let error, let waitingError):
+            if let waitingError, isLocalNetworkPolicyError(waitingError) { return false }
+            if let error = error as? NWError, isLocalNetworkPolicyError(error) { return false }
+            return true
+        case .timedOut(let waitingError):
+            return waitingError.map { !isLocalNetworkPolicyError($0) } ?? true
+        }
+    }
+
+    static func isLocalNetworkPolicyError(_ error: NWError) -> Bool {
+        if case .dns(let code) = error, Int(code) == -65_570 { return true }
+        let description = error.localizedDescription.lowercased()
+        return description.contains("local network") || description.contains("policy")
+    }
+
+    static func next(state: NWConnection.State, remoteEndpoint: NWEndpoint?, scheme: String) -> Self {
+        switch state {
+        case .waiting(let error):
+            return .keepWaiting(error)
+        case .failed(let error):
+            return .failed(error)
+        case .ready:
+            guard case .hostPort(let host, let port)? = remoteEndpoint else {
+                return .failed(URLError(.cannotFindHost))
+            }
+            let address = String(describing: host)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            let unscopedAddress = address.split(separator: "%", maxSplits: 1).first.map(String.init) ?? address
+            if case .ipv6 = host, unscopedAddress.lowercased().hasPrefix("fe80:") {
+                return .failed(URLError(.cannotFindHost))
+            }
+            guard let url = SupersEmuBonjour.url(scheme: scheme, host: address, port: Int(port.rawValue)) else {
+                return .failed(URLError(.cannotFindHost))
+            }
+            return .resolved(url)
+        case .cancelled:
+            return .cancelled
+        default:
+            return .ignore
+        }
+    }
+}
+
+enum ResolveAttemptFailure: Error {
+    case connection(Error, waitingError: NWError?)
+    case timedOut(NWError?)
+
+    var terminalError: Error {
+        switch self {
+        case .connection(let error, let waitingError):
+            if let waitingError, ResolveOutcome.isLocalNetworkPolicyError(waitingError) { return waitingError }
+            return error
+        case .timedOut(let waitingError):
+            return waitingError ?? URLError(.timedOut)
+        }
+    }
+}
+
+private final class LatestWaitingError: @unchecked Sendable {
+    private let lock = NSLock()
+    private var error: NWError?
+
+    var latest: NWError? {
+        lock.lock()
+        defer { lock.unlock() }
+        return error
+    }
+
+    func store(_ error: NWError) {
+        lock.lock()
+        defer { lock.unlock() }
+        self.error = error
     }
 }
 

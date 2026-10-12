@@ -23,6 +23,7 @@ typedef struct SECoreAPI {
     void (*get_system_av_info)(struct retro_system_av_info *);
     void (*set_controller_port_device)(unsigned, unsigned);
     void (*run)(void);
+    void (*reset)(void);
     size_t (*serialize_size)(void);
     bool (*serialize)(void *, size_t);
     bool (*unserialize)(const void *, size_t);

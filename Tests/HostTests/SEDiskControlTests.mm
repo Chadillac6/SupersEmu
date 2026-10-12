@@ -63,6 +63,7 @@ void avInfo(retro_system_av_info *info) {
 }
 void setPort(unsigned, unsigned) {}
 void run() { if (video) video(pixels, 4, 4, 8); }
+void reset() {}
 size_t serializeSize() { return 4; }
 bool serialize(void *data, size_t size) { memcpy(data, &imageIndex, size); return true; }
 bool unserialize(const void *, size_t) { return true; }
@@ -89,7 +90,7 @@ size_t memorySize(unsigned) { return 0; }
 
 const SECoreAPI table = {
     "stub_disc", "test", setEnvironment, setVideo, setAudio, setAudioBatch, setInputPoll, setInputState,
-    init, deinit, systemInfo, avInfo, setPort, run, serializeSize, serialize, unserialize, loadGame,
+    init, deinit, systemInfo, avInfo, setPort, run, reset, serializeSize, serialize, unserialize, loadGame,
     unloadGame, memoryData, memorySize,
 };
 const SECoreAPI *api() { return &table; }

@@ -92,11 +92,12 @@ final class MetadataProviderTests: XCTestCase {
     func testWikipediaIntroAndReceptionWithAttribution() async throws {
         let id = try await importROM("Super Metroid (Japan, USA).sfc")
         let search = WikipediaMetadataProvider.searchURL(title: "Super Metroid", system: .snes)
-        let summary = WikipediaMetadataProvider.summaryURL("Super Metroid")
+        let summary = try XCTUnwrap(WikipediaMetadataProvider.summaryURL("Super Metroid"))
+        let soundtrackSummary = try XCTUnwrap(WikipediaMetadataProvider.summaryURL("Super Metroid (soundtrack)"))
         let extract = WikipediaMetadataProvider.extractURL("Super Metroid")
         let responses: [URL: Data] = [
             search: json(["query": ["search": [["title": "Metroid"], ["title": "Super Metroid (soundtrack)"], ["title": "Super Metroid"]]]]),
-            WikipediaMetadataProvider.summaryURL("Super Metroid (soundtrack)"):
+            soundtrackSummary:
                 json(["type": "standard", "title": "Super Metroid (soundtrack)", "description": "Album", "extract": "An album."]),
             summary: json(["type": "standard", "title": "Super Metroid", "description": "1994 video game",
                            "extract": "Super Metroid is a 1994 action-adventure game developed by Nintendo. It is the third Metroid game.",
@@ -269,8 +270,9 @@ final class MetadataProviderTests: XCTestCase {
         let id = try await importROM("Super Metroid.sfc")
         let hero = URL(string: "https://cdn2.steamgriddb.com/hero/abc.png")!
         let logo = URL(string: "https://cdn2.steamgriddb.com/logo/def.png")!
+        let search = try XCTUnwrap(SteamGridDBMetadataProvider.searchURL("Super Metroid"))
         let responses: [URL: Data] = [
-            SteamGridDBMetadataProvider.searchURL("Super Metroid"):
+            search:
                 json(["success": true, "data": [["id": 9, "name": "Metroid"], ["id": 5250, "name": "Super Metroid"]]]),
             SteamGridDBMetadataProvider.imagesURL("heroes", gameID: 5250, mimes: "image/png,image/jpeg"):
                 json(["success": true, "data": [["id": 9, "url": "https://10.0.0.5/internal.png"], ["id": 1, "url": hero.absoluteString]]]),

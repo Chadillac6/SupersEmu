@@ -1,6 +1,19 @@
 import SupersEmuKit
 import SwiftUI
 
+enum GameGridLayout {
+    static func columns(compact: Bool, regularSpacing: CGFloat = 16) -> [GridItem] {
+        if compact {
+            return [GridItem(.adaptive(minimum: 96, maximum: 130), spacing: 10)]
+        }
+        return [GridItem(.adaptive(minimum: 170), spacing: regularSpacing)]
+    }
+
+    static func rowSpacing(compact: Bool, regularSpacing: CGFloat = 20) -> CGFloat {
+        compact ? 14 : regularSpacing
+    }
+}
+
 /// Logo wordmark, the console chips and the theme's brand stripe.
 struct SystemSelectorBar: View {
     let theme: SystemTheme
@@ -73,10 +86,10 @@ struct HomeHero: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(item.lastPlayed != nil ? "CONTINUE PLAYING" : "IN YOUR LIBRARY")
                         .font(.caption.bold()).tracking(1.5).foregroundStyle(theme.accent)
-                    let title = Text(item.title).font(.system(size: 32, weight: .heavy)).lineLimit(2)
+                    let title = Text(item.title).font(.system(size: compact ? 26 : 32, weight: .heavy)).lineLimit(2)
                     if let logo = item.logoPath {
                         RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit) { title }
-                            .frame(maxWidth: 320, maxHeight: 90, alignment: .leading)
+                            .frame(maxWidth: 320, maxHeight: compact ? 64 : 90, alignment: .leading)
                             .accessibilityLabel(item.title)
                     } else {
                         title
@@ -85,16 +98,16 @@ struct HomeHero: View {
                     HStack(spacing: 10) {
                         Button(action: primary) { Label(primaryTitle, systemImage: "play.fill").padding(.horizontal, 6) }
                             .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
+                            .controlSize(compact ? .regular : .large)
                             .accessibilityIdentifier("hero-primary")
                         Button(action: details) { Label("Details", systemImage: "info.circle") }
                             .buttonStyle(.bordered)
-                            .controlSize(.large)
+                            .controlSize(compact ? .regular : .large)
                             .accessibilityIdentifier("hero-details")
                     }
                 }
                 .foregroundStyle(.white)
-                .padding(24)
+                .padding(compact ? 16 : 24)
             }
             .clipShape(RoundedRectangle(cornerRadius: 22))
             .contentShape(RoundedRectangle(cornerRadius: 22))
@@ -106,9 +119,17 @@ struct HomeHero: View {
 
     private var height: CGFloat {
         #if os(iOS)
-        sizeClass == .compact ? 300 : 400
+        compact ? 240 : 400
         #else
         400
+        #endif
+    }
+
+    private var compact: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
         #endif
     }
 
@@ -122,6 +143,9 @@ struct HomeHero: View {
 
 /// Recently played games as wide cards with a last-played label.
 struct CurrentlyPlayingRow: View {
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
     let items: [LibraryItem]
     let select: (LibraryItem) -> Void
 
@@ -133,7 +157,7 @@ struct CurrentlyPlayingRow: View {
                     ForEach(items) { item in
                         Button { select(item) } label: { card(item) }
                             .buttonStyle(.plain)
-                            .frame(width: 250)
+                            .frame(width: compact ? 190 : 250)
                             .accessibilityIdentifier("game-card")
                             .accessibilityLabel(item.title)
                     }
@@ -141,6 +165,14 @@ struct CurrentlyPlayingRow: View {
                 .padding(.horizontal, 20)
             }
         }
+    }
+
+    private var compact: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
     }
 
     private func card(_ item: LibraryItem) -> some View {
@@ -168,6 +200,9 @@ struct CurrentlyPlayingRow: View {
 /// "All Games A-Z": one continuous cover grid with letter anchors for the jump rail.
 struct AlphabetGrid: View {
     @Environment(DownloadCenter.self) private var downloads
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
     let games: [LibraryItem]
     let letterAnchors: [String: String]
     let select: (LibraryItem) -> Void
@@ -175,7 +210,8 @@ struct AlphabetGrid: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("All Games A–Z").font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier("shelf-all")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 20) {
+            LazyVGrid(columns: GameGridLayout.columns(compact: compact),
+                      spacing: GameGridLayout.rowSpacing(compact: compact)) {
                 ForEach(games) { item in
                     let letter = LibraryShelves.letter(for: item.title)
                     Button { select(item) } label: { GameCard(item: item, state: downloads.states[item.id]) }
@@ -198,6 +234,14 @@ struct AlphabetGrid: View {
             .padding(.leading, 20)
             .padding(.trailing, JumpRail.inset)
         }
+    }
+
+    private var compact: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
     }
 }
 
