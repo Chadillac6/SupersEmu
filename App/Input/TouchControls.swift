@@ -30,12 +30,16 @@ struct TouchControls: View {
         let gap: CGFloat = 8
         switch input.layout.system {
         case "n64":
-            let cButtons = 2 * 52 + 12
-            let faceButtons = 2 * button + 10
-            return max(dpad + pill + cButtons + 2 * gap, 120 + faceButtons + gap)
+            let cButtons: CGFloat = 116
+            let faceButtons: CGFloat = 134
+            let topRowWidth = dpad + pill + cButtons + 2 * gap
+            let bottomRowWidth: CGFloat = 120 + faceButtons + gap
+            return max(topRowWidth, bottomRowWidth)
         case "genesis", "segacd", "sega32x":
-            let faceButtons = 3 * button + 2 * 4
-            return max(dpad + faceButtons + gap, 2 * pill + gap)
+            let faceButtons = 3 * button + 8
+            let buttonRowWidth = dpad + faceButtons + gap
+            let pillRowWidth = 2 * pill + gap
+            return max(buttonRowWidth, pillRowWidth)
         case "psx":
             return dpad + pill + 2 * button + 10 + 2 * gap
         case "gb", "gbc", "gba":

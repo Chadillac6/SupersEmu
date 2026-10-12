@@ -15,6 +15,7 @@ struct PlayerView: View {
                     .accessibilityIdentifier("emulator-screen")
                 #if os(iOS)
                 TouchControls(input: session.input)
+                    .containerRelativeFrame(.horizontal)
                 #endif
             }
             if session.isChoosingDisc {
