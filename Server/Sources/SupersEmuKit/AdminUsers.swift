@@ -10,4 +10,20 @@ public struct CreateUserRequest: Codable, Sendable, Equatable {
 
 extension APIClient {
     public func createUser(_ request: CreateUserRequest) async throws -> UserInfo { try await send("POST", "/v1/admin/users", body: request) }
+
+    public func userGames(userID: String) async throws -> UserGameAccess {
+        try await get("/v1/admin/users/\(userID)/games")
+    }
+
+    public func setUserGames(userID: String, gameIDs: [String]) async throws -> UserGameAccess {
+        try await send("PUT", "/v1/admin/users/\(userID)/games", body: SetUserGamesRequest(gameIDs: gameIDs))
+    }
+
+    public func updateUser(id: String, displayName: String) async throws -> UserInfo {
+        try await send("PATCH", "/v1/admin/users/\(id)", body: UpdateUserRequest(displayName: displayName))
+    }
+
+    public func removeUser(id: String) async throws -> UserInfo {
+        try await send("DELETE", "/v1/admin/users/\(id)", body: Optional<String>.none)
+    }
 }

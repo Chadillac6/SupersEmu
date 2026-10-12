@@ -54,6 +54,36 @@ public struct UserInfo: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+public struct UserGameAccess: Codable, Sendable, Equatable {
+    public var userID: String
+    public var gameIDs: [String]
+    public var everyoneGameIDs: [String]
+    public var groupGameIDs: [String]
+
+    public init(userID: String, gameIDs: [String], everyoneGameIDs: [String], groupGameIDs: [String]) {
+        self.userID = userID
+        self.gameIDs = gameIDs
+        self.everyoneGameIDs = everyoneGameIDs
+        self.groupGameIDs = groupGameIDs
+    }
+}
+
+public struct SetUserGamesRequest: Codable, Sendable, Equatable {
+    public var gameIDs: [String]
+
+    public init(gameIDs: [String]) {
+        self.gameIDs = gameIDs
+    }
+}
+
+public struct UpdateUserRequest: Codable, Sendable, Equatable {
+    public var displayName: String
+
+    public init(displayName: String) {
+        self.displayName = displayName
+    }
+}
+
 public struct MeResponse: Codable, Sendable, Equatable {
     public var user: UserInfo
     /// Set when the caller is a paired device.
