@@ -15,7 +15,7 @@ Local and CI builds need none of this. With no team set, `Config/Signing.xcconfi
 2. **App Store Connect API team key** (Admin role):
    - `ASC_KEY_ID`: the key's Key ID.
    - `ASC_ISSUER_ID`: the Issuer ID (UUID) shown above the key list.
-   - The `AuthKey_<KEYID>.p8` file, as `ASC_KEY_PATH=/path/to/AuthKey_<KEYID>.p8` or `ASC_KEY_P8_BASE64="$(base64 -i AuthKey_<KEYID>.p8)"`.
+   - Provide the key as `ASC_KEY_PATH=/path/to/AuthKey_<KEYID>.p8` or `ASC_KEY_P8_BASE64="$(base64 -i AuthKey_<KEYID>.p8)"`. `ASC_KEY_P8_BASE64` accepts base64 of either the entire `.p8` file or the raw DER key.
 3. **App Store Connect app record** for bundle ID `com.chadillac6.supersemu` (iOS platform).
 4. **Mac only:** a **Developer ID Application** certificate in the login keychain of the Mac that runs `release-mac.sh`. Only the Account Holder can create it.
 
