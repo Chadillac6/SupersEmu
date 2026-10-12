@@ -62,6 +62,9 @@ release_prepare_key() {
   # shellcheck disable=SC2034 # used by the sourcing scripts
   ASC_AUTH_ARGS=(-authenticationKeyPath "$ASC_KEY_FILE" -authenticationKeyID "$ASC_KEY_ID"
                  -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+  # Xcode logs build-phase environments. Keep raw private signing values out of
+  # child build tools, including local releases that use the base64 input path.
+  unset ASC_KEY_P8_BASE64 MAC_CERT_P12_BASE64 MAC_CERT_PASSWORD SPARKLE_PRIVATE_KEY
 }
 
 release_build_number() {
