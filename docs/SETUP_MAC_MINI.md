@@ -31,6 +31,33 @@ ditto build/mac/Build/Products/Debug/SupersEmu.app /Applications/SupersEmu.app
 2. Install Tailscale on your iPhone/iPad with the same account.
 3. No router port forwarding is needed. Don't open any ports.
 
+## Public access (invite-only)
+Use this only when invited players cannot use Tailscale. The public HTTPS listener is a loopback-only
+player API behind Caddy; admin routes remain private and return 404 through the public hostname.
+
+1. Create a DNS `A` record (and `AAAA` only if the Mac mini has working IPv6 connectivity) for a hostname
+   such as `games.example.com`, pointing to your router's public address.
+2. Forward TCP port 443 on the router to this Mac mini. Do not forward the server's LAN/TLS port or
+   the loopback proxy port. Allow Caddy to obtain and renew its HTTPS certificate.
+3. Install Caddy with `brew install caddy`, then enable public access:
+
+   ```bash
+   sudo ./scripts/public-access.sh enable --host games.example.com
+   sudo ./scripts/public-access.sh status
+   ```
+
+   The command writes the server's `public-access.json`, a private Caddy data directory and a
+   launch daemon. Set `SUPERSEMU_ACME_EMAIL` before `enable` if you want Caddy's ACME account to
+   include a contact email.
+4. To roll back, run `sudo ./scripts/public-access.sh disable`. This stops Caddy and disables the
+   second listener; `--purge` also removes Caddy's stored certificates and keys.
+
+Public access permits pairing, the permitted game/library and BIOS downloads, and a user's own save
+sync. Admin APIs are not registered on the public server, API tokens are rejected, and paired device
+tokens are still permission-checked. Health exposes only the server identity pin and configured
+public URL in addition to its existing health fields. The LAN/Tailscale server keeps its existing
+admin behavior.
+
 ## 5. Add games and BIOS files
 Everything below is in the Server Mode window; no Terminal needed.
 

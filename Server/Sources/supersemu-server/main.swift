@@ -23,6 +23,10 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
         @OptionGroup var options: Options
         @Option var hostname = "0.0.0.0"
         @Option var port = ServerDefaults.port
+        @Option(help: "Enable the loopback-only public HTTP listener and advertise this HTTPS URL.")
+        var publicURL: String?
+        @Option(help: "Local reverse-proxy listener port (default 8489).")
+        var publicPort: Int?
         @Flag(help: "Serve plain HTTP instead of HTTPS (tests and local debugging only).")
         var insecureHTTP = false
         @Option(name: .customLong("advertise-url"), help: "URL to put in pairing QR codes (repeatable; default: detected LAN + Tailscale).")
@@ -47,6 +51,13 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
             var runOptions = ServerRunOptions()
             runOptions.hostname = hostname
             runOptions.port = port
+            if let value = publicURL {
+                guard let url = URL(string: value), PublicAccessConfiguration.isValid(url) else {
+                    throw ValidationError("Invalid --public-url (expected an https URL without credentials, path, query, or fragment)")
+                }
+                runOptions.publicURL = url
+            }
+            runOptions.publicPort = publicPort
             runOptions.insecureHTTP = insecureHTTP
             runOptions.advertiseURLs = try advertiseURLs.map { value in
                 guard let url = URL(string: value), url.scheme != nil, url.host != nil else {

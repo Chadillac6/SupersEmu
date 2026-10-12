@@ -257,13 +257,25 @@ struct OnboardingView: View {
     private func requestToConnect(_ endpoint: URL, identity: PairingFlowIdentity) async {
         defer { finishRequestFlow(identity) }
         do {
-            let fingerprint = try await server.presentedCertificateSHA256(at: endpoint)
+            var endpoint = endpoint
+            var publicURL: URL?
+            var fingerprint: String
+            if let candidate = PairingLinkParser.publicURLCandidate(fromAddress: address),
+               let health = await publicHealth(at: candidate), let pin = health.certificateSHA256 {
+                endpoint = candidate
+                publicURL = candidate
+                fingerprint = pin
+            } else {
+                fingerprint = try await server.presentedCertificateSHA256(at: endpoint)
+            }
             guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
             let secretBytes = (0..<32).map { _ in UInt8.random(in: .min ... .max) }
             let secret = secretBytes.map { String(format: "%02x", $0) }.joined()
             let claimHash = SHA256.hash(data: Data(secretBytes)).map { String(format: "%02x", $0) }.joined()
             let client = APIClient(baseURL: endpoint, token: nil,
-                                   session: PinnedCertificateDelegate.session(certificateSHA256: fingerprint))
+                                   session: PinnedCertificateDelegate.session(
+                                    certificateSHA256: fingerprint,
+                                    webPKIHosts: Set([publicURL?.host].compactMap { $0?.lowercased() })))
             let created = try await client.createPairRequest(PairRequestCreate(
                 deviceName: pairingDeviceName, platform: pairingPlatform, claimHash: claimHash))
             guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
@@ -281,7 +293,7 @@ struct OnboardingView: View {
                         try await Task.sleep(for: .seconds(2))
                     case .paired(let response):
                         try await server.pair(
-                            response: response, at: endpoint, certificateSHA256: fingerprint,
+                            response: response, at: endpoint, certificateSHA256: fingerprint, publicURL: publicURL,
                             shouldCommit: {
                                 PairingApprovalDisposition.forCurrentOwner(
                                     flowIdentity: identity, currentIdentity: requestFlowIdentity
@@ -395,11 +407,24 @@ struct OnboardingView: View {
             await pair(selectedServer.pairingPayload(at: selectedServerAddress, code: code))
             return
         }
+        if let publicURL = PairingLinkParser.publicURLCandidate(fromAddress: address),
+           let health = await publicHealth(at: publicURL), let fingerprint = health.certificateSHA256 {
+            await pair(PairingPayload(serverName: health.serverName, urls: [], certificateSHA256: fingerprint,
+                                      code: code, publicURL: publicURL))
+            return
+        }
         guard let payload = PairingLinkParser.payload(address: address, code: code) else {
             errorMessage = "Enter the server address and the 6-digit code."
             return
         }
         await pair(payload)
+    }
+
+    private func publicHealth(at url: URL) async -> HealthResponse? {
+        guard let host = url.host?.lowercased() else { return nil }
+        let session = PinnedCertificateDelegate.session(certificateSHA256: nil, webPKIHosts: [host])
+        defer { session.finishTasksAndInvalidate() }
+        return try? await APIClient(baseURL: url, token: nil, session: session).health()
     }
 
     private func select(_ server: DiscoveredServer) async {

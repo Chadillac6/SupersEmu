@@ -12,17 +12,20 @@ extension PendingPairRequest: ResponseEncodable {}
 extension PairRequestActionResponse: ResponseEncodable {}
 
 // Track: pairing + network. POST /v1/admin/pairing-codes, POST /v1/pair.
-func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, authed: RouterGroup<SERequestContext>, store: ServerStore) {
+func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, authed: RouterGroup<SERequestContext>,
+                           store: ServerStore, includeAdminRoutes: Bool = true) {
     let service = PairingService(store: store)
     let requests = PairRequestService(store: store, pairing: service)
 
-    authed.post("admin/pairing-codes") { request, context in
-        let auth = try context.caller()
-        try auth.requireAdmin()
-        try auth.require(.usersAdmin)
-        let body = try await request.decode(as: CreatePairingCodeRequest.self, context: context)
-        let code = try service.createCode(for: body.userID, caller: auth)
-        return EditedResponse(status: .created, response: code)
+    if includeAdminRoutes {
+        authed.post("admin/pairing-codes") { request, context in
+            let auth = try context.caller()
+            try auth.requireAdmin()
+            try auth.require(.usersAdmin)
+            let body = try await request.decode(as: CreatePairingCodeRequest.self, context: context)
+            let code = try service.createCode(for: body.userID, caller: auth)
+            return EditedResponse(status: .created, response: code)
+        }
     }
 
     publicGroup.post("pair") { request, context in
@@ -52,6 +55,8 @@ func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, au
             return try LibraryHTTP.json(response)
         }
     }
+
+    guard includeAdminRoutes else { return }
 
     @Sendable func adminCaller(_ context: SERequestContext) throws -> AuthContext {
         let auth = try context.caller()
@@ -130,7 +135,8 @@ public final class PairingService: Sendable {
 
         let environment = PairingEnvironment.resolve(for: store)
         let payload = PairingPayload(serverName: store.serverName, urls: environment.urls,
-                                     certificateSHA256: environment.certificateSHA256, code: code)
+                                     certificateSHA256: environment.certificateSHA256, code: code,
+                                     publicURL: environment.publicURL)
         return PairingCode(code: code, expiresAt: expires, payload: payload, qrURL: try PairingLink.url(for: payload).absoluteString)
     }
 

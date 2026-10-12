@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import HummingbirdTesting
 import NIOCore
 import Security
 import SupersEmuKit
@@ -67,7 +68,7 @@ final class NetworkTests: XCTestCase {
         options.bonjour = false
         options.metadata = false
         let (portStream, portContinuation) = AsyncStream.makeStream(of: Int.self)
-        let (application, environment) = try ServerLauncher.makeApplication(store: store, options: options) { channel in
+        let (application, _, environment) = try ServerLauncher.makeApplication(store: store, options: options) { channel in
             portContinuation.yield(channel.localAddress?.port ?? 0)
         }
         let server = Task { try await application.runService() }
@@ -233,6 +234,127 @@ final class NetworkTests: XCTestCase {
     }
 }
 
+final class PublicAccessTests: XCTestCase {
+    private var store: ServerStore!
+    private var admin: UserInfo!
+    private var adminDevice: String!
+
+    override func setUp() async throws {
+        store = try ServerStore.inMemory()
+        admin = try store.createUser(displayName: "Chad", role: .admin)
+        adminDevice = try store.createDeviceToken(userID: admin.id, deviceName: "Admin device").token
+    }
+
+    private func publicApp(publicURL: URL? = nil) -> some ApplicationProtocol {
+        Application(router: buildRouter(store: store, exposure: .publicInternet,
+                                        certificateSHA256: "identity-pin", publicURL: publicURL))
+    }
+
+    private func bearer(_ token: String) -> HTTPFields { [.authorization: "Bearer \(token)"] }
+
+    private func badPair(_ code: String = "000000") throws -> ByteBuffer {
+        ByteBuffer(data: try SupersEmuJSON.encoder().encode(PairRequest(code: code, deviceName: "Test", platform: "iOS")))
+    }
+
+    func testPublicRouterOmitsAdminRoutesButLocalRouterKeepsThem() async throws {
+        let allScopes = try store.createAPIToken(ownerUserID: admin.id, name: "admin-bot", scopes: Scope.allCases).token
+        let routes: [(HTTPRequest.Method, String, ByteBuffer?)] = [
+            (.get, "/v1/admin/status", nil), (.get, "/v1/admin/users", nil),
+            (.get, "/v1/admin/backups/config", nil), (.post, "/v1/admin/pairing-codes", ByteBuffer(string: "{}")),
+        ]
+        try await publicApp().test(.router) { client in
+            for (method, uri, body) in routes {
+                for token in [self.adminDevice!, allScopes] {
+                    try await client.execute(uri: uri, method: method, headers: self.bearer(token), body: body) {
+                        XCTAssertEqual($0.status, .notFound, "\(method) \(uri)")
+                    }
+                }
+            }
+            try await client.execute(uri: "/v1/library", method: .get, headers: self.bearer(allScopes)) {
+                XCTAssertEqual($0.status, .unauthorized)
+                XCTAssertTrue(String(buffer: $0.body).contains("Use a paired device"))
+            }
+            try await client.execute(uri: "/v1/library", method: .get, headers: self.bearer(self.adminDevice!)) {
+                XCTAssertEqual($0.status, .ok)
+            }
+        }
+        try await buildApplication(store: store, configuration: .init()).test(.router) { client in
+            for (method, uri, body) in routes {
+                try await client.execute(uri: uri, method: method, headers: self.bearer(self.adminDevice!), body: body) {
+                    XCTAssertTrue([HTTPResponse.Status.ok, .created].contains($0.status), "\(method) \(uri)")
+                }
+            }
+        }
+    }
+
+    func testPublicHealthReturnsIdentityPinAndPublicURL() async throws {
+        let url = URL(string: "https://games.example.com")!
+        try await publicApp(publicURL: url).test(.router) { client in
+            try await client.execute(uri: "/v1/health", method: .get) { response in
+                XCTAssertEqual(response.status, .ok)
+                let health = try SupersEmuJSON.decoder().decode(HealthResponse.self, from: Data(buffer: response.body))
+                XCTAssertEqual(health.certificateSHA256, "identity-pin")
+                XCTAssertEqual(health.publicURL, url)
+            }
+        }
+    }
+
+    func testPublicPairingRateLimitUsesRightmostValidatedForwardedAddress() async throws {
+        let fields: (String) -> HTTPFields = { address in
+            [.contentType: "application/json", .init("X-Forwarded-For")!: "1.2.3.4, \(address)"]
+        }
+        try await publicApp().test(.router) { client in
+            for _ in 0..<5 {
+                try await client.execute(uri: "/v1/pair", method: .post, headers: fields("203.0.113.5"),
+                                         body: try badPair()) { XCTAssertEqual($0.status, .unauthorized) }
+            }
+            try await client.execute(uri: "/v1/pair", method: .post, headers: fields("203.0.113.5"),
+                                     body: try badPair()) { XCTAssertEqual($0.status, .tooManyRequests) }
+            try await client.execute(uri: "/v1/pair", method: .post, headers: fields("203.0.113.6"),
+                                     body: try badPair()) { XCTAssertEqual($0.status, .unauthorized) }
+        }
+    }
+
+    func testPublicJSONBodyLimitIs64KiBAndLocalIgnoresForwardedAddress() async throws {
+        let oversize = ByteBuffer(string: #"{"deviceName":"\#(String(repeating: "x", count: 200 * 1024))","platform":"iOS","claimHash":"x"}"#)
+        try await publicApp().test(.router) { client in
+            try await client.execute(uri: "/v1/pair/requests", method: .post,
+                                     headers: [.contentType: "application/json"], body: oversize) {
+                XCTAssertEqual($0.status, .contentTooLarge)
+            }
+        }
+        try await buildApplication(store: store, configuration: .init()).test(.router) { client in
+            for index in 0..<6 {
+                let headers: HTTPFields = [.contentType: "application/json",
+                    .init("X-Forwarded-For")!: "203.0.113.\(index + 1)"]
+                try await client.execute(uri: "/v1/pair", method: .post, headers: headers,
+                                         body: try badPair()) {
+                    XCTAssertEqual($0.status, index == 5 ? .tooManyRequests : .unauthorized)
+                }
+            }
+        }
+    }
+
+    func testPublicAccessConfigurationDefaultsOffAndValidates() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertNil(try PublicAccessConfiguration.load(root: root))
+        let config = try PublicAccessConfiguration(enabled: true, publicURL: URL(string: "https://games.example.com")!, listenPort: 8489)
+        try JSONEncoder().encode(config).write(to: root.appendingPathComponent("public-access.json"))
+        XCTAssertEqual(try PublicAccessConfiguration.load(root: root), config)
+        let override = try PublicAccessConfiguration.load(root: root, publicURL: URL(string: "https://new.example.com")!, listenPort: 8490)
+        XCTAssertEqual(override?.publicURL.host, "new.example.com")
+        XCTAssertEqual(override?.listenPort, 8490)
+        XCTAssertNil(try ServerLauncher.makeApplication(store: store, options: ServerRunOptions()).publicApplication)
+        var enabled = ServerRunOptions()
+        enabled.publicAccess = config
+        let result = try ServerLauncher.makeApplication(store: store, options: enabled)
+        XCTAssertNotNil(result.publicApplication)
+        XCTAssertEqual(ServerLauncher.publicListenHost, "127.0.0.1")
+    }
+}
+
 final class TestBox<Value>: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: Value
@@ -242,6 +364,37 @@ final class TestBox<Value>: @unchecked Sendable {
 }
 
 extension NetworkTests {
+    func testPublicWebPKIHostUsesSystemTrustWithoutPinningOtherHosts() throws {
+        let hosts: Set<String> = ["games.example.com"]
+        let authMethod = NSURLAuthenticationMethodServerTrust
+        XCTAssertEqual(PinnedCertificateDelegate.decision(authenticationMethod: authMethod, trust: nil,
+                                                          pin: "wrong-pin", host: "GAMES.EXAMPLE.COM",
+                                                          webPKIHosts: hosts), .defaultHandling)
+        XCTAssertEqual(PinnedCertificateDelegate.decision(authenticationMethod: authMethod, trust: nil,
+                                                          pin: "wrong-pin", host: "other.example.com",
+                                                          webPKIHosts: hosts), .reject)
+    }
+
+    func testPublicProfileTrustAndCandidateOrder() {
+        let lan = URL(string: "https://mini.local:8487")!
+        let internet = URL(string: "https://games.example.com")!
+        let profile = ServerProfile(serverName: "Mini", urls: [lan], certificateSHA256: nil, publicURL: internet)
+        XCTAssertTrue(profile.isTrustedTransport(internet))
+        XCTAssertFalse(profile.isTrustedTransport(URL(string: "https://other.example.com")!))
+        XCTAssertEqual(ServerConnection.candidateOrder(urls: [lan], lastGood: nil, publicURL: internet), [lan, internet])
+        XCTAssertEqual(ServerConnection.candidateOrder(urls: [lan], lastGood: internet, publicURL: internet), [internet, lan])
+        XCTAssertEqual(PairingLinkParser.publicURLCandidate(fromAddress: "games.example.com"), internet)
+        XCTAssertNil(PairingLinkParser.publicURLCandidate(fromAddress: "192.0.2.4"))
+        XCTAssertNil(PairingLinkParser.publicURLCandidate(fromAddress: "mini.local"))
+        XCTAssertNil(PairingLinkParser.publicURLCandidate(fromAddress: "games.example.com:8487"))
+    }
+
+    func testOldPairingPayloadWithoutPublicURLStillDecodes() throws {
+        let json = #"{"serverName":"Mini","urls":["https://mini.local:8487"],"certificateSHA256":"ab","code":"123456"}"#
+        let payload = try SupersEmuJSON.decoder().decode(PairingPayload.self, from: Data(json.utf8))
+        XCTAssertNil(payload.publicURL)
+    }
+
     func testTokensOnlyTravelOverPinnedHTTPS() {
         let pinned = ServerProfile(serverName: "Mini", urls: [], certificateSHA256: String(repeating: "a", count: 64))
         XCTAssertTrue(pinned.isTrustedTransport(URL(string: "https://mini.local:8487")!))

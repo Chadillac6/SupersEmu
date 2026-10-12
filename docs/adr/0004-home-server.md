@@ -21,8 +21,7 @@
     permission check (Chad's admin account passes all of them).
 - **LAN and remote access in Phase 1** for Chad's devices. On the home network the app finds the
   server via Bonjour. Away from home it uses the same API over Chad's Tailscale network. In Phase 2,
-  friends reach it through Tailscale machine sharing (see `docs/specs/server.md`). The server port is
-  never opened to the public internet.
+  friends reach it through Tailscale machine sharing (see `docs/specs/server.md`).
 - **The server starts at boot** with no one logged in: a launch daemon registered with
   `SMAppService.daemon(plistName:)`.
 - **Automation-friendly:** a versioned HTTP API, a `supersemu` CLI and an OpenClaw skill that uses the
@@ -38,6 +37,13 @@
   downloaded. iPhones can't run N64 games any faster by streaming from a Mac mini that's away from home.
 - The client work done so far (libretro host, Snes9x, save design, controllers, touch UI) carries over
   unchanged.
+
+## Amendment: optional public HTTPS for player routes
+
+Public access is an opt-in alternative for invited users who cannot use Tailscale. Caddy terminates
+public HTTPS and proxies to a second HTTP listener bound only to loopback. That router serves player,
+pairing and health routes only; admin endpoints remain LAN/Tailscale-only. The feature is disabled
+by default, and the original Tailscale path remains supported.
 
 ## Consequences
 - New component: a Swift server and its admin UI. More code than talking to Drive, but under our control.

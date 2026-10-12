@@ -408,6 +408,25 @@ public enum PairingLinkParser {
         return components.url
     }
 
+    public static func publicURLCandidate(fromAddress address: String) -> URL? {
+        var text = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if !text.contains("://") { text = "https://" + text }
+        guard let components = URLComponents(string: text), let host = components.host?.lowercased(),
+              components.port == nil, components.scheme?.lowercased() == "https",
+              !host.hasSuffix(".local"), !isIPAddress(host) else { return nil }
+        return URL(string: "https://\(host)")
+    }
+
+    private static func isIPAddress(_ host: String) -> Bool {
+        if host.contains(":") { return true }
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 4 && parts.allSatisfy { part in
+            guard let value = UInt8(part) else { return false }
+            return String(value) == part
+        }
+    }
+
     public static func link(for payload: PairingPayload) throws -> String {
         try PairingLink.url(for: payload).absoluteString
     }

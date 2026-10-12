@@ -94,17 +94,21 @@ built on the same pairing code.
 |---|---|
 | Home Wi-Fi | Bonjour discovery (`_supersemu._tcp`), direct HTTPS on the LAN |
 | Away | Same API over Tailscale (`<macmini>.<tailnet>.ts.net`) |
+| Public (optional) | HTTPS via Caddy on the Mac mini; player routes only |
 
 - **Tailscale** [Verified: tailscale.com/pricing and kb/1084/sharing, 2026-10-10]: the Personal plan
   is free with up to 6 users. Machine sharing is available on all plans and gives an outside user
   access to only the shared machine. So friends use their own free Tailscale account and Chad
   shares just the Mac mini with them. [Inference: shared-in users don't count towards the 6 users,
   to confirm.]
-- No port forwarding and no public exposure. Fallback if Tailscale is a non-starter: a Cloudflare
-  Tunnel with the same token auth (more setup, public hostname).
-- TLS: the server presents its own certificate and the app pins its fingerprint from the invite, so the
-  LAN and Tailscale paths use the same trust check. [Inference] iOS needs the Local Network
-  permission prompt for Bonjour (`NSLocalNetworkUsageDescription`, `NSBonjourServices`).
+- Tailscale remains the default remote path. Optional invite-only public HTTPS uses a loopback-only
+  HTTP listener behind Caddy; no admin route is registered there, API tokens are rejected, and
+  device-token player access remains permission-checked. See `docs/SETUP_MAC_MINI.md`.
+- TLS: the server presents its own certificate and the app pins its identity fingerprint from the
+  invite on LAN/Tailscale. For the configured public hostname, the client validates Caddy's renewed
+  certificate with system WebPKI trust and still pairs against the server identity pin.
+  [Inference] iOS needs the Local Network permission prompt for Bonjour
+  (`NSLocalNetworkUsageDescription`, `NSBonjourServices`).
 - [Inference] The Mac App Store Tailscale app runs only while a user is logged in. For boot-time remote
   access the Mac mini should use Tailscale's standalone/daemon install. Verify in the server spike.
 
@@ -153,7 +157,8 @@ admin: /v1/admin/users, /invites, /permissions, /library/import, /library/publis
   `POST /v1/admin/backups/:id/verify`, `POST /v1/admin/backups/:id/restore`.
 
 ## Offline and unreachable (`ServerSession`, `ConnectionBanner`)
-- `ServerSession.connection` is `connected(.home | .tailscale)` (Tailscale = `*.ts.net`,
+- `ServerSession.connection` is `connected(.home | .tailscale | .internet)` (Internet means the
+  profile's configured public URL; Tailscale = `*.ts.net`,
   100.64.0.0/10 or `fd7a:115c:a1e0::/48`), `connecting`, `unreachable`, `certificateMismatch` (the
   pinning delegate refused the certificate) or `signedOut(.notPaired | .revoked)` (401). The state
   machine is `SupersEmuKit.ConnectionMonitor`.
@@ -219,4 +224,3 @@ responsibility. SupersEmu ships no games or BIOS files.
   then removes the old copy; on any failure the partial copy is removed and nothing switches. If the library's drive
   is missing at boot the server still starts, creates nothing in its place, reports `available: false`, and refuses
   imports/uploads with 503 until the drive is back.
-

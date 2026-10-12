@@ -33,6 +33,7 @@ public enum CertificatePin {
 /// codes and pins stay bound to the host they were meant for.
 public final class PinnedCertificateDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     public let certificateSHA256: String?
+    public let webPKIHosts: Set<String>
     /// Typed address + code has no fingerprint to pin: the first certificate seen from `expectedHost`
     /// is accepted and recorded in `observedSHA256` (trust on first use), then pinned from then on.
     public let trustOnFirstUse: Bool
@@ -44,8 +45,10 @@ public final class PinnedCertificateDelegate: NSObject, URLSessionTaskDelegate, 
     /// Certificates refused so far; a change across a request means it failed on the pin, not the network.
     public var rejectionCount: Int { lock.withLock { rejections } }
 
-    public init(certificateSHA256: String?, trustOnFirstUse: Bool = false, expectedHost: String? = nil) {
+    public init(certificateSHA256: String?, trustOnFirstUse: Bool = false, expectedHost: String? = nil,
+                webPKIHosts: Set<String> = []) {
         self.certificateSHA256 = certificateSHA256
+        self.webPKIHosts = Set(webPKIHosts.map { $0.lowercased() })
         self.trustOnFirstUse = trustOnFirstUse && certificateSHA256 == nil && expectedHost != nil
         self.expectedHost = expectedHost?.lowercased()
     }
@@ -57,11 +60,18 @@ public final class PinnedCertificateDelegate: NSObject, URLSessionTaskDelegate, 
     }
 
     public func decision(authenticationMethod: String, trust: SecTrust?) -> Decision {
-        Self.decision(authenticationMethod: authenticationMethod, trust: trust, pin: certificateSHA256)
+        Self.decision(authenticationMethod: authenticationMethod, trust: trust, pin: certificateSHA256,
+                      host: nil, webPKIHosts: webPKIHosts)
     }
 
     public static func decision(authenticationMethod: String, trust: SecTrust?, pin: String?) -> Decision {
+        decision(authenticationMethod: authenticationMethod, trust: trust, pin: pin, host: nil, webPKIHosts: [])
+    }
+
+    public static func decision(authenticationMethod: String, trust: SecTrust?, pin: String?,
+                                host: String?, webPKIHosts: Set<String>) -> Decision {
         guard authenticationMethod == NSURLAuthenticationMethodServerTrust else { return .defaultHandling }
+        if let host, webPKIHosts.contains(host.lowercased()) { return .defaultHandling }
         guard let pin else { return .defaultHandling }
         guard let trust, CertificatePin.evaluate(trust, expected: pin) else { return .reject }
         return .useTrust
@@ -69,8 +79,14 @@ public final class PinnedCertificateDelegate: NSObject, URLSessionTaskDelegate, 
 
     /// Pin check for other delegates (e.g. `GameDownloader`'s trust handler).
     public static func disposition(for challenge: URLAuthenticationChallenge, pin: String?) -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        disposition(for: challenge, pin: pin, webPKIHosts: [])
+    }
+
+    public static func disposition(for challenge: URLAuthenticationChallenge, pin: String?,
+                                   webPKIHosts: Set<String>) -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         let trust = challenge.protectionSpace.serverTrust
-        switch decision(authenticationMethod: challenge.protectionSpace.authenticationMethod, trust: trust, pin: pin) {
+        switch decision(authenticationMethod: challenge.protectionSpace.authenticationMethod, trust: trust, pin: pin,
+                        host: challenge.protectionSpace.host, webPKIHosts: webPKIHosts) {
         case .useTrust: return (.useCredential, URLCredential(trust: trust!))
         case .reject: return (.cancelAuthenticationChallenge, nil)
         case .defaultHandling: return (.performDefaultHandling, nil)
@@ -91,7 +107,7 @@ public final class PinnedCertificateDelegate: NSObject, URLSessionTaskDelegate, 
             }
             return
         }
-        let (disposition, credential) = Self.disposition(for: challenge, pin: certificateSHA256)
+        let (disposition, credential) = Self.disposition(for: challenge, pin: certificateSHA256, webPKIHosts: webPKIHosts)
         if disposition == .cancelAuthenticationChallenge { lock.withLock { rejections += 1 } }
         completionHandler(disposition, credential)
     }
@@ -111,10 +127,13 @@ public final class PinnedCertificateDelegate: NSObject, URLSessionTaskDelegate, 
     }
 
     /// An ephemeral session pinned to `certificateSHA256`.
-    public static func session(certificateSHA256: String?, timeout: TimeInterval = 15) -> URLSession {
+    public static func session(certificateSHA256: String?, timeout: TimeInterval = 15,
+                               webPKIHosts: Set<String> = []) -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
         configuration.waitsForConnectivity = false
-        return URLSession(configuration: configuration, delegate: PinnedCertificateDelegate(certificateSHA256: certificateSHA256), delegateQueue: nil)
+        return URLSession(configuration: configuration,
+                          delegate: PinnedCertificateDelegate(certificateSHA256: certificateSHA256, webPKIHosts: webPKIHosts),
+                          delegateQueue: nil)
     }
 }

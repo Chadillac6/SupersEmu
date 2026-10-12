@@ -1,0 +1,38 @@
+{
+	# SUPERSEMU_ACME_EMAIL
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 5m
+			write 5m
+			idle 2m
+		}
+	}
+}
+
+{$SUPERSEMU_PUBLIC_HOST} {
+	# SUPERSEMU_TLS_DIRECTIVE
+	log {
+		output file "{$SUPERSEMU_CADDY_DATA_DIR}/access.json"
+		format json
+	}
+
+	route {
+		@admin path /v1/admin /v1/admin/*
+		respond @admin 404
+
+		request_body {
+			max_size 80MB
+		}
+
+		header -Server
+
+		reverse_proxy 127.0.0.1:{$SUPERSEMU_PUBLIC_PORT} {
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 30s
+				keepalive 30s
+			}
+		}
+	}
+}

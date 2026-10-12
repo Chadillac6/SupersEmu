@@ -4,10 +4,12 @@ import Foundation
 public enum ConnectionRoute: String, Codable, Sendable, Equatable {
     case home
     case tailscale
+    case internet
 
     /// Tailscale addresses: MagicDNS (`*.ts.net`), the CGNAT range 100.64.0.0/10 and the `fd7a:115c:a1e0::/48` ULA.
-    public static func of(_ url: URL) -> ConnectionRoute {
+    public static func of(_ url: URL, publicURL: URL? = nil) -> ConnectionRoute {
         guard let host = url.host?.lowercased() else { return .home }
+        if host == publicURL?.host?.lowercased() { return .internet }
         if host.hasSuffix(".ts.net") || host.hasPrefix("fd7a:115c:a1e0:") { return .tailscale }
         let octets = host.split(separator: ".").compactMap { UInt8($0) }
         if octets.count == 4, octets[0] == 100, (64...127).contains(octets[1]) { return .tailscale }
@@ -103,8 +105,8 @@ public struct ConnectionMonitor: Equatable, Sendable {
         consecutiveFailures = 0
     }
 
-    public mutating func succeeded(via url: URL) {
-        state = .connected(ConnectionRoute.of(url))
+    public mutating func succeeded(via url: URL, publicURL: URL? = nil) {
+        state = .connected(ConnectionRoute.of(url, publicURL: publicURL))
         consecutiveFailures = 0
     }
 

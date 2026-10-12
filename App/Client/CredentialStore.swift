@@ -6,6 +6,7 @@ struct ServerCredential: Codable, Equatable, Sendable {
     var serverName: String
     /// Tried in order (LAN first, then Tailscale).
     var urls: [URL]
+    var publicURL: URL? = nil
     var certificateSHA256: String?
     var token: String
     var deviceID: String

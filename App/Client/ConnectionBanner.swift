@@ -20,6 +20,8 @@ struct ConnectionBanner: View {
                 pill("Back online. Saves made offline are syncing.", symbol: "checkmark.icloud", id: "connection-recovered")
             } else if server.connection == .connected(.tailscale) {
                 pill("Connected to \(server.serverName) via Tailscale", symbol: "network.badge.shield.half.filled", id: "connection-tailscale")
+            } else if server.connection == .connected(.internet) {
+                pill("Connected to \(server.serverName) via Internet", symbol: "globe", id: "connection-internet")
             }
         }
         .animation(.default, value: server.connection)
