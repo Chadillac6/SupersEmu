@@ -23,8 +23,29 @@ struct TouchControls: View {
     private var isCompactPortrait: Bool {
         horizontalSizeClass == .compact && verticalSizeClass != .compact
     }
+    private var requiredPortraitWidth: CGFloat {
+        let dpad: CGFloat = 156
+        let pill: CGFloat = 64
+        let button: CGFloat = 62
+        let gap: CGFloat = 8
+        switch input.layout.system {
+        case "n64":
+            let cButtons = 2 * 52 + 12
+            let faceButtons = 2 * button + 10
+            return max(dpad + pill + cButtons + 2 * gap, 120 + faceButtons + gap)
+        case "genesis", "segacd", "sega32x":
+            let faceButtons = 3 * button + 2 * 4
+            return max(dpad + faceButtons + gap, 2 * pill + gap)
+        case "psx":
+            return dpad + pill + 2 * button + 10 + 2 * gap
+        case "gb", "gbc", "gba":
+            return dpad + pill + 2 * button + 8 + 2 * gap
+        default:
+            return dpad + pill + 2 * button + 10 + 2 * gap
+        }
+    }
     private var scale: CGFloat {
-        isCompactPortrait ? min(1.3, max(0.85, availableWidth / 375)) : 1
+        isCompactPortrait ? min(1.3, max(0.75, (availableWidth - 24) / requiredPortraitWidth)) : 1
     }
 
     var body: some View {
@@ -35,7 +56,7 @@ struct TouchControls: View {
                 landscapeLayout
             }
         }
-        .padding(.horizontal, isCompactPortrait ? 0 : 10)
+        .padding(.horizontal, isCompactPortrait ? 12 : 10)
         .padding(.vertical, isCompactPortrait ? 8 : 12)
         .frame(maxWidth: .infinity)
         .coordinateSpace(name: Self.coordinateSpace)
@@ -169,14 +190,14 @@ struct TouchControls: View {
     private func snesPortrait(scale: CGFloat) -> some View {
         HStack(spacing: 0) {
             portraitDpad(scale: scale)
-            Spacer(minLength: 0)
+            Spacer(minLength: 8 * scale)
             VStack(spacing: 6 * scale) {
                 pill("L", width: 64 * scale, height: 32 * scale)
                 pill("R", width: 64 * scale, height: 32 * scale)
                 pill("Select", width: 64 * scale, height: 32 * scale)
                 pill("Start", width: 64 * scale, height: 32 * scale)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8 * scale)
             portraitDiamond(top: "X", left: "Y", right: "A", bottom: "B", scale: scale)
         }
     }
@@ -184,7 +205,7 @@ struct TouchControls: View {
     private func handheldPortrait(scale: CGFloat) -> some View {
         HStack(spacing: 0) {
             portraitDpad(scale: scale)
-            Spacer(minLength: 0)
+            Spacer(minLength: 8 * scale)
             VStack(spacing: 6 * scale) {
                 if input.layout.system == "gba" {
                     pill("L", width: 64 * scale, height: 32 * scale)
@@ -193,7 +214,7 @@ struct TouchControls: View {
                 pill("Select", width: 64 * scale, height: 32 * scale)
                 pill("Start", width: 64 * scale, height: 32 * scale)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8 * scale)
             HStack(spacing: 8 * scale) {
                 pad("B", size: 62 * scale).offset(y: 12 * scale)
                 pad("A", size: 62 * scale).offset(y: -12 * scale)
@@ -204,7 +225,7 @@ struct TouchControls: View {
     private func psxPortrait(scale: CGFloat) -> some View {
         HStack(spacing: 0) {
             portraitDpad(scale: scale)
-            Spacer(minLength: 0)
+            Spacer(minLength: 8 * scale)
             VStack(spacing: 6 * scale) {
                 pill("L1", width: 64 * scale, height: 32 * scale)
                 pill("R1", width: 64 * scale, height: 32 * scale)
@@ -213,7 +234,7 @@ struct TouchControls: View {
                 pill("Select", width: 64 * scale, height: 32 * scale)
                 pill("Start", width: 64 * scale, height: 32 * scale)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8 * scale)
             portraitDiamond(top: "Triangle", left: "Square", right: "Circle", bottom: "Cross",
                             labels: ["Triangle": "△", "Square": "□", "Circle": "○", "Cross": "✕"], scale: scale)
         }
@@ -223,7 +244,7 @@ struct TouchControls: View {
         VStack(spacing: 6 * scale) {
             HStack(spacing: 0) {
                 portraitDpad(scale: scale)
-                Spacer(minLength: 0)
+                Spacer(minLength: 8 * scale)
                 VStack(spacing: 4 * scale) {
                     HStack(spacing: 4 * scale) {
                         pad("X", size: 62 * scale); pad("Y", size: 62 * scale); pad("Z", size: 62 * scale)
@@ -250,7 +271,7 @@ struct TouchControls: View {
                     pill("R", width: 64 * scale, height: 32 * scale)
                     pill("Start", width: 64 * scale, height: 32 * scale)
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 8 * scale)
                 cButtonCross(size: 52 * scale, scale: scale)
             }
             HStack(spacing: 0) {
@@ -258,7 +279,7 @@ struct TouchControls: View {
                     pill("Z", width: 64 * scale, height: 32 * scale)
                     analogStick(radius: 60 * scale)
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 8 * scale)
                 HStack(spacing: 10 * scale) {
                     pad("B", size: 62 * scale).offset(y: -8 * scale)
                     pad("A", size: 62 * scale).offset(y: 8 * scale)
@@ -417,8 +438,13 @@ private final class TouchPadSurfaceView: UIView {
     func configure(input: GameInput, model: TouchPadModel, zones: [TouchZone]) {
         self.input = input
         self.model = model
+        guard !zonesMatch(self.zones, zones) else { return }
         self.zones = zones
         updateState()
+    }
+
+    private func zonesMatch(_ lhs: [TouchZone], _ rhs: [TouchZone]) -> Bool {
+        lhs.count == rhs.count && lhs.allSatisfy { rhs.contains($0) }
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -475,9 +501,10 @@ private final class TouchPadSurfaceView: UIView {
         }
         let newlyPressed = pressed.subtracting(model.pressed)
         let padInputs = Set(pressed.compactMap { input.layout.control($0)?.defaultInput })
-        input.touchState = PadState(pressed: padInputs, leftStick: stick)
-        model.pressed = pressed
-        model.stick = stick
+        let touchState = PadState(pressed: padInputs, leftStick: stick)
+        if input.touchState != touchState { input.touchState = touchState }
+        if model.pressed != pressed { model.pressed = pressed }
+        if model.stick != stick { model.stick = stick }
         for _ in newlyPressed {
             feedback.impactOccurred()
             feedback.prepare()

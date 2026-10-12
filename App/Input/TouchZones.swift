@@ -1,6 +1,6 @@
 import Foundation
 
-struct TouchZone {
+struct TouchZone: Equatable {
     enum Kind: Equatable {
         case button
         case dpad

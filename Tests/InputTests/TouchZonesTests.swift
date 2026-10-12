@@ -1,6 +1,14 @@
 import XCTest
 
 final class TouchZonesTests: XCTestCase {
+    func testTouchZoneEqualityIncludesIdentityAndFrame() {
+        let zone = TouchZone(id: "A", frame: CGRect(x: 10, y: 20, width: 40, height: 40), kind: .button)
+
+        XCTAssertEqual(zone, TouchZone(id: "A", frame: zone.frame, kind: .button))
+        XCTAssertNotEqual(zone, TouchZone(id: "B", frame: zone.frame, kind: .button))
+        XCTAssertNotEqual(zone, TouchZone(id: "A", frame: CGRect(x: 11, y: 20, width: 40, height: 40), kind: .button))
+    }
+
     func testDPadEightDirectionsAndDeadZone() {
         let dpad = TouchZone(id: "DPad", frame: CGRect(x: 0, y: 0, width: 100, height: 100), kind: .dpad)
         let center = CGPoint(x: 50, y: 50)
