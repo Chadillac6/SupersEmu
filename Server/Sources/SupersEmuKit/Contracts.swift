@@ -12,9 +12,12 @@ public struct PairingPayload: Codable, Sendable, Equatable {
     public var urls: [URL]
     /// SHA-256 (hex) of the server's self-signed TLS certificate; the client pins it.
     public var certificateSHA256: String?
+    /// Optional public HTTPS address. Separate from LAN and Tailscale URLs.
+    public var publicURL: URL?
     public var code: String
-    public init(serverName: String, urls: [URL], certificateSHA256: String?, code: String) {
-        self.serverName = serverName; self.urls = urls; self.certificateSHA256 = certificateSHA256; self.code = code
+    public init(serverName: String, urls: [URL], certificateSHA256: String?, code: String, publicURL: URL? = nil) {
+        self.serverName = serverName; self.urls = urls; self.certificateSHA256 = certificateSHA256
+        self.publicURL = publicURL; self.code = code
     }
 }
 

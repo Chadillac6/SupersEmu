@@ -77,7 +77,7 @@ final class ServerSession {
 
     /// Client for the server URL that answered last (LAN first, then Tailscale).
     func client() -> APIClient? {
-        guard let credential, let url = activeURL ?? credential.urls.first else { return nil }
+        guard let credential, let url = activeURL ?? credential.urls.first ?? credential.publicURL else { return nil }
         return APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
     }
 
@@ -95,21 +95,23 @@ final class ServerSession {
         let request = PairRequest(code: payload.code, deviceName: Self.deviceName, platform: Self.platform)
         // Device tokens are bearer secrets: only pair over HTTPS (plain HTTP is allowed for loopback dev servers).
         let urls = payload.urls.filter { $0.scheme == "https" || ($0.scheme == "http" && Self.isLoopback($0)) }
-        guard !urls.isEmpty else { throw PairingError.insecureAddress }
+        let candidates = urls + [payload.publicURL].compactMap { $0 }.filter { !urls.contains($0) }
+        guard !candidates.isEmpty else { throw PairingError.insecureAddress }
         let pin = payload.certificateSHA256 ?? confirmedCertificateSHA256
-        guard !urls.contains(where: { $0.scheme?.lowercased() == "https" }) || pin != nil else {
+        guard !candidates.contains(where: { $0.scheme?.lowercased() == "https" }) || pin != nil else {
             throw PairingError.fingerprintConfirmationRequired
         }
         var lastError: Error = APIClientError.invalidResponse
-        for url in urls {
-            let trust = PinnedCertificateDelegate(certificateSHA256: pin)
+        let webPKIEndpoints = WebPKIEndpoint.keys(for: payload.publicURL)
+        for url in candidates {
+            let trust = PinnedCertificateDelegate(certificateSHA256: pin, webPKIEndpoints: webPKIEndpoints)
             let pairingSession = URLSession(configuration: Self.configuration, delegate: trust, delegateQueue: nil)
             defer { pairingSession.finishTasksAndInvalidate() }
             let client = APIClient(baseURL: url, token: nil, session: pairingSession)
             do {
                 let response = try await client.pair(request)
                 let credential = ServerCredential(
-                    serverName: response.serverName, urls: urls, certificateSHA256: pin,
+                    serverName: response.serverName, urls: urls, publicURL: payload.publicURL, certificateSHA256: pin,
                     token: response.token, deviceID: response.deviceID, user: response.user)
                 try store.save(credential)
                 generation += 1
@@ -137,13 +139,15 @@ final class ServerSession {
         response: PairResponse,
         at url: URL,
         certificateSHA256: String,
+        publicURL: URL? = nil,
         shouldCommit: () -> Bool
     ) async throws {
         guard shouldCommit() else {
             let client = APIClient(
                 baseURL: url,
                 token: response.token,
-                session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256)
+                session: PinnedCertificateDelegate.session(certificateSHA256: certificateSHA256,
+                                                            webPKIEndpoints: WebPKIEndpoint.keys(for: publicURL))
             )
             let revocationFailure: String?
             do {
@@ -160,8 +164,8 @@ final class ServerSession {
             throw PairingError.approvedResponseFlowLost(
                 deviceID: response.deviceID, revocationFailure: revocationFailure)
         }
-        let credential = ServerCredential(serverName: response.serverName, urls: [url],
-                                          certificateSHA256: certificateSHA256, token: response.token,
+        let credential = ServerCredential(serverName: response.serverName, urls: publicURL == nil ? [url] : [],
+                                          publicURL: publicURL, certificateSHA256: certificateSHA256, token: response.token,
                                           deviceID: response.deviceID, user: response.user)
         try store.save(credential)
         generation += 1
@@ -200,7 +204,8 @@ final class ServerSession {
             return
         }
         let generation = self.generation
-        let candidates = [activeURL].compactMap { $0 } + credential.urls.filter { $0 != activeURL }
+        let candidates = [activeURL].compactMap { $0 } + credential.urls.filter { $0 != activeURL } +
+            [credential.publicURL].compactMap { $0 }.filter { $0 != activeURL && !credential.urls.contains($0) }
         var failure = ConnectionFailure.unreachable
         for url in candidates {
             let client = APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
@@ -212,7 +217,7 @@ final class ServerSession {
                 apply(library.games)
                 lastRefreshed = Date()
                 if connection == .unreachable || connection == .certificateMismatch { recoveredAt = Date() }
-                monitor.succeeded(via: url)
+                monitor.succeeded(via: url, publicURL: credential.publicURL)
                 publish()
                 startHeartbeat()
                 retryTask?.cancel()
@@ -255,6 +260,7 @@ final class ServerSession {
         let client = APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
         do {
             let health = try await client.health()
+            learnPublicURL(health.publicURL, credential: credential, reachedAt: url)
             guard let revision = health.libraryRevision else { return }
             guard revision != libraryRevision else { return }
             libraryRevision = revision
@@ -348,7 +354,9 @@ final class ServerSession {
     func downloader(cache: GameCache) -> GameDownloader? {
         guard let client = client() else { return nil }
         let pin = credential?.certificateSHA256
-        return GameDownloader(client: client, cache: cache, trust: { PinnedCertificateDelegate.disposition(for: $0, pin: pin) })
+        let webPKIEndpoints = WebPKIEndpoint.keys(for: credential?.publicURL)
+        return GameDownloader(client: client, cache: cache,
+                              trust: { PinnedCertificateDelegate.disposition(for: $0, pin: pin, webPKIEndpoints: webPKIEndpoints) })
     }
 
     private func apply(_ games: [GameSummary]) {
@@ -368,13 +376,32 @@ final class ServerSession {
 
     private func session(pin: String?) -> URLSession {
         if let urlSession { return urlSession }
-        let delegate = PinnedCertificateDelegate(certificateSHA256: pin)
+        let webPKIEndpoints = WebPKIEndpoint.keys(for: credential?.publicURL)
+        let delegate = PinnedCertificateDelegate(certificateSHA256: pin, webPKIEndpoints: webPKIEndpoints)
         let session = URLSession(configuration: Self.configuration, delegate: delegate, delegateQueue: nil)
         if credential != nil {
             urlSession = session
             trust = delegate
         }
         return session
+    }
+
+    private func learnPublicURL(_ publicURL: URL?, credential: ServerCredential, reachedAt url: URL) {
+        let currentPublicHost = credential.publicURL?.host?.lowercased()
+        guard url.scheme?.lowercased() == "https",
+              credential.certificateSHA256 != nil, let publicURL,
+              publicURL.scheme?.lowercased() == "https", publicURL.host != nil,
+              publicURL.user == nil, publicURL.password == nil,
+              publicURL.query == nil, publicURL.fragment == nil,
+              publicURL != credential.publicURL,
+              url.host?.lowercased() != currentPublicHost else { return }
+        var updated = credential
+        updated.publicURL = publicURL
+        try? store.save(updated)
+        self.credential = updated
+        urlSession?.finishTasksAndInvalidate()
+        urlSession = nil
+        trust = nil
     }
 
     private struct Snapshot: Codable {

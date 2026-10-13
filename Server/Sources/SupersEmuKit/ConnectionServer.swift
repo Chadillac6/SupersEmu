@@ -6,6 +6,7 @@ public struct ServerProfile: Codable, Sendable, Equatable {
     /// LAN first, then Tailscale, as given by the pairing QR (plus any Bonjour discoveries).
     public var urls: [URL]
     public var certificateSHA256: String?
+    public var publicURL: URL?
     /// The URL that answered last time; tried first.
     public var lastGoodURL: URL?
     public var userID: String?
@@ -16,8 +17,9 @@ public struct ServerProfile: Codable, Sendable, Equatable {
     public var allowsInsecureTransport: Bool
 
     public init(serverName: String, urls: [URL], certificateSHA256: String?, lastGoodURL: URL? = nil, userID: String? = nil, deviceID: String? = nil,
-                tokenAccount: String? = nil, allowsInsecureTransport: Bool = false) {
+                tokenAccount: String? = nil, allowsInsecureTransport: Bool = false, publicURL: URL? = nil) {
         self.serverName = serverName; self.urls = urls; self.certificateSHA256 = certificateSHA256
+        self.publicURL = publicURL
         self.lastGoodURL = lastGoodURL; self.userID = userID; self.deviceID = deviceID
         self.tokenAccount = tokenAccount ?? certificateSHA256.map(CertificatePin.normalize) ?? "unpinned:\(serverName)"
         self.allowsInsecureTransport = allowsInsecureTransport
@@ -25,16 +27,21 @@ public struct ServerProfile: Codable, Sendable, Equatable {
 
     public init(payload: PairingPayload, allowsInsecureTransport: Bool = false) {
         self.init(serverName: payload.serverName, urls: payload.urls, certificateSHA256: payload.certificateSHA256,
-                  allowsInsecureTransport: allowsInsecureTransport)
+                  allowsInsecureTransport: allowsInsecureTransport, publicURL: payload.publicURL)
     }
 
     /// Whether a device token may be sent to `url`: only over HTTPS with a pinned certificate, unless opted out.
     public func isTrustedTransport(_ url: URL) -> Bool {
-        allowsInsecureTransport || (url.scheme?.lowercased() == "https" && certificateSHA256 != nil)
+        let endpoint = WebPKIEndpoint.key(for: url)
+        let isPublicEndpoint = endpoint != nil && endpoint == publicURL.flatMap { WebPKIEndpoint.key(for: $0) }
+        return allowsInsecureTransport || (url.scheme?.lowercased() == "https" &&
+            (certificateSHA256 != nil || isPublicEndpoint))
     }
 }
 
 extension ServerProfile {
+    var webPKIEndpoints: Set<String> { WebPKIEndpoint.keys(for: publicURL) }
+
     /// Tolerates profiles saved before `tokenAccount` / `allowsInsecureTransport` existed.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -45,7 +52,8 @@ extension ServerProfile {
                   userID: try c.decodeIfPresent(String.self, forKey: .userID),
                   deviceID: try c.decodeIfPresent(String.self, forKey: .deviceID),
                   tokenAccount: try c.decodeIfPresent(String.self, forKey: .tokenAccount) ?? pin.map(CertificatePin.normalize) ?? "unpinned:\(serverName)",
-                  allowsInsecureTransport: try c.decodeIfPresent(Bool.self, forKey: .allowsInsecureTransport) ?? false)
+                  allowsInsecureTransport: try c.decodeIfPresent(Bool.self, forKey: .allowsInsecureTransport) ?? false,
+                  publicURL: try c.decodeIfPresent(URL.self, forKey: .publicURL))
     }
 }
 
@@ -76,18 +84,23 @@ public actor ServerConnection {
                 onProfileChange: (@Sendable (ServerProfile) -> Void)? = nil) {
         self.profile = profile
         self.tokenStore = tokenStore
-        self.session = session ?? PinnedCertificateDelegate.session(certificateSHA256: profile.certificateSHA256, timeout: 8)
+        self.session = session ?? PinnedCertificateDelegate.session(certificateSHA256: profile.certificateSHA256, timeout: 8,
+                                                                    webPKIEndpoints: profile.webPKIEndpoints)
         self.onProfileChange = onProfileChange
     }
 
     /// The last good URL first, then the rest in their given order.
-    public static func candidateOrder(urls: [URL], lastGood: URL?) -> [URL] {
+    public static func candidateOrder(urls: [URL], lastGood: URL?, publicURL: URL? = nil) -> [URL] {
         var ordered: [URL] = []
-        for url in [lastGood].compactMap({ $0 }) + urls where !ordered.contains(url) { ordered.append(url) }
+        for url in [lastGood].compactMap({ $0 }) + urls + [publicURL].compactMap({ $0 }) where !ordered.contains(url) {
+            ordered.append(url)
+        }
         return ordered
     }
 
-    public var candidates: [URL] { Self.candidateOrder(urls: profile.urls, lastGood: profile.lastGoodURL) }
+    public var candidates: [URL] {
+        Self.candidateOrder(urls: profile.urls, lastGood: profile.lastGoodURL, publicURL: profile.publicURL)
+    }
 
     /// Tries each candidate in order with `probe` and remembers the first that succeeds.
     @discardableResult

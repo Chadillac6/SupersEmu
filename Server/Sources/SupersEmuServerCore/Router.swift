@@ -9,23 +9,36 @@ extension LibraryResponse: ResponseEncodable {}
 extension GameDetail: ResponseEncodable {}
 extension APIErrorBody: ResponseEncodable {}
 
+public enum RouterExposure: Sendable, Hashable {
+    case local
+    case publicInternet
+}
+
 public enum ServerInfo {
     public static let version = "0.1.0"
 }
 
-public func buildRouter(store: ServerStore, metadata: MetadataService? = nil) -> Router<SERequestContext> {
+public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
+                        exposure: RouterExposure = .local, certificateSHA256: String? = nil,
+                        publicURL: URL? = nil, pairing: PairingServices? = nil) -> Router<SERequestContext> {
     let router = Router(context: SERequestContext.self)
     router.add(middleware: LogRequestsMiddleware(.info))
+    if exposure == .publicInternet {
+        router.add(middleware: PublicProxyMiddleware())
+    }
 
     router.group("v1").get("health") { _, _ in
         HealthResponse(
             status: "ok",
             serverName: store.serverName,
             serverVersion: ServerInfo.version,
-            libraryRevision: try store.libraryRevision())
+            libraryRevision: try store.libraryRevision(),
+            certificateSHA256: certificateSHA256,
+            publicURL: publicURL)
     }
 
-    let authed = router.group("v1").add(middleware: TokenAuthMiddleware(store: store))
+    let authed = router.group("v1").add(middleware: TokenAuthMiddleware(
+        store: store, requiresDeviceToken: exposure == .publicInternet))
     authed.get("me") { _, context in
         let auth = try context.caller()
         let scopes: [Scope]? = {
@@ -51,12 +64,16 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil) ->
     // Each Wave 1 track owns one of these files and fills in its routes.
     registerLibraryRoutes(authed, store: store)
     registerBIOSRoutes(authed, store: store)
-    registerAdminLibraryRoutes(authed, store: store, metadata: metadata)
-    registerAdminLibraryManagementRoutes(authed, store: store, metadata: metadata)
-    registerAdminUserRoutes(authed, store: store)
-    registerBackupRoutes(authed, store: store)
-    registerPairingRoutes(public: router.group("v1"), authed: authed, store: store)
+    registerPairingRoutes(public: router.group("v1"), authed: authed, store: store,
+                          services: pairing ?? PairingServices(store: store), exposure: exposure,
+                          includeAdminRoutes: exposure == .local)
     registerSaveRoutes(authed, store: store)
+    if exposure == .local {
+        registerAdminLibraryRoutes(authed, store: store, metadata: metadata)
+        registerAdminLibraryManagementRoutes(authed, store: store, metadata: metadata)
+        registerAdminUserRoutes(authed, store: store)
+        registerBackupRoutes(authed, store: store)
+    }
     return router
 }
 

@@ -20,6 +20,9 @@ public struct ServerRunOptions: Sendable {
     public var bonjour = true
     /// Background libretro-database matching and thumbnail downloads after imports.
     public var metadata = true
+    public var publicURL: URL?
+    public var publicPort: Int?
+    public var publicAccess: PublicAccessConfiguration?
 
     public init() {}
 }
@@ -28,7 +31,9 @@ public enum ServerLauncher {
     /// Builds the HTTPS (or `--insecure-http`) application and the pairing environment it advertises.
     public static func makeApplication(store: ServerStore, options: ServerRunOptions,
                                        onServerRunning: @escaping @Sendable (any Channel) async -> Void = { _ in }) throws
-        -> (application: some ApplicationProtocol, environment: PairingEnvironment) {
+        -> (application: Application<RouterResponder<SERequestContext>>,
+            publicApplication: Application<RouterResponder<SERequestContext>>?,
+            environment: PairingEnvironment) {
         let scheme = options.insecureHTTP ? "http" : "https"
         var server: HTTPServerBuilder = .http1()
         var pin: String?
@@ -40,15 +45,41 @@ public enum ServerLauncher {
         let urls = options.advertiseURLs.isEmpty
             ? LocalNetwork.advertisedURLs(scheme: scheme, port: options.port, tailscaleHost: options.tailscaleHost)
             : options.advertiseURLs
-        let environment = PairingEnvironment(urls: urls, certificateSHA256: pin)
+        let publicAccess = options.publicAccess
+        let environment = PairingEnvironment(urls: urls, certificateSHA256: pin, publicURL: publicAccess?.publicURL)
         let metadata = options.metadata ? MetadataService.standard(store: store) : nil
+        let pairing = PairingServices(store: store)
         metadata?.enqueue()
         metadata?.startPeriodicRetry()
         let application = Application(
-            router: buildRouter(store: store, metadata: metadata), server: server,
+            router: buildRouter(store: store, metadata: metadata, certificateSHA256: pin,
+                                 publicURL: publicAccess?.publicURL, pairing: pairing), server: server,
             configuration: .init(address: .hostname(options.hostname, port: options.port), serverName: "SupersEmu"),
             onServerRunning: onServerRunning)
-        return (application, environment)
+        let publicApplication = publicAccess.map { access in
+            Application(
+                router: buildRouter(store: store, metadata: metadata, exposure: .publicInternet,
+                                    certificateSHA256: pin, publicURL: access.publicURL, pairing: pairing),
+                server: .http1(),
+                configuration: .init(address: .hostname(Self.publicListenHost, port: access.listenPort), serverName: "SupersEmu"))
+        }
+        return (application, publicApplication, environment)
+    }
+
+    public static let publicListenHost = "127.0.0.1"
+
+    static func resolvePublicAccess(root: URL, options: ServerRunOptions, logger: Logger) -> ServerRunOptions {
+        var resolved = options
+        do {
+            resolved.publicAccess = try PublicAccessConfiguration.load(
+                root: root, publicURL: options.publicURL, listenPort: options.publicPort)
+        } catch {
+            resolved.publicAccess = nil
+            resolved.publicURL = nil
+            resolved.publicPort = nil
+            logger.warning("Ignoring invalid public-access.json or public access override; public listener disabled")
+        }
+        return resolved
     }
 
     /// Runs until SIGTERM/SIGINT. The launch daemon calls this. Also runs the daily backup, and for a restore stops
@@ -57,8 +88,10 @@ public enum ServerLauncher {
         var store = initial
         var logger = Logger(label: "supersemu-server")
         logger.logLevel = .info
+        var options = options
+        options = resolvePublicAccess(root: store.paths.root, options: options, logger: logger)
         while true {
-            let (application, environment) = try makeApplication(store: store, options: options)
+            let (application, publicApplication, environment) = try makeApplication(store: store, options: options)
             PairingEnvironment.current = environment
             logger.info("Serving \(options.insecureHTTP ? "HTTP (insecure)" : "HTTPS") on \(options.hostname):\(options.port)")
             logger.info("Pairing URLs: \(environment.urls.map(\.absoluteString).joined(separator: ", "))")
@@ -74,8 +107,9 @@ public enum ServerLauncher {
                     logger.warning("\(error)")
                 }
             }
-            let group = ServiceGroup(configuration: .init(
-                services: [.init(service: application)], gracefulShutdownSignals: [.sigterm, .sigint], logger: logger))
+            var services: [any Service] = [application]
+            if let publicApplication { services.append(publicApplication) }
+            let group = ServiceGroup(services: services, gracefulShutdownSignals: [.sigterm, .sigint], logger: logger)
             let pending = PendingRestore()
             await store.backups.setRestoreHandler { info in
                 pending.set(info)

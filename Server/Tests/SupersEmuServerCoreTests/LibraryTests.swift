@@ -193,6 +193,9 @@ final class LibraryTests: XCTestCase {
     }
 
     func app() -> some ApplicationProtocol { buildApplication(store: store, configuration: .init()) }
+    func publicApp() -> some ApplicationProtocol {
+        Application(router: buildRouter(store: store, exposure: .publicInternet, certificateSHA256: "identity-pin"))
+    }
     var importer: LibraryImporter { LibraryImporter(store: store) }
 
     @discardableResult
@@ -551,6 +554,58 @@ final class LibraryTests: XCTestCase {
                 XCTAssertEqual(Data(buffer: $0.body), rom)
             }
             try await client.execute(uri: "/v1/games/\(id)/files/deadbeef", method: .get, headers: self.auth(self.adminToken)) {
+                XCTAssertEqual($0.status, .notFound)
+            }
+        }
+    }
+
+    func testPublicPlayerLibraryAndSavesAreIsolated() async throws {
+        let grantedROM = try write(ROMFixtures.gba(seed: 21), "Granted.gba")
+        let privateROM = try write(ROMFixtures.gba(seed: 22), "Private.gba")
+        let grantedGameID = try await importer.importPaths([grantedROM.path], auth: nil).imported[0].id
+        let privateGameID = try await importer.importPaths([privateROM.path], auth: nil).imported[0].id
+        let player = try store.createUser(displayName: "Alex", role: .player)
+        let playerToken = try store.createDeviceToken(userID: player.id, deviceName: "Alex's iPhone").token
+        let adminSaveBytes = Data([1, 2, 3])
+        var adminRevisionID: String?
+
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/admin/users/\(player.id)/games", method: .put,
+                                     headers: self.auth(self.adminToken),
+                                     body: try self.json(SetUserGamesRequest(hiddenGameIDs: [privateGameID]))) {
+                XCTAssertEqual($0.status, .ok)
+            }
+            try await client.execute(uri: "/v1/saves/\(grantedGameID)/auto?core=TestCore&coreVersion=1",
+                                     method: .put, headers: self.auth(self.adminToken),
+                                     body: ByteBuffer(data: adminSaveBytes)) { response in
+                XCTAssertEqual(response.status, .ok)
+                adminRevisionID = try self.decode(SaveUploadResponse.self, response).revision.id
+            }
+        }
+
+        try await publicApp().test(.router) { client in
+            try await client.execute(uri: "/v1/games/\(privateGameID)/files/\(privateGameID)", method: .get,
+                                     headers: self.auth(playerToken)) {
+                XCTAssertTrue([HTTPResponse.Status.forbidden, .notFound].contains($0.status))
+            }
+            try await client.execute(uri: "/v1/games/\(grantedGameID)/files/\(grantedGameID)", method: .get,
+                                     headers: self.auth(playerToken)) {
+                XCTAssertEqual($0.status, .ok)
+            }
+            try await client.execute(uri: "/v1/saves/\(grantedGameID)/auto?core=TestCore&coreVersion=1",
+                                     method: .put, headers: self.auth(playerToken),
+                                     body: ByteBuffer(data: Data([4, 5, 6]))) {
+                XCTAssertEqual($0.status, .ok)
+            }
+            let saves = try await client.execute(uri: "/v1/saves/\(grantedGameID)", method: .get,
+                                                 headers: self.auth(playerToken)) { response in
+                XCTAssertEqual(response.status, .ok)
+                return try self.decode(SaveListResponse.self, response)
+            }
+            XCTAssertEqual(saves.revisions.count, 1)
+            XCTAssertNotEqual(saves.revisions.first?.id, adminRevisionID)
+            try await client.execute(uri: "/v1/saves/\(grantedGameID)/revisions/\(try XCTUnwrap(adminRevisionID))",
+                                     method: .get, headers: self.auth(playerToken)) {
                 XCTAssertEqual($0.status, .notFound)
             }
         }

@@ -6,10 +6,12 @@ import Synchronization
 public struct PairingEnvironment: Sendable, Equatable {
     public var urls: [URL]
     public var certificateSHA256: String?
+    public var publicURL: URL?
 
-    public init(urls: [URL], certificateSHA256: String?) {
+    public init(urls: [URL], certificateSHA256: String?, publicURL: URL? = nil) {
         self.urls = urls
         self.certificateSHA256 = certificateSHA256
+        self.publicURL = publicURL
     }
 
     private static let configured = Mutex<PairingEnvironment?>(nil)

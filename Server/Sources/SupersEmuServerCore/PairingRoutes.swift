@@ -12,32 +12,36 @@ extension PendingPairRequest: ResponseEncodable {}
 extension PairRequestActionResponse: ResponseEncodable {}
 
 // Track: pairing + network. POST /v1/admin/pairing-codes, POST /v1/pair.
-func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, authed: RouterGroup<SERequestContext>, store: ServerStore) {
-    let service = PairingService(store: store)
-    let requests = PairRequestService(store: store, pairing: service)
+func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, authed: RouterGroup<SERequestContext>,
+                           store: ServerStore, services: PairingServices, exposure: RouterExposure,
+                           includeAdminRoutes: Bool = true) {
+    let service = services.pairing
+    let requests = services.requests
 
-    authed.post("admin/pairing-codes") { request, context in
-        let auth = try context.caller()
-        try auth.requireAdmin()
-        try auth.require(.usersAdmin)
-        let body = try await request.decode(as: CreatePairingCodeRequest.self, context: context)
-        let code = try service.createCode(for: body.userID, caller: auth)
-        return EditedResponse(status: .created, response: code)
+    if includeAdminRoutes {
+        authed.post("admin/pairing-codes") { request, context in
+            let auth = try context.caller()
+            try auth.requireAdmin()
+            try auth.require(.usersAdmin)
+            let body = try await request.decode(as: CreatePairingCodeRequest.self, context: context)
+            let code = try service.createCode(for: body.userID, caller: auth)
+            return EditedResponse(status: .created, response: code)
+        }
     }
 
     publicGroup.post("pair") { request, context in
         let client = context.remoteAddress ?? "unknown"
-        guard service.limiter.allowAttempt(client: client) else {
+        guard service.limiter.allowAttempt(client: client, exposure: exposure) else {
             throw HTTPError(.tooManyRequests, message: "Too many pairing attempts. Wait a minute and try again.")
         }
         let body = try await request.decode(as: PairRequest.self, context: context)
-        return try service.pair(body, client: client)
+        return try service.pair(body, client: client, exposure: exposure)
     }
 
     publicGroup.post("pair/requests") { request, context in
         let client = context.remoteAddress ?? "unknown"
         let body = try await request.decode(as: PairRequestCreate.self, context: context)
-        let created = try await requests.create(body, remoteAddress: client)
+        let created = try await requests.create(body, remoteAddress: client, exposure: exposure)
         return EditedResponse(status: .created, response: created)
     }
 
@@ -45,13 +49,15 @@ func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, au
         let id = UUID(uuidString: try context.parameters.require("id"))
         let body = try await request.decode(as: PairRequestClaim.self, context: context)
         switch try await requests.claim(id: id, claimSecret: body.claimSecret,
-                                        remoteAddress: context.remoteAddress ?? "unknown") {
+                                        remoteAddress: context.remoteAddress ?? "unknown", exposure: exposure) {
         case .pending:
             return try LibraryHTTP.json(PairRequestPending(), status: .accepted)
         case .paired(let response):
             return try LibraryHTTP.json(response)
         }
     }
+
+    guard includeAdminRoutes else { return }
 
     @Sendable func adminCaller(_ context: SERequestContext) throws -> AuthContext {
         let auth = try context.caller()
@@ -82,6 +88,22 @@ func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, au
         }
         try await requests.deny(id: id, caller: auth)
         return PairRequestActionResponse(status: "denied")
+    }
+}
+
+public struct PairingServices: Sendable {
+    let pairing: PairingService
+    let requests: PairRequestService
+
+    public init(store: ServerStore) {
+        let pairing = PairingService(store: store)
+        self.pairing = pairing
+        self.requests = PairRequestService(store: store, pairing: pairing)
+    }
+
+    init(pairing: PairingService, requests: PairRequestService) {
+        self.pairing = pairing
+        self.requests = requests
     }
 }
 
@@ -130,16 +152,18 @@ public final class PairingService: Sendable {
 
         let environment = PairingEnvironment.resolve(for: store)
         let payload = PairingPayload(serverName: store.serverName, urls: environment.urls,
-                                     certificateSHA256: environment.certificateSHA256, code: code)
+                                     certificateSHA256: environment.certificateSHA256, code: code,
+                                     publicURL: environment.publicURL)
         return PairingCode(code: code, expiresAt: expires, payload: payload, qrURL: try PairingLink.url(for: payload).absoluteString)
     }
 
     /// Consumes `request.code` and issues a device token for the code's user.
-    public func pair(_ request: PairRequest, client: String = "local") throws -> PairResponse {
+    public func pair(_ request: PairRequest, client: String = "local",
+                     exposure: RouterExposure = .local) throws -> PairResponse {
         let code = request.code.filter(\.isNumber)
         let deviceName = request.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard code.count == 6 else {
-            limiter.recordFailure(client: client)
+            limiter.recordFailure(client: client, exposure: exposure)
             throw HTTPError(.unauthorized, message: "Invalid or expired pairing code")
         }
         guard !deviceName.isEmpty, deviceName.count <= 100 else { throw HTTPError(.badRequest, message: "deviceName is required") }
@@ -164,7 +188,7 @@ public final class PairingService: Sendable {
             return (user, device.deviceID, device.token)
         }
         guard let paired else {
-            limiter.recordFailure(client: client)
+            limiter.recordFailure(client: client, exposure: exposure)
             throw HTTPError(.unauthorized, message: "Invalid or expired pairing code")
         }
         return PairResponse(token: paired.token, deviceID: paired.deviceID, user: paired.user, serverName: store.serverName)
@@ -240,6 +264,7 @@ actor PairRequestService {
         var request: PendingPairRequest
         var claimHash: String
         var state: State
+        var exposure: RouterExposure
     }
 
     private let store: ServerStore
@@ -270,7 +295,8 @@ actor PairRequestService {
         self.maximumPendingGlobally = maximumPendingGlobally
     }
 
-    func create(_ body: PairRequestCreate, remoteAddress: String) throws -> PairRequestCreated {
+    func create(_ body: PairRequestCreate, remoteAddress: String,
+                exposure: RouterExposure = .local) throws -> PairRequestCreated {
         let created = now()
         try recordCreateAttempt(remoteAddress: remoteAddress, at: created)
         let name = body.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -291,7 +317,9 @@ actor PairRequestService {
             entries[oldest.request.id]?.state = .expired
         }
         let pendingCount = entries.values.filter {
-            if case .waiting = $0.state { return $0.request.expiresAt > created }
+            if case .waiting = $0.state {
+                return $0.exposure == exposure && $0.request.expiresAt > created
+            }
             return false
         }.count
         guard pendingCount < maximumPendingGlobally else {
@@ -305,7 +333,8 @@ actor PairRequestService {
             id: id, deviceName: name, platform: String(body.platform.prefix(40)), remoteAddress: remoteAddress,
             matchCode: PairingMatchCode.compute(certificateSHA256: certificate, requestID: id, claimHash: body.claimHash),
             createdAt: created, expiresAt: expires)
-        entries[id] = Entry(request: publicRequest, claimHash: body.claimHash.lowercased(), state: .waiting)
+        entries[id] = Entry(request: publicRequest, claimHash: body.claimHash.lowercased(),
+                            state: .waiting, exposure: exposure)
         try store.audit(nil, action: "pairing.request_created", detail: "id=\(id) device=\(name) platform=\(body.platform) address=\(remoteAddress)")
         return PairRequestCreated(requestID: id, expiresAt: expires)
     }
@@ -318,9 +347,14 @@ actor PairRequestService {
         }.sorted { $0.createdAt < $1.createdAt }
     }
 
-    func claim(id: UUID?, claimSecret: String, remoteAddress: String = "unknown") throws -> PairRequestClaimResult {
+    func claim(id: UUID?, claimSecret: String, remoteAddress: String = "unknown",
+               exposure: RouterExposure = .local) throws -> PairRequestClaimResult {
         let claimedAt = now()
         guard let id, var entry = entries[id] else {
+            try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
+            throw HTTPError(.notFound, message: "No such pairing request")
+        }
+        guard entry.exposure == exposure else {
             try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
             throw HTTPError(.notFound, message: "No such pairing request")
         }
@@ -429,11 +463,16 @@ actor PairRequestService {
 /// addresses can't brute-force together: at 60 failures a minute a 10-minute code faces at most ~600 guesses of
 /// 1,000,000. One client's failures don't lock out others until the ceiling is reached.
 public final class PairingRateLimiter: Sendable {
+    private struct FailureState {
+        var clients: [String: [Date]] = [:]
+        var global: [RouterExposure: [Date]] = [:]
+    }
+
     let maxFailures: Int
     let maxGlobalFailures: Int
     let window: TimeInterval
     let now: @Sendable () -> Date
-    private let failures = Mutex<[String: [Date]]>([:])
+    private let failures = Mutex(FailureState())
 
     public init(maxFailures: Int = 5, maxGlobalFailures: Int = 60, window: TimeInterval = 60,
                 now: @escaping @Sendable () -> Date = { Date() }) {
@@ -443,25 +482,32 @@ public final class PairingRateLimiter: Sendable {
         self.now = now
     }
 
-    public func allowAttempt(client: String) -> Bool {
+    public func allowAttempt(client: String, exposure: RouterExposure = .local) -> Bool {
         let cutoff = now().addingTimeInterval(-window)
         return failures.withLock { failures in
-            for key in Array(failures.keys) {
-                failures[key]?.removeAll { $0 < cutoff }
-                if failures[key]?.isEmpty == true { failures[key] = nil }
+            for key in Array(failures.clients.keys) {
+                failures.clients[key]?.removeAll { $0 < cutoff }
+                if failures.clients[key]?.isEmpty == true { failures.clients[key] = nil }
             }
-            let total = failures.values.reduce(0) { $0 + $1.count }
-            return (failures[client]?.count ?? 0) < maxFailures && total < maxGlobalFailures
+            for key in Array(failures.global.keys) {
+                failures.global[key]?.removeAll { $0 < cutoff }
+                if failures.global[key]?.isEmpty == true { failures.global[key] = nil }
+            }
+            return (failures.clients[client]?.count ?? 0) < maxFailures
+                && (failures.global[exposure]?.count ?? 0) < maxGlobalFailures
         }
     }
 
-    public func recordFailure(client: String) {
-        recordAttempt(client: client)
+    public func recordFailure(client: String, exposure: RouterExposure = .local) {
+        recordAttempt(client: client, exposure: exposure)
     }
 
-    public func recordAttempt(client: String) {
+    public func recordAttempt(client: String, exposure: RouterExposure = .local) {
         let at = now()
-        failures.withLock { $0[client, default: []].append(at) }
+        failures.withLock {
+            $0.clients[client, default: []].append(at)
+            $0.global[exposure, default: []].append(at)
+        }
     }
 }
 

@@ -2,6 +2,7 @@ import Foundation
 import GRDB
 import HTTPTypes
 import Hummingbird
+import NIOCore
 import SupersEmuKit
 
 public struct AuthContext: Sendable, Equatable {
@@ -49,11 +50,13 @@ public struct SERequestContext: RequestContext {
     public var auth: AuthContext?
     /// Peer IP address, e.g. for per-client rate limits.
     public var remoteAddress: String?
+    public var maxUploadSize: Int
 
     public init(source: ApplicationRequestContextSource) {
         coreContext = .init(source: source)
         auth = nil
         remoteAddress = source.channel.remoteAddress?.ipAddress
+        maxUploadSize = 2 * 1024 * 1024
     }
 
     public var requestDecoder: JSONDecoder { SupersEmuJSON.decoder() }
@@ -69,9 +72,11 @@ public struct SERequestContext: RequestContext {
 public struct TokenAuthMiddleware: RouterMiddleware {
     public typealias Context = SERequestContext
     let store: ServerStore
+    let requiresDeviceToken: Bool
 
-    public init(store: ServerStore) {
+    public init(store: ServerStore, requiresDeviceToken: Bool = false) {
         self.store = store
+        self.requiresDeviceToken = requiresDeviceToken
     }
 
     public func handle(_ request: Request, context: Context, next: (Request, Context) async throws -> Response) async throws -> Response {
@@ -79,8 +84,33 @@ public struct TokenAuthMiddleware: RouterMiddleware {
               let auth = try store.authenticate(token: String(header.dropFirst("Bearer ".count))) else {
             throw HTTPError(.unauthorized, message: "Sign in required")
         }
+        if requiresDeviceToken, case .apiToken = auth.credential {
+            throw HTTPError(.unauthorized, message: "Use a paired device")
+        }
         var context = context
         context.auth = auth
+        return try await next(request, context)
+    }
+}
+
+public struct PublicProxyMiddleware: RouterMiddleware {
+    public typealias Context = SERequestContext
+    private static let forwardedFor = HTTPField.Name("x-forwarded-for")!
+
+    public init() {}
+
+    public func handle(_ request: Request, context: Context,
+                       next: (Request, Context) async throws -> Response) async throws -> Response {
+        var context = context
+        context.maxUploadSize = 64 * 1024
+        if let forwarded = request.headers[Self.forwardedFor],
+           let address = forwarded.split(separator: ",").last.map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           (try? SocketAddress(ipAddress: address, port: 0)) != nil {
+            context.remoteAddress = address
+        } else {
+            context.remoteAddress = "public-unknown"
+        }
         return try await next(request, context)
     }
 }
