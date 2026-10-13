@@ -26,6 +26,8 @@ jobs:
           git submodule update --init --depth 1
           git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
           xcodegen generate
+      - name: Test release signing scripts
+        run: scripts/test-release-p12.sh
       - name: Fetch existing homebrew test fixtures
         run: scripts/fetch-test-roms.sh
       - name: Test server

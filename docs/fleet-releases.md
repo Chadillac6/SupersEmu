@@ -24,6 +24,10 @@ Use the `mac-release` GitHub environment, restricted to the `main` branch. Store
 | `ASC_KEY_P8_BASE64` | Base64 of the downloaded team API .p8 key |
 | `SPARKLE_PRIVATE_KEY` | Existing Sparkle key exported by `generate_keys --account com.chadillac6.supersemu -x <private-file>` |
 
+A `.p12` exported from Keychain Access or OpenSSL 3+ is supported because CI
+re-encodes it before macOS imports it. A wrong password fails with a specific
+`MAC_CERT_PASSWORD` error.
+
 The Sparkle key must match the public key already installed on the fleet. Never
 regenerate it as a setup shortcut. The current Developer ID certificate expires
 February 1, 2027; renew it and replace the certificate secret before expiry.
