@@ -25,7 +25,9 @@ for name in MAC_CERT_P12_BASE64 MAC_CERT_PASSWORD ASC_KEY_ID ASC_ISSUER_ID ASC_K
 done
 umask 077
 mkdir "$secrets_dir"
-printf '%s' "$MAC_CERT_P12_BASE64" | base64 -D > "$secrets_dir/certificate.p12"
+printf '%s' "$MAC_CERT_P12_BASE64" | base64 -D > "$secrets_dir/certificate.p12" ||
+  { echo "error: MAC_CERT_P12_BASE64 is not valid base64" >&2; exit 2; }
+release_normalize_p12 "$secrets_dir/certificate.p12" "$secrets_dir/certificate-import.p12" || exit 2
 printf '%s' "$SPARKLE_PRIVATE_KEY" > "$secrets_dir/sparkle.key"
 printf '%s' "$ASC_KEY_P8_BASE64" | base64 -D > "$secrets_dir/notarization.p8"
 release_normalize_p8 "$secrets_dir/notarization.p8" || exit 2
@@ -35,7 +37,7 @@ security list-keychains -d user > "$secrets_dir/original-keychains.txt"
 security create-keychain -p "$password" "$keychain"
 security set-keychain-settings -lut 21600 "$keychain"
 security unlock-keychain -p "$password" "$keychain"
-security import "$secrets_dir/certificate.p12" -k "$keychain" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+security import "$secrets_dir/certificate-import.p12" -k "$keychain" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
 security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
 # Timestamp versions match the existing release convention; reruns get a fresh version.
