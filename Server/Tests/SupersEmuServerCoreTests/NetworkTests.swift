@@ -167,6 +167,46 @@ final class NetworkTests: XCTestCase {
         XCTAssertFalse(LocalNetwork.isTailscale("10.0.0.1"))
     }
 
+    func testPairingEnvironmentUsesSnapshotWithoutDetection() {
+        let urls = [URL(string: "https://mini.local:8487")!]
+        let environment = PairingEnvironment(urls: urls, certificateSHA256: "pin")
+        XCTAssertEqual(environment.currentURLs, urls)
+    }
+
+    func testPairingEnvironmentDetectsCurrentURLsWhenConfigured() {
+        let detection = URLDetection(scheme: "https", port: 8487, tailscaleHost: "mini.tail1234.ts.net")
+        let environment = PairingEnvironment(urls: [], certificateSHA256: "pin", detection: detection)
+        XCTAssertEqual(
+            environment.currentURLs,
+            LocalNetwork.advertisedURLs(scheme: detection.scheme, port: detection.port, tailscaleHost: detection.tailscaleHost))
+    }
+
+    func testPairingEnvironmentFallbackEnablesRuntimeDetection() throws {
+        PairingEnvironment.current = nil
+        let environment = PairingEnvironment.resolve(for: try ServerStore.inMemory())
+        let detection = try XCTUnwrap(environment.detection)
+        XCTAssertEqual(detection.scheme, environment.certificateSHA256 == nil ? "http" : "https")
+        XCTAssertEqual(detection.port, ServerDefaults.port)
+        XCTAssertNil(detection.tailscaleHost)
+    }
+
+    func testServerLauncherUsesDetectionUnlessAdvertiseURLsAreExplicit() throws {
+        let store = try ServerStore.inMemory()
+        var options = ServerRunOptions()
+        options.insecureHTTP = true
+        options.metadata = false
+        options.port = 8487
+
+        let detected = try ServerLauncher.makeApplication(store: store, options: options).environment
+        XCTAssertEqual(detected.detection, URLDetection(scheme: "http", port: 8487, tailscaleHost: nil))
+
+        let explicitURLs = [URL(string: "https://manual.example.com:8487")!]
+        options.advertiseURLs = explicitURLs
+        let overridden = try ServerLauncher.makeApplication(store: store, options: options).environment
+        XCTAssertNil(overridden.detection)
+        XCTAssertEqual(overridden.currentURLs, explicitURLs)
+    }
+
     func testBonjourTXTRoundTripAndURLs() {
         let txt = SupersEmuBonjour.txtRecord(scheme: "https", certificateSHA256: "AB:CD", serverName: "Mac mini")
         XCTAssertEqual(SupersEmuBonjour.decodeTXT(SupersEmuBonjour.encodeTXT(txt)), txt)
@@ -246,9 +286,14 @@ final class PublicAccessTests: XCTestCase {
     private var adminDevice: String!
 
     override func setUp() async throws {
+        PairingEnvironment.current = nil
         store = try ServerStore.inMemory()
         admin = try store.createUser(displayName: "Chad", role: .admin)
         adminDevice = try store.createDeviceToken(userID: admin.id, deviceName: "Admin device").token
+    }
+
+    override func tearDown() async throws {
+        PairingEnvironment.current = nil
     }
 
     private func publicApp(publicURL: URL? = nil) -> some ApplicationProtocol {
@@ -301,12 +346,27 @@ final class PublicAccessTests: XCTestCase {
 
     func testPublicHealthReturnsIdentityPinAndPublicURL() async throws {
         let url = URL(string: "https://games.example.com")!
+        PairingEnvironment.current = PairingEnvironment(
+            urls: [URL(string: "https://100.101.1.2:8487")!], certificateSHA256: "identity-pin")
         try await publicApp(publicURL: url).test(.router) { client in
             try await client.execute(uri: "/v1/health", method: .get) { response in
                 XCTAssertEqual(response.status, .ok)
                 let health = try SupersEmuJSON.decoder().decode(HealthResponse.self, from: Data(buffer: response.body))
                 XCTAssertEqual(health.certificateSHA256, "identity-pin")
                 XCTAssertEqual(health.publicURL, url)
+                XCTAssertNil(health.urls)
+            }
+        }
+    }
+
+    func testLocalHealthReturnsCurrentPairingURLs() async throws {
+        let urls = [URL(string: "https://mini.local:8487")!, URL(string: "https://100.101.1.2:8487")!]
+        PairingEnvironment.current = PairingEnvironment(urls: urls, certificateSHA256: "identity-pin")
+        try await buildApplication(store: store, configuration: .init()).test(.router) { client in
+            try await client.execute(uri: "/v1/health", method: .get) { response in
+                XCTAssertEqual(response.status, .ok)
+                let health = try SupersEmuJSON.decoder().decode(HealthResponse.self, from: Data(buffer: response.body))
+                XCTAssertEqual(health.urls, urls)
             }
         }
     }
@@ -657,6 +717,7 @@ extension NetworkTests {
         let health = try SupersEmuJSON.decoder().decode(HealthResponse.self, from: Data(json.utf8))
         XCTAssertNil(health.certificateSHA256)
         XCTAssertNil(health.publicURL)
+        XCTAssertNil(health.urls)
     }
 
     func testPairingMatchCodeUsesIdentityPinFromHealth() throws {

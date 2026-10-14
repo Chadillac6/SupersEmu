@@ -28,6 +28,7 @@ public struct HealthResponse: Codable, Sendable, Equatable {
     public var libraryRevision: String?
     public var certificateSHA256: String?
     public var publicURL: URL?
+    public var urls: [URL]?
 
     public init(
         status: String,
@@ -36,7 +37,8 @@ public struct HealthResponse: Codable, Sendable, Equatable {
         apiVersion: String = APIVersion.current,
         libraryRevision: String? = nil,
         certificateSHA256: String? = nil,
-        publicURL: URL? = nil
+        publicURL: URL? = nil,
+        urls: [URL]? = nil
     ) {
         self.status = status
         self.serverName = serverName
@@ -45,6 +47,7 @@ public struct HealthResponse: Codable, Sendable, Equatable {
         self.libraryRevision = libraryRevision
         self.certificateSHA256 = certificateSHA256
         self.publicURL = publicURL
+        self.urls = urls
     }
 }
 

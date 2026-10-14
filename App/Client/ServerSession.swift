@@ -258,9 +258,12 @@ final class ServerSession {
     private func heartbeat() async {
         guard connection.isConnected, refreshTask == nil, let credential, let url = activeURL else { return }
         let client = APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
+        let generation = self.generation
         do {
             let health = try await client.health()
+            guard generation == self.generation else { return }
             learnPublicURL(health.publicURL, credential: credential, reachedAt: url)
+            learnServerURLs(health.urls, reachedAt: url)
             guard let revision = health.libraryRevision else { return }
             guard revision != libraryRevision else { return }
             libraryRevision = revision
@@ -402,6 +405,17 @@ final class ServerSession {
         urlSession?.finishTasksAndInvalidate()
         urlSession = nil
         trust = nil
+    }
+
+    private func learnServerURLs(_ advertised: [URL]?, reachedAt url: URL) {
+        guard var credential = self.credential,
+              credential.certificateSHA256 != nil,
+              url.scheme?.lowercased() == "https",
+              url != credential.publicURL,
+              let urls = ServerAddressLearning.merged(current: credential.urls, advertised: advertised, reachedAt: url) else { return }
+        credential.urls = urls
+        try? store.save(credential)
+        self.credential = credential
     }
 
     private struct Snapshot: Codable {

@@ -46,7 +46,7 @@ final class PairingTests: XCTestCase {
             XCTAssertEqual(code.code.count, 6)
             XCTAssertTrue(code.code.allSatisfy(\.isNumber))
             XCTAssertEqual(code.payload.code, code.code)
-            XCTAssertEqual(code.payload.urls, PairingEnvironment.current?.urls)
+            XCTAssertEqual(code.payload.urls, PairingEnvironment.current?.currentURLs)
             XCTAssertEqual(code.payload.certificateSHA256, PairingEnvironment.current?.certificateSHA256)
             XCTAssertEqual(code.expiresAt.timeIntervalSinceNow, PairingService.codeLifetime, accuracy: 5)
             XCTAssertEqual(try PairingLink.payload(from: code.qrURL), code.payload)
@@ -67,6 +67,23 @@ final class PairingTests: XCTestCase {
             // One-time use.
             try await client.execute(uri: "/v1/pair", method: .post, headers: [.contentType: "application/json"],
                                      body: try self.json(pair)) { XCTAssertEqual($0.status, .unauthorized) }
+        }
+    }
+
+    func testPairingCodeUsesCurrentDetectedURLs() async throws {
+        let environment = PairingEnvironment(
+            urls: [URL(string: "https://old-mini.local:8487")!],
+            certificateSHA256: String(repeating: "ab", count: 32),
+            detection: URLDetection(scheme: "https", port: 8487, tailscaleHost: "mini.tail1234.ts.net"))
+        PairingEnvironment.current = environment
+        try await app().test(.router) { client in
+            let code = try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: self.bearer(self.adminToken),
+                                                body: try self.json(CreatePairingCodeRequest())) { response -> PairingCode in
+                XCTAssertEqual(response.status, .created)
+                return try self.decode(PairingCode.self, response)
+            }
+            XCTAssertEqual(code.payload.urls, environment.currentURLs)
+            XCTAssertTrue(code.payload.urls.contains(URL(string: "https://mini.tail1234.ts.net:8487")!))
         }
     }
 
