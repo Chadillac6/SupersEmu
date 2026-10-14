@@ -42,7 +42,6 @@ struct PlayerView: View {
                 }
                 #endif
             }
-            .accessibilityIdentifier(chrome.isFullScreen ? "player-fullscreen" : "player")
             #if os(iOS)
             .overlay(alignment: .top) {
                 if chrome.isFullScreen && topBarAutoHide.isRevealed {
