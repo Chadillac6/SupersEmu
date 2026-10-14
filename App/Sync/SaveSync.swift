@@ -13,6 +13,7 @@ final class CurrentServerProvider: SaveSyncServerProvider, @unchecked Sendable {
 
     static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> CurrentServerProvider {
         guard let server = environment["SUPERSEMU_SERVER_URL"].flatMap(URL.init(string:)),
+              LaunchEnvironment.isAllowedLaunchURL(server),
               let token = environment["SUPERSEMU_SERVER_TOKEN"], !token.isEmpty else { return CurrentServerProvider() }
         return CurrentServerProvider(client: APIClient(baseURL: server, token: token))
     }
