@@ -1,4 +1,5 @@
 import CoreGraphics
+import CryptoKit
 import Foundation
 import ImageIO
 import XCTest
@@ -96,6 +97,35 @@ final class SaveSlotStoreTests: XCTestCase {
         XCTAssertEqual(store.slots()[0].savedAt, date)
         XCTAssertNil(store.slots()[0].screenshotURL)
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("slot1.png").path))
+    }
+
+    func testChangedScreenshotDoesNotMatchSavedMetadata() throws {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let screenshot = directory.appendingPathComponent("slot1.png")
+        try store.save(into: 1, savedAt: date, screenshotPNG: try makePNG()) {
+            try Data("state".utf8).write(to: $0)
+        }
+        try Data("changed screenshot".utf8).write(to: screenshot, options: .atomic)
+
+        XCTAssertEqual(store.slots()[0].savedAt, date)
+        XCTAssertNil(store.slots()[0].screenshotURL)
+    }
+
+    func testMetadataWithoutScreenshotHashKeepsDateWithoutScreenshot() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let stateData = Data("legacy metadata".utf8)
+        try stateData.write(to: store.stateURL(1))
+        let stateSHA256 = SHA256.hash(data: stateData).map { String(format: "%02x", $0) }.joined()
+        let metadata = try JSONSerialization.data(withJSONObject: [
+            "savedAt": date.timeIntervalSinceReferenceDate,
+            "stateSHA256": stateSHA256
+        ])
+        try metadata.write(to: directory.appendingPathComponent("slot1.json"))
+        try makePNG().write(to: directory.appendingPathComponent("slot1.png"))
+
+        XCTAssertEqual(store.slots()[0].savedAt, date)
+        XCTAssertNil(store.slots()[0].screenshotURL)
     }
 
     func testLegacySlotAndUnmatchedMetadataUseFileModificationDate() throws {

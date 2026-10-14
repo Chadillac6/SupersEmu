@@ -27,6 +27,7 @@ struct SaveSlotStore {
     private struct Metadata: Codable {
         let savedAt: Date
         let stateSHA256: String
+        let screenshotSHA256: String?
     }
 
     static let slots = 1...3
@@ -58,8 +59,17 @@ struct SaveSlotStore {
                let metadata = try? JSONDecoder().decode(Metadata.self, from: metadataData),
                metadata.stateSHA256 == Self.sha256(data) {
                 let screenshot = screenshotURL(slot)
+                let screenshotData = try? Data(contentsOf: screenshot)
+                let validScreenshotURL: URL?
+                if let screenshotSHA256 = metadata.screenshotSHA256,
+                   let screenshotData,
+                   Self.sha256(screenshotData) == screenshotSHA256 {
+                    validScreenshotURL = screenshot
+                } else {
+                    validScreenshotURL = nil
+                }
                 return SaveSlotInfo(slot: slot, savedAt: metadata.savedAt,
-                                    screenshotURL: FileManager.default.fileExists(atPath: screenshot.path) ? screenshot : nil)
+                                    screenshotURL: validScreenshotURL)
             }
 
             let savedAt = (try? FileManager.default.attributesOfItem(atPath: state.path)[.modificationDate]) as? Date
@@ -100,24 +110,38 @@ struct SaveSlotStore {
             }
         }
 
+        let stateData: Data
         do {
             try writeState(stateTemporary)
-            let stateData = try Data(contentsOf: stateTemporary)
-            let metadata = Metadata(savedAt: savedAt, stateSHA256: Self.sha256(stateData))
-            try JSONEncoder().encode(metadata).write(to: metadataTemporary, options: .atomic)
+            stateData = try Data(contentsOf: stateTemporary)
         } catch {
             removeTemporaryFiles(temporaryFiles)
             throw error
         }
 
         var hasStagedScreenshot = false
+        var screenshotSHA256: String?
         if let screenshotPNG {
             do {
                 try screenshotPNG.write(to: screenshotTemporary, options: .atomic)
+                let stagedScreenshot = try Data(contentsOf: screenshotTemporary)
+                screenshotSHA256 = Self.sha256(stagedScreenshot)
                 hasStagedScreenshot = true
             } catch {
                 try? FileManager.default.removeItem(at: screenshotTemporary)
             }
+        }
+
+        do {
+            let metadata = Metadata(
+                savedAt: savedAt,
+                stateSHA256: Self.sha256(stateData),
+                screenshotSHA256: screenshotSHA256
+            )
+            try JSONEncoder().encode(metadata).write(to: metadataTemporary, options: .atomic)
+        } catch {
+            removeTemporaryFiles(temporaryFiles)
+            throw error
         }
 
         do {
@@ -132,7 +156,9 @@ struct SaveSlotStore {
         }
 
         if hasStagedScreenshot {
-            replaceOrMove(screenshotTemporary, to: screenshotURL(slot))
+            if !replaceOrMove(screenshotTemporary, to: screenshotURL(slot)) {
+                try? FileManager.default.removeItem(at: screenshotURL(slot))
+            }
         } else {
             try? FileManager.default.removeItem(at: screenshotURL(slot))
         }
@@ -157,7 +183,11 @@ struct SaveSlotStore {
             return
         }
         try? FileManager.default.removeItem(at: screenshotURL(slot))
-        if let metadataData = try? JSONEncoder().encode(Metadata(savedAt: savedAt, stateSHA256: Self.sha256(data))) {
+        if let metadataData = try? JSONEncoder().encode(Metadata(
+            savedAt: savedAt,
+            stateSHA256: Self.sha256(data),
+            screenshotSHA256: nil
+        )) {
             try? metadataData.write(to: metadataURL(slot), options: .atomic)
         }
     }
@@ -174,11 +204,16 @@ struct SaveSlotStore {
         guard Self.slots.contains(slot) else { throw SaveSlotError.invalidSlot(slot) }
     }
 
-    private func replaceOrMove(_ temporary: URL, to destination: URL) {
-        if FileManager.default.fileExists(atPath: destination.path) {
-            _ = try? FileManager.default.replaceItemAt(destination, withItemAt: temporary)
-        } else {
-            try? FileManager.default.moveItem(at: temporary, to: destination)
+    private func replaceOrMove(_ temporary: URL, to destination: URL) -> Bool {
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
+            } else {
+                try FileManager.default.moveItem(at: temporary, to: destination)
+            }
+            return true
+        } catch {
+            return false
         }
     }
 
