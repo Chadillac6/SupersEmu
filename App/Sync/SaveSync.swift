@@ -55,8 +55,6 @@ final class SaveSync {
         Task { [engine] in await engine.flush() }
     }
 
-    static let manualSlot = "slot1"
-
     static func nativeFile(for gameID: String) -> LocalSaveFile {
         // Battery saves are the game's own format, so any core version can use them.
         LocalSaveFile(line: SaveLine(gameID: gameID, kind: .native), url: AppPaths.saveRAM(for: gameID), core: nil,
@@ -68,8 +66,9 @@ final class SaveSync {
                       requiresMatchingCore: true)
     }
 
-    static func manualFile(for gameID: String, core: SaveCore) -> LocalSaveFile {
-        LocalSaveFile(line: SaveLine(gameID: gameID, kind: .manual, slot: manualSlot), url: AppPaths.manualState(for: gameID),
+    static func manualFile(for gameID: String, slot: Int, core: SaveCore) -> LocalSaveFile {
+        let store = SaveSlotStore(directory: AppPaths.stateDirectory(for: gameID))
+        return LocalSaveFile(line: SaveLine(gameID: gameID, kind: .manual, slot: SaveSlotStore.lineSlot(slot)), url: store.stateURL(slot),
                       core: core, requiresMatchingCore: true)
     }
 

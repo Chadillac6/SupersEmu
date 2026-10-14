@@ -52,10 +52,13 @@ struct PlayerView: View {
             if session.isChoosingDisc {
                 DiscPicker(session: session)
             }
-            if session.isMenuOpen {
+            if session.isMenuOpen && !session.isShowingSaveSlots {
                 InGameMenu(session: session)
             }
-            if let name = session.disconnectedController, !session.isMenuOpen {
+            if session.isShowingSaveSlots {
+                SaveSlotsView(session: session)
+            }
+            if let name = session.disconnectedController, !session.isMenuOpen && !session.isShowingSaveSlots {
                 DisconnectPrompt(session: session, name: name)
             }
             if let conflict = session.pendingConflict {
@@ -160,13 +163,14 @@ struct PlayerView: View {
             .help("In-game menu (hold Select + Start for 1 second, or hold Home on a controller)")
             .accessibilityLabel("Menu")
             .accessibilityIdentifier("open-menu")
-            Button { session.saveManualState() } label: {
+            Button { session.openSaveSlots(preferEmpty: true) } label: {
                 toolbarLabel("Save", systemImage: "square.and.arrow.down", compact: compact)
             }
             .fixedSize()
+            .disabled(session.isSyncing || session.pendingConflict != nil)
             .accessibilityLabel("Save")
             .accessibilityIdentifier("save-state")
-            Button { session.loadManualState() } label: {
+            Button { session.openSaveSlots(preferEmpty: false) } label: {
                 toolbarLabel("Load", systemImage: "arrow.counterclockwise", compact: compact)
             }
             .fixedSize()
