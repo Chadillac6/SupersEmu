@@ -28,6 +28,14 @@ final class ControllerHub {
     private(set) var controllers: [Controller] = []
     @ObservationIgnored private var gcByID: [String: GCController] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    #if DEBUG
+    // DEBUG-only simulated controller for the iOS Simulator, which has no real gamepads:
+    // SUPERSEMU_DEBUG_CONTROLLER=on keeps a fake pad connected forever; =N (seconds) connects
+    // it for N seconds then drops it, exercising the real disconnect path (gamepadDisconnected,
+    // DisconnectPrompt). Unset changes nothing.
+    @ObservationIgnored private let debugPad = Controller(id: "debug-pad", name: "Debug Controller", type: "gc:debug", kind: .gameController)
+    @ObservationIgnored private var debugPadExpiry: Date?  // nil → not simulated; .distantFuture → permanent
+    #endif
     #if os(macOS)
     @ObservationIgnored private let hid = HIDGamepadManager()
     @ObservationIgnored private var hidByID: [String: HIDGamepad] = [:]
@@ -43,6 +51,19 @@ final class ControllerHub {
         })
         #if os(macOS)
         hid.onChange = { [weak self] in MainActor.assumeIsolated { self?.refresh() } }
+        #endif
+        #if DEBUG
+        if let value = ProcessInfo.processInfo.environment["SUPERSEMU_DEBUG_CONTROLLER"] {
+            if let seconds = TimeInterval(value) {
+                debugPadExpiry = Date().addingTimeInterval(seconds)
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(seconds))
+                    self?.refresh()
+                }
+            } else if value == "on" {
+                debugPadExpiry = .distantFuture
+            }
+        }
         #endif
         refresh()
     }
@@ -95,6 +116,11 @@ final class ControllerHub {
             next.append(Controller(id: id, name: device.productName, type: device.controllerType, kind: .hid))
         }
         hidByID = hidDevices
+        #endif
+        #if DEBUG
+        if let debugPadExpiry, Date() < debugPadExpiry {
+            next.append(debugPad)
+        }
         #endif
         // Keep existing players in their slots; newcomers join at the end.
         let kept = controllers.filter { old in next.contains { $0.id == old.id } }

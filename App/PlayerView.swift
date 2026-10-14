@@ -7,20 +7,33 @@ struct PlayerView: View {
     @Environment(\.scenePhase) private var scenePhase
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @AppStorage(PlayerChrome.hideTouchControlsKey) private var hideTouchControls = true
+    @State private var hub = ControllerHub.shared
     #endif
+    @State private var topBarAutoHide = TopBarAutoHide()
+
+    private var chrome: PlayerChrome {
+        #if os(iOS)
+        PlayerChrome.resolve(
+            controllerActive: PlayerChrome.isControllerActive(connectedGamepads: hub.controllers.count),
+            hideWhenControllerConnected: hideTouchControls, hasTouchControls: true)
+        #else
+        PlayerChrome.resolve(controllerActive: false, hideWhenControllerConnected: false, hasTouchControls: false)
+        #endif
+    }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            VStack(spacing: 0) {
-                topBar
-                EmulatorScreen(session: session)
-                    .accessibilityIdentifier("emulator-screen")
-                #if os(iOS)
-                TouchControls(input: session.input)
-                    .containerRelativeFrame(.horizontal)
-                #endif
+            #if os(iOS)
+            if chrome.isFullScreen {
+                fullScreenPlayer
+            } else {
+                normalPlayer
             }
+            #else
+            normalPlayer
+            #endif
             if session.isChoosingDisc {
                 DiscPicker(session: session)
             }
@@ -52,7 +65,20 @@ struct PlayerView: View {
         #if os(iOS)
         .defersSystemGestures(on: .all)
         .persistentSystemOverlays(.hidden)
+        .statusBarHidden(chrome.isFullScreen)
         #endif
+        .animation(.easeInOut(duration: 0.25), value: chrome)
+        .animation(.easeInOut(duration: 0.25), value: topBarAutoHide.isRevealed)
+        .onChange(of: chrome.isFullScreen) { _, fullScreen in
+            if fullScreen {
+                topBarAutoHide.reveal()
+            } else {
+                topBarAutoHide.hide()
+            }
+        }
+        .onChange(of: chrome.showsTouchControls) { _, shows in
+            if !shows { session.input.touchState = PadState() }
+        }
         .sheet(isPresented: $session.isShowingControls) {
             NavigationStack {
                 ControlsView(fixedSystem: session.input.layout.system, gameID: session.game.id, gameTitle: session.game.title)
@@ -79,6 +105,39 @@ struct PlayerView: View {
             }
         }
     }
+
+    private var normalPlayer: some View {
+        VStack(spacing: 0) {
+            topBar
+            EmulatorScreen(session: session)
+                .accessibilityIdentifier("emulator-screen")
+            #if os(iOS)
+            TouchControls(input: session.input)
+                .containerRelativeFrame(.horizontal)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            #endif
+        }
+    }
+
+    #if os(iOS)
+    /// Full-screen game with the toolbar overlaid on tap. No touch controls; the screen layer
+    /// is already aspect-fit on black, so it letterboxes itself.
+    private var fullScreenPlayer: some View {
+        ZStack(alignment: .top) {
+            EmulatorScreen(session: session)
+                .accessibilityIdentifier("emulator-screen")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { topBarAutoHide.toggle() }
+            if topBarAutoHide.isRevealed {
+                topBar
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .ignoresSafeArea()
+        .accessibilityIdentifier("player-fullscreen")
+    }
+    #endif
 
     private var topBar: some View {
         #if os(iOS)

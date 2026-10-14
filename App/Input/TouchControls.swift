@@ -451,6 +451,16 @@ private final class TouchPadSurfaceView: UIView {
         lhs.count == rhs.count && lhs.allSatisfy { rhs.contains($0) }
     }
 
+    /// Removed from the window (e.g. a controller took over): drop held touches so inputs don't stick.
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            activeTouches.removeAll()
+            touchOrder.removeAll()
+            updateState()
+        }
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         feedback.prepare()
         for touch in touches {
