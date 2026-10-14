@@ -40,7 +40,10 @@ public enum ServerAddressLearning {
         var ipv6 = in6_addr()
         guard addressHost.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1 else { return false }
         return withUnsafeBytes(of: ipv6) { bytes in
-            bytes.count == 16 && bytes.prefix(15).allSatisfy { $0 == 0 } && bytes[15] == 1
+            guard bytes.count == 16 else { return false }
+            let isIPv4Mapped = bytes.prefix(10).allSatisfy { $0 == 0 } && bytes[10] == 0xff && bytes[11] == 0xff
+            if isIPv4Mapped { return bytes[12] == 127 }
+            return bytes.prefix(15).allSatisfy { $0 == 0 } && bytes[15] == 1
         }
     }
 }

@@ -30,12 +30,16 @@ final class ServerAddressLearningTests: XCTestCase {
 
     func testMergeFiltersInsecureMalformedAndLoopbackAddresses() {
         let lan = URL(string: "https://mac-mini.local:8487")!
+        let ipv4MappedLoopback = URL(string: "https://[::ffff:127.0.0.1]:8487")!
+        let ipv4MappedLAN = URL(string: "https://[::ffff:192.168.1.20]:8487")!
         let advertised = [
             lan,
             URL(string: "http://192.168.1.20:8487")!,
             URL(string: "https://127.0.0.1:8487")!,
             URL(string: "https://127.255.255.255:8487")!,
             URL(string: "https://[::1]:8487")!,
+            ipv4MappedLoopback,
+            ipv4MappedLAN,
             URL(string: "https://localhost:8487")!,
             URL(string: "https://localhost.:8487")!,
             URL(string: "https://user@mac-mini.local:8487")!,
@@ -45,7 +49,9 @@ final class ServerAddressLearningTests: XCTestCase {
             URL(string: "https:relative")!,
         ]
 
-        XCTAssertEqual(ServerAddressLearning.merged(current: [], advertised: advertised, reachedAt: lan), [lan])
+        XCTAssertEqual(
+            ServerAddressLearning.merged(current: [], advertised: advertised, reachedAt: lan),
+            [lan, ipv4MappedLAN])
     }
 
     func testMergeReturnsNilForMissingOrFullyFilteredAdvertisement() {
