@@ -59,6 +59,45 @@ final class SaveSlotStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("slot2.png")), newPNG)
     }
 
+    func testOverwriteMetadataStageFailureLeavesExistingSlotUntouched() throws {
+        let oldDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let newDate = oldDate.addingTimeInterval(120)
+        let oldPNG = try makePNG()
+        try store.save(into: 1, savedAt: oldDate, screenshotPNG: oldPNG) {
+            try Data("old".utf8).write(to: $0)
+        }
+        let oldState = try Data(contentsOf: store.stateURL(1))
+        let screenshot = directory.appendingPathComponent("slot1.png")
+        let metadataTemporary = directory.appendingPathComponent("slot1.json.tmp", isDirectory: true)
+        try FileManager.default.createDirectory(at: metadataTemporary, withIntermediateDirectories: true)
+        try Data("blocker".utf8).write(to: metadataTemporary.appendingPathComponent("blocker"))
+
+        XCTAssertThrowsError(try store.overwrite(1, savedAt: newDate, screenshotPNG: try makePNG(color: (0, 1, 0, 1))) {
+            try Data("new".utf8).write(to: $0)
+        })
+
+        XCTAssertEqual(try Data(contentsOf: store.stateURL(1)), oldState)
+        XCTAssertEqual(store.slots()[0].savedAt, oldDate)
+        XCTAssertEqual(store.slots()[0].screenshotURL, screenshot)
+        XCTAssertEqual(try Data(contentsOf: screenshot), oldPNG)
+    }
+
+    func testScreenshotStageFailureKeepsStateSaveAndOmitsScreenshot() throws {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let screenshotTemporary = directory.appendingPathComponent("slot1.png.tmp", isDirectory: true)
+        try FileManager.default.createDirectory(at: screenshotTemporary, withIntermediateDirectories: true)
+        try Data("blocker".utf8).write(to: screenshotTemporary.appendingPathComponent("blocker"))
+
+        try store.save(into: 1, savedAt: date, screenshotPNG: try makePNG()) {
+            try Data("new".utf8).write(to: $0)
+        }
+
+        XCTAssertEqual(try Data(contentsOf: store.stateURL(1)), Data("new".utf8))
+        XCTAssertEqual(store.slots()[0].savedAt, date)
+        XCTAssertNil(store.slots()[0].screenshotURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("slot1.png").path))
+    }
+
     func testLegacySlotAndUnmatchedMetadataUseFileModificationDate() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let state = store.stateURL(1)

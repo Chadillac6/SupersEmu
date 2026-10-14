@@ -273,6 +273,35 @@ final class SaveSyncEngineTests: XCTestCase {
         }
     }
 
+    func testEnqueueAfterDiscardKeepsNewUploadPending() async throws {
+        try await withServer { server in
+            let phone = try self.device("Chad's iPhone", server: server)
+            let slot2 = SaveLine(gameID: self.game, kind: .manual, slot: "slot2")
+            let file = phone.file(slot2)
+            try phone.write(slot2, "old-slot-2")
+            await phone.engine.enqueueUpload(file)
+            let initial = await phone.engine.flush()
+            XCTAssertEqual(initial.uploaded, 1)
+
+            try FileManager.default.removeItem(at: file.url)
+            await phone.engine.discardLocal(slot2)
+            try phone.write(slot2, "new-slot-2")
+
+            let queued = await phone.engine.enqueueUpload(file)
+            XCTAssertTrue(queued)
+            let pending = await phone.engine.pendingCount
+            XCTAssertEqual(pending, 1)
+            let report = await phone.engine.flush()
+            XCTAssertEqual(report.uploaded, 1)
+            XCTAssertEqual(report.remaining, 0)
+
+            let client = await phone.provider.currentClient()!
+            let revisions = try await client.saves(gameID: self.game).revisions
+            let newHash = SaveSyncEngine.sha256(Data("new-slot-2".utf8))
+            XCTAssertTrue(revisions.contains { $0.sha256 == newHash && $0.isHead == true })
+        }
+    }
+
     func testOfflinePlayThenBranchedUploadIsReported() async throws {
         try await withServer { server in
             let phone = try self.device("Chad's iPhone", server: server)

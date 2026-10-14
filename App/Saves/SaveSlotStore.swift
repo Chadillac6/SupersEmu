@@ -89,29 +89,55 @@ struct SaveSlotStore {
     ) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = stateURL(slot)
-        let temporary = directory.appendingPathComponent("slot\(slot).state.tmp")
-        try? FileManager.default.removeItem(at: temporary)
-        do {
-            try writeState(temporary)
-            if replaceExisting, FileManager.default.fileExists(atPath: destination.path) {
-                _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
-            } else {
-                try FileManager.default.moveItem(at: temporary, to: destination)
+        let stateTemporary = directory.appendingPathComponent("slot\(slot).state.tmp")
+        let metadataTemporary = directory.appendingPathComponent("slot\(slot).json.tmp")
+        let screenshotTemporary = directory.appendingPathComponent("slot\(slot).png.tmp")
+        let temporaryFiles = [stateTemporary, metadataTemporary, screenshotTemporary]
+        for url in temporaryFiles {
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                try? FileManager.default.removeItem(at: url)
             }
+        }
+
+        do {
+            try writeState(stateTemporary)
+            let stateData = try Data(contentsOf: stateTemporary)
+            let metadata = Metadata(savedAt: savedAt, stateSHA256: Self.sha256(stateData))
+            try JSONEncoder().encode(metadata).write(to: metadataTemporary, options: .atomic)
         } catch {
-            try? FileManager.default.removeItem(at: temporary)
+            removeTemporaryFiles(temporaryFiles)
             throw error
         }
 
+        var hasStagedScreenshot = false
         if let screenshotPNG {
-            try screenshotPNG.write(to: screenshotURL(slot), options: .atomic)
+            do {
+                try screenshotPNG.write(to: screenshotTemporary, options: .atomic)
+                hasStagedScreenshot = true
+            } catch {
+                try? FileManager.default.removeItem(at: screenshotTemporary)
+            }
+        }
+
+        do {
+            if replaceExisting, FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(destination, withItemAt: stateTemporary)
+            } else {
+                try FileManager.default.moveItem(at: stateTemporary, to: destination)
+            }
+        } catch {
+            removeTemporaryFiles(temporaryFiles)
+            throw error
+        }
+
+        if hasStagedScreenshot {
+            replaceOrMove(screenshotTemporary, to: screenshotURL(slot))
         } else {
             try? FileManager.default.removeItem(at: screenshotURL(slot))
         }
-        let stateData = try Data(contentsOf: destination)
-        let metadata = Metadata(savedAt: savedAt, stateSHA256: Self.sha256(stateData))
-        let metadataData = try JSONEncoder().encode(metadata)
-        try metadataData.write(to: metadataURL(slot), options: .atomic)
+        replaceOrMove(metadataTemporary, to: metadataURL(slot))
+        removeTemporaryFiles(temporaryFiles)
     }
 
     func delete(_ slot: Int) throws {
@@ -146,6 +172,20 @@ struct SaveSlotStore {
 
     private func validate(_ slot: Int) throws {
         guard Self.slots.contains(slot) else { throw SaveSlotError.invalidSlot(slot) }
+    }
+
+    private func replaceOrMove(_ temporary: URL, to destination: URL) {
+        if FileManager.default.fileExists(atPath: destination.path) {
+            _ = try? FileManager.default.replaceItemAt(destination, withItemAt: temporary)
+        } else {
+            try? FileManager.default.moveItem(at: temporary, to: destination)
+        }
+    }
+
+    private func removeTemporaryFiles(_ urls: [URL]) {
+        for url in urls {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     private static func sha256(_ data: Data) -> String {

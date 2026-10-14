@@ -42,6 +42,7 @@ final class GameSession {
     @ObservationIgnored private var lastAutosave = ContinuousClock.now
     @ObservationIgnored private let sync: SaveSync
     @ObservationIgnored private var conflictChoice: CheckedContinuation<SaveConflictChoice?, Never>?
+    @ObservationIgnored private var pendingDiscard: Task<Void, Never>?
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var core: SaveCore?
@@ -187,6 +188,10 @@ final class GameSession {
                 // Leaving the game without answering keeps both copies untouched; we ask again next launch.
                 guard let choice = answer else { return message }
                 do {
+                    if file.line.kind == .manual {
+                        let discard = pendingDiscard
+                        await discard?.value
+                    }
                     try await sync.engine.resolve(conflict, choice: choice, file: file)
                     if choice == .useRemote, file.line.kind == .auto { message = "Resumed from \(conflict.deviceName)" }
                     if choice == .useRemote, file.line.kind == .manual, let slot = manualSlot(for: file) {
@@ -319,7 +324,9 @@ final class GameSession {
     /// Uploads files right after they're written locally; offline copies stay queued on disk and retry later.
     private func upload(_ files: [LocalSaveFile], saved: String) {
         let sync = sync
+        let discard = pendingDiscard
         Task { [weak self] in
+            await discard?.value
             guard let result = await sync.uploadAfterWrite(files) else { return }
             let text: String
             switch result {
@@ -518,7 +525,11 @@ final class GameSession {
                 refreshSaveSlots()
                 let line = SaveLine(gameID: game.id, kind: .manual, slot: SaveSlotStore.lineSlot(slot))
                 let engine = sync.engine
-                Task { await engine.discardLocal(line) }
+                let previous = pendingDiscard
+                pendingDiscard = Task {
+                    await previous?.value
+                    await engine.discardLocal(line)
+                }
                 status = "Deleted Slot \(slot)"
             } catch {
                 status = "Delete failed: \(error.localizedDescription)"
