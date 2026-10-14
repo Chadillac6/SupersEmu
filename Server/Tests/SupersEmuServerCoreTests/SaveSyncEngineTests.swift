@@ -211,6 +211,68 @@ final class SaveSyncEngineTests: XCTestCase {
         }
     }
 
+    func testManualSlotsSyncIndependently() async throws {
+        try await withServer { server in
+            let phone = try self.device("Chad's iPhone", server: server)
+            let mac = try self.device("Chad's Mac", server: server)
+            let slot1 = SaveLine(gameID: self.game, kind: .manual, slot: "slot1")
+            let slot2 = SaveLine(gameID: self.game, kind: .manual, slot: "slot2")
+            let slot3 = SaveLine(gameID: self.game, kind: .manual, slot: "slot3")
+            try phone.write(slot1, "phone-slot-1")
+            try phone.write(slot3, "phone-slot-3")
+            await phone.engine.enqueueUpload(phone.file(slot1))
+            await phone.engine.enqueueUpload(phone.file(slot3))
+            let report = await phone.engine.flush()
+            XCTAssertEqual(report.uploaded, 2)
+
+            let firstPull = await mac.engine.prepare([mac.file(slot1), mac.file(slot2), mac.file(slot3)])
+            guard case .downloaded = firstPull[slot1.key] else { return XCTFail("\(firstPull)") }
+            XCTAssertEqual(firstPull[slot2.key], .upToDate)
+            guard case .downloaded = firstPull[slot3.key] else { return XCTFail("\(firstPull)") }
+            XCTAssertEqual(mac.read(slot1), "phone-slot-1")
+            XCTAssertNil(mac.read(slot2))
+            XCTAssertEqual(mac.read(slot3), "phone-slot-3")
+
+            try phone.write(slot3, "phone-slot-3-next")
+            await phone.engine.enqueueUpload(phone.file(slot3))
+            await phone.engine.flush()
+            let laterPull = await mac.engine.prepare([mac.file(slot1), mac.file(slot2), mac.file(slot3)])
+            XCTAssertEqual(laterPull[slot1.key], .upToDate)
+            XCTAssertEqual(laterPull[slot2.key], .upToDate)
+            guard case .downloaded = laterPull[slot3.key] else { return XCTFail("\(laterPull)") }
+            XCTAssertEqual(mac.read(slot1), "phone-slot-1")
+            XCTAssertNil(mac.read(slot2))
+            XCTAssertEqual(mac.read(slot3), "phone-slot-3-next")
+        }
+    }
+
+    func testDiscardLocalSuppressesRestoreUntilServerHeadMoves() async throws {
+        try await withServer { server in
+            let phone = try self.device("Chad's iPhone", server: server)
+            let mac = try self.device("Chad's Mac", server: server)
+            let slot2 = SaveLine(gameID: self.game, kind: .manual, slot: "slot2")
+            try phone.write(slot2, "phone-slot-2")
+            await phone.engine.enqueueUpload(phone.file(slot2))
+            await phone.engine.flush()
+            try FileManager.default.removeItem(at: phone.file(slot2).url)
+            await phone.engine.discardLocal(slot2)
+
+            let afterDelete = await phone.engine.prepare([phone.file(slot2)])
+            XCTAssertEqual(afterDelete[slot2.key], .upToDate)
+            XCTAssertNil(phone.read(slot2))
+
+            let macPull = await mac.engine.prepare([mac.file(slot2)])
+            guard case .downloaded = macPull[slot2.key] else { return XCTFail("\(macPull)") }
+            try mac.write(slot2, "mac-slot-2-new")
+            await mac.engine.enqueueUpload(mac.file(slot2))
+            await mac.engine.flush()
+
+            let afterNewRemote = await phone.engine.prepare([phone.file(slot2)])
+            guard case .downloaded = afterNewRemote[slot2.key] else { return XCTFail("\(afterNewRemote)") }
+            XCTAssertEqual(phone.read(slot2), "mac-slot-2-new")
+        }
+    }
+
     func testOfflinePlayThenBranchedUploadIsReported() async throws {
         try await withServer { server in
             let phone = try self.device("Chad's iPhone", server: server)

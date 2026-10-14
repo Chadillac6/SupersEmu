@@ -115,6 +115,7 @@ public actor SaveSyncEngine {
         var baseSHA256: String?
         var lastCore: SaveCore?
         var conflict: SaveRevision?
+        var discarded: Bool?
     }
 
     struct PendingUpload: Codable, Identifiable {
@@ -163,6 +164,16 @@ public actor SaveSyncEngine {
         for item in state.queue { try? FileManager.default.removeItem(at: blobURL(item.id)) }
         epoch += 1
         state = PersistedState()
+        persist()
+    }
+
+    /// Records that the user intentionally removed this device's copy of a synced line.
+    public func discardLocal(_ line: SaveLine) {
+        let key = line.key
+        var lineState = state.lines[key] ?? LineState()
+        lineState.discarded = true
+        state.lines[key] = lineState
+        dropAttachedPending(key)
         persist()
     }
 
@@ -215,6 +226,10 @@ public actor SaveSyncEngine {
             state.queue.remove(at: attached)
         }
         state.queue.append(item)
+        if parent == nil {
+            line.discarded = false
+            state.lines[key] = line
+        }
         persist()
         return true
     }
@@ -376,10 +391,15 @@ public actor SaveSyncEngine {
         let hasPending = state.queue.contains { $0.line.key == key && !$0.detached }
         guard let head = lineRevisions.last(where: \.isHead) ?? lineRevisions.last else {
             // Nothing on the server yet: seed it with this device's copy.
-            if localSHA != nil, !hasPending { state.lines[key] = line; enqueue(file, detachedFrom: nil) }
+            if localSHA != nil, !hasPending {
+                line.discarded = false
+                state.lines[key] = line
+                enqueue(file, detachedFrom: nil)
+            }
             return .upToDate
         }
         if head.id == line.baseRevisionID {
+            if localSHA == nil, line.discarded == true { return .upToDate }
             if let conflict = line.conflict { return .conflict(SaveConflict(line: file.line, remote: conflict)) }
             if localSHA == nil, !hasPending {
                 // The local copy went missing but the server still has it: restore instead of starting fresh.
@@ -390,15 +410,21 @@ public actor SaveSyncEngine {
                     return .failed(Self.describe(error))
                 }
                 line.baseSHA256 = head.sha256
+                line.discarded = false
                 return .downloaded(head)
             }
-            if let localSHA, localSHA != line.baseSHA256, !hasPending { state.lines[key] = line; enqueue(file, detachedFrom: nil) }
+            if let localSHA, localSHA != line.baseSHA256, !hasPending {
+                line.discarded = false
+                state.lines[key] = line
+                enqueue(file, detachedFrom: nil)
+            }
             return .upToDate
         }
         if localSHA == head.sha256 {
             line.baseRevisionID = head.id
             line.baseSHA256 = head.sha256
             line.conflict = nil
+            line.discarded = false
             return .upToDate
         }
 
@@ -427,6 +453,7 @@ public actor SaveSyncEngine {
             line.baseRevisionID = head.id
             line.baseSHA256 = head.sha256
             line.conflict = nil
+            line.discarded = false
             return .downloaded(head)
         }
 
@@ -467,6 +494,7 @@ public actor SaveSyncEngine {
             line.baseRevisionID = conflict.remote.id
             line.baseSHA256 = conflict.remote.sha256
             line.conflict = nil
+            line.discarded = false
             state.lines[key] = line
         case .keepLocal:
             // Upload this copy on top of the other device's save so it becomes the newest revision, even if its

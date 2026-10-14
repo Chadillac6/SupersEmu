@@ -10,6 +10,9 @@ final class GameSession {
     private(set) var status = ""
     private(set) var errorMessage: String?
     private(set) var hasManualState: Bool
+    private(set) var isShowingSaveSlots = false
+    private(set) var saveSlots: [SaveSlotInfo] = []
+    var slotNavigator = SaveSlotNavigator()
     /// A newer save from another device; the game waits until the player picks which copy to continue.
     private(set) var pendingConflict: SaveConflict?
     private(set) var isSyncing = false
@@ -49,6 +52,7 @@ final class GameSession {
     @ObservationIgnored private var hotkeyHeldSince: ContinuousClock.Instant?
     @ObservationIgnored private let startFresh: Bool
     @ObservationIgnored private var needsFreshCheckpoint = false
+    @ObservationIgnored private var saveSlotsFromMenu = false
     /// False after the menu opens until the hotkey is released, so a still-held hotkey doesn't reopen it.
     @ObservationIgnored private var hotkeyArmed = true
     @ObservationIgnored private var overlayTimer: Timer?
@@ -57,11 +61,17 @@ final class GameSession {
 
     private static let autosaveInterval = Duration.seconds(30)
 
+    private var slotStore: SaveSlotStore {
+        SaveSlotStore(directory: AppPaths.stateDirectory(for: game.id))
+    }
+
     init(game: Game, startFresh: Bool = false, sync: SaveSync? = nil) {
         self.game = game
         self.startFresh = startFresh
         self.sync = sync ?? .shared
-        hasManualState = FileManager.default.fileExists(atPath: AppPaths.manualState(for: game.id).path)
+        let initialSlots = SaveSlotStore(directory: AppPaths.stateDirectory(for: game.id)).slots()
+        saveSlots = initialSlots
+        hasManualState = initialSlots.contains { !$0.isEmpty }
         input.layout = ConsoleLayout.forSystem(Self.system(for: game))
         input.gameID = game.id
         #if DEBUG
@@ -114,13 +124,13 @@ final class GameSession {
         #endif
         let core = SaveCore(id: host.coreID, version: host.coreVersion)
         self.core = core
-        let stateFiles = [SaveSync.manualFile(for: game.id, core: core)]
+        let stateFiles = SaveSlotStore.slots.map { SaveSync.manualFile(for: game.id, slot: $0, core: core) }
         let pulled = await pull(startFresh
             ? stateFiles
             : [SaveSync.autoFile(for: game.id, core: core)] + stateFiles)
         isSyncing = false
         guard !Task.isCancelled, self.host === host else { return }
-        hasManualState = FileManager.default.fileExists(atPath: AppPaths.manualState(for: game.id).path)
+        refreshSaveSlots()
         if startFresh {
             do {
                 try AutoStateCheckpoint.moveAside(autoState)
@@ -163,6 +173,8 @@ final class GameSession {
             switch outcomes[file.line.key] {
             case .downloaded(let revision) where file.line.kind == .auto:
                 message = "Resumed from \(revision.deviceName ?? "another device")"
+            case .downloaded(let revision) where file.line.kind == .manual:
+                if let slot = manualSlot(for: file) { slotStore.recordRemote(slot, savedAt: revision.createdAt) }
             case .incompatible(let revision) where file.line.kind == .auto:
                 // Same rule as local incompatible states: never load it, keep it, and say so.
                 message = "Newer save from \(revision.deviceName ?? "another device") needs \(revision.coreID) \(revision.coreVersion); kept on server"
@@ -177,6 +189,9 @@ final class GameSession {
                 do {
                     try await sync.engine.resolve(conflict, choice: choice, file: file)
                     if choice == .useRemote, file.line.kind == .auto { message = "Resumed from \(conflict.deviceName)" }
+                    if choice == .useRemote, file.line.kind == .manual, let slot = manualSlot(for: file) {
+                        slotStore.recordRemote(slot, savedAt: conflict.remote.createdAt)
+                    }
                 } catch {
                     message = "Kept this device's save (\(error.localizedDescription))"
                 }
@@ -184,7 +199,19 @@ final class GameSession {
                 break
             }
         }
+        refreshSaveSlots()
         return message
+    }
+
+    private func manualSlot(for file: LocalSaveFile) -> Int? {
+        guard file.line.kind == .manual, file.line.slot.hasPrefix("slot"),
+              let slot = Int(file.line.slot.dropFirst(4)), SaveSlotStore.slots.contains(slot) else { return nil }
+        return slot
+    }
+
+    private func refreshSaveSlots() {
+        saveSlots = slotStore.slots()
+        hasManualState = saveSlots.contains { !$0.isEmpty }
     }
 
     /// Answers the "A newer save from <device> is available" prompt.
@@ -200,7 +227,7 @@ final class GameSession {
 
     func resume() {
         // Never run frames while saves are still syncing or a conflict is waiting for an answer.
-        guard let host, hasStarted, timer == nil, !isChoosingDisc, !isMenuOpen, disconnectedController == nil else { return }
+        guard let host, hasStarted, timer == nil, !isChoosingDisc, !isShowingSaveSlots, !isMenuOpen, disconnectedController == nil else { return }
         let timer = Timer(timeInterval: 1.0 / max(host.framesPerSecond, 1), repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -312,30 +339,6 @@ final class GameSession {
         try? FileManager.default.moveItem(at: url, to: destination)
     }
 
-    func saveManualState() {
-        guard let host, hasStarted else { return }
-        do {
-            try host.saveState(to: AppPaths.manualState(for: game.id))
-            hasManualState = true
-            status = "Saved to slot 1"
-            host.flushSaveRAM()
-            upload([SaveSync.nativeFile(for: game.id)] + (core.map { [SaveSync.manualFile(for: game.id, core: $0)] } ?? []),
-                   saved: "Saved to slot 1")
-        } catch {
-            status = "Save failed: \(error.localizedDescription)"
-        }
-    }
-
-    func loadManualState() {
-        guard let host, hasStarted else { return }
-        do {
-            try host.loadState(from: AppPaths.manualState(for: game.id))
-            status = "Loaded slot 1"
-        } catch {
-            status = "Load failed: \(error.localizedDescription)"
-        }
-    }
-
     func restart() {
         guard let host, hasStarted else { return }
         #if os(macOS)
@@ -394,7 +397,7 @@ final class GameSession {
     }
 
     func openMenu() {
-        guard hasStarted, !isMenuOpen, !isChoosingDisc, pendingConflict == nil else { return }
+        guard hasStarted, !isMenuOpen, !isChoosingDisc, !isShowingSaveSlots, pendingConflict == nil else { return }
         pause()
         hotkeyHeldSince = nil
         hotkeyArmed = false
@@ -419,11 +422,9 @@ final class GameSession {
         case .restart:
             isConfirmingRestart = true
         case .save:
-            saveManualState()
-            closeMenu()
+            openSaveSlots(preferEmpty: true)
         case .load:
-            loadManualState()
-            closeMenu()
+            openSaveSlots(preferEmpty: false)
         case .swapDisc:
             isMenuOpen = false
             stopOverlayPolling()
@@ -434,6 +435,96 @@ final class GameSession {
             isMenuOpen = false
             stopOverlayPolling()
             wantsExit = true
+        }
+    }
+
+    func openSaveSlots(preferEmpty: Bool) {
+        guard hasStarted, !isChoosingDisc, pendingConflict == nil, !isShowingSaveSlots else { return }
+        pause()
+        refreshSaveSlots()
+        slotNavigator.reset(occupied: saveSlots.map { !$0.isEmpty }, preferEmpty: preferEmpty)
+        saveSlotsFromMenu = isMenuOpen
+        isShowingSaveSlots = true
+        startOverlayPolling()
+    }
+
+    func closeSaveSlots() {
+        guard isShowingSaveSlots else { return }
+        isShowingSaveSlots = false
+        slotNavigator.confirmation = nil
+        if saveSlotsFromMenu, isMenuOpen {
+            saveSlotsFromMenu = false
+            return
+        }
+        saveSlotsFromMenu = false
+        if disconnectedController == nil { stopOverlayPolling() }
+        resume()
+    }
+
+    func activateSlot(_ slot: Int, _ action: SaveSlotAction) {
+        guard let command = slotNavigator.activate(row: slot - 1, action: action, occupied: saveSlots.map { !$0.isEmpty }) else { return }
+        perform(command)
+    }
+
+    func perform(_ command: SaveSlotCommand) {
+        if command == .close {
+            closeSaveSlots()
+            return
+        }
+        switch command {
+        case .save(let slot), .overwrite(let slot):
+            guard let host, hasStarted else {
+                status = "Save failed: Game is not running"
+                return
+            }
+            do {
+                let screenshot = host.copyFrameImage().flatMap(SaveSlotStore.pngData(from:))
+                let writeState: (URL) throws -> Void = { try host.saveState(to: $0) }
+                if case .save = command {
+                    try slotStore.save(into: slot, savedAt: Date(), screenshotPNG: screenshot, writeState: writeState)
+                } else {
+                    try slotStore.overwrite(slot, savedAt: Date(), screenshotPNG: screenshot, writeState: writeState)
+                }
+                host.flushSaveRAM()
+                refreshSaveSlots()
+                let saved = "Saved to Slot \(slot)"
+                status = saved
+                if let core {
+                    upload([SaveSync.nativeFile(for: game.id), SaveSync.manualFile(for: game.id, slot: slot, core: core)],
+                           saved: saved)
+                }
+                closeSaveSlots()
+                if isMenuOpen { closeMenu() }
+            } catch {
+                status = "Save failed: \(error.localizedDescription)"
+            }
+        case .load(let slot):
+            guard let host, hasStarted else {
+                status = "Load failed: Game is not running"
+                return
+            }
+            do {
+                try host.loadState(from: slotStore.stateURL(slot))
+                refreshSaveSlots()
+                status = "Loaded Slot \(slot)"
+                closeSaveSlots()
+                if isMenuOpen { closeMenu() }
+            } catch {
+                status = "Load failed: \(error.localizedDescription)"
+            }
+        case .delete(let slot):
+            do {
+                try slotStore.delete(slot)
+                refreshSaveSlots()
+                let line = SaveLine(gameID: game.id, kind: .manual, slot: SaveSlotStore.lineSlot(slot))
+                let engine = sync.engine
+                Task { await engine.discardLocal(line) }
+                status = "Deleted Slot \(slot)"
+            } catch {
+                status = "Delete failed: \(error.localizedDescription)"
+            }
+        case .close:
+            break
         }
     }
 
@@ -459,7 +550,7 @@ final class GameSession {
         clearHostInput()
         disconnectedController = name
         controllerReconnected = false
-        if !isMenuOpen, !isChoosingDisc { startOverlayPolling() }
+        if !isMenuOpen, !isChoosingDisc, !isShowingSaveSlots { startOverlayPolling() }
     }
 
     /// Continues after a disconnect, with the reconnected pad, another pad, touch or the keyboard.
@@ -467,7 +558,7 @@ final class GameSession {
         guard disconnectedController != nil else { return }
         disconnectedController = nil
         controllerReconnected = false
-        if !isMenuOpen {
+        if !isMenuOpen, !isShowingSaveSlots {
             stopOverlayPolling()
             resume()
         }
@@ -498,6 +589,8 @@ final class GameSession {
         var state = input.physicalState()
         if state.leftStick.y > 0.5 { state.pressed.insert(.dpadUp) }
         if state.leftStick.y < -0.5 { state.pressed.insert(.dpadDown) }
+        if state.leftStick.x < -0.5 { state.pressed.insert(.dpadLeft) }
+        if state.leftStick.x > 0.5 { state.pressed.insert(.dpadRight) }
         return state.pressed
     }
 
@@ -507,6 +600,12 @@ final class GameSession {
         let pressed = held.subtracting(overlayHeld)
         overlayHeld = held
         if isShowingControls { return }
+        if isShowingSaveSlots {
+            if let command = slotNavigator.handle(pressed, occupied: saveSlots.map { !$0.isEmpty }) {
+                command == .close ? closeSaveSlots() : perform(command)
+            }
+            return
+        }
         if isMenuOpen {
             if isConfirmingRestart {
                 if !pressed.isDisjoint(with: [.south, .start]) {
@@ -534,7 +633,7 @@ final class GameSession {
     private static let discPickerChord: SEJoypadButtons = [.l, .r, .select]
 
     func openDiscPicker() {
-        guard hasStarted, diskCount > 1, pendingConflict == nil, !isChoosingDisc else { return }
+        guard hasStarted, diskCount > 1, pendingConflict == nil, !isChoosingDisc, !isShowingSaveSlots else { return }
         pause()
         isChoosingDisc = true
         chordArmed = false
@@ -615,6 +714,9 @@ final class GameSession {
         pickerTimer?.invalidate()
         pickerTimer = nil
         isChoosingDisc = false
+        isShowingSaveSlots = false
+        slotNavigator.confirmation = nil
+        saveSlotsFromMenu = false
         overlayTimer?.invalidate()
         overlayTimer = nil
         isMenuOpen = false

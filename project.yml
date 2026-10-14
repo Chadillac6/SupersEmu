@@ -893,6 +893,8 @@ targets:
       - Tests/InputTests
       - App/Input/AutoStateCheckpoint.swift
       - App/Input/PadInput.swift
+      - App/Saves/SaveSlotStore.swift
+      - App/Saves/SaveSlotNavigator.swift
       - App/Input/TouchZones.swift
       - App/Input/ConsoleLayout.swift
       - App/Input/InputMapping.swift

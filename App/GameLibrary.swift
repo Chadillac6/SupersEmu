@@ -105,8 +105,8 @@ enum AppPaths {
         states.appendingPathComponent(gameID, isDirectory: true).appendingPathComponent("auto.state")
     }
 
-    static func manualState(for gameID: String) -> URL {
-        states.appendingPathComponent(gameID, isDirectory: true).appendingPathComponent("slot1.state")
+    static func stateDirectory(for gameID: String) -> URL {
+        states.appendingPathComponent(gameID, isDirectory: true)
     }
 
     static func saveRAM(for gameID: String) -> URL {
