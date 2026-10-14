@@ -29,12 +29,27 @@ final class ControllerHub {
     @ObservationIgnored private var gcByID: [String: GCController] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     #if DEBUG
-    // DEBUG-only simulated controller for the iOS Simulator, which has no real gamepads:
-    // SUPERSEMU_DEBUG_CONTROLLER=on keeps a fake pad connected forever; =N (seconds) connects
-    // it for N seconds then drops it, exercising the real disconnect path (gamepadDisconnected,
-    // DisconnectPrompt). Unset changes nothing.
+    // DEBUG-only simulated controller for the iOS Simulator. SUPERSEMU_DEBUG_CONTROLLER:
+    //   unset/unrecognised → nothing changes.
+    //   Any recognised value hides real GCControllers (and HID pads on macOS) — needed because
+    //   the iOS 26.5 Simulator reports a phantom "Gamepad" even with no pad attached.
+    //   `off` → no controllers at all; `on` → fake pad forever; <seconds> → fake pad for N s
+    //   then dropped, exercising the real disconnect path (gamepadDisconnected, DisconnectPrompt).
+    private enum DebugController {
+        case disabled          // "off": no controllers at all
+        case permanent         // "on": fake pad forever
+        case temporary(Date)   // "<seconds>": fake pad until the expiry date
+
+        var includesDebugPad: Bool {
+            switch self {
+            case .disabled: return false
+            case .permanent: return true
+            case .temporary(let expiry): return Date() < expiry
+            }
+        }
+    }
     @ObservationIgnored private let debugPad = Controller(id: "debug-pad", name: "Debug Controller", type: "gc:debug", kind: .gameController)
-    @ObservationIgnored private var debugPadExpiry: Date?  // nil → not simulated; .distantFuture → permanent
+    @ObservationIgnored private var debugController: DebugController?
     #endif
     #if os(macOS)
     @ObservationIgnored private let hid = HIDGamepadManager()
@@ -54,14 +69,17 @@ final class ControllerHub {
         #endif
         #if DEBUG
         if let value = ProcessInfo.processInfo.environment["SUPERSEMU_DEBUG_CONTROLLER"] {
-            if let seconds = TimeInterval(value) {
-                debugPadExpiry = Date().addingTimeInterval(seconds)
-                Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(seconds))
-                    self?.refresh()
-                }
-            } else if value == "on" {
-                debugPadExpiry = .distantFuture
+            switch value {
+            case "on": debugController = .permanent
+            case "off": debugController = .disabled
+            default:
+                if let seconds = TimeInterval(value) {
+                    debugController = .temporary(Date().addingTimeInterval(seconds))
+                    Task { [weak self] in
+                        try? await Task.sleep(for: .seconds(seconds))
+                        self?.refresh()
+                    }
+                }  // Unrecognised values leave the override nil → unchanged behaviour.
             }
         }
         #endif
@@ -99,28 +117,33 @@ final class ControllerHub {
     private func refresh() {
         var next: [Controller] = []
         var gc: [String: GCController] = [:]
-        for controller in GCController.controllers() where controller.extendedGamepad != nil {
-            let id = "gc-\(UInt(bitPattern: ObjectIdentifier(controller).hashValue))"
-            let name = controller.vendorName ?? controller.productCategory
-            gc[id] = controller
-            // Home/Guide is ours (long press opens the in-game menu), not the system's.
-            controller.extendedGamepad?.buttonHome?.preferredSystemGestureState = .disabled
-            next.append(Controller(id: id, name: name, type: "gc:\(controller.productCategory):\(name)", kind: .gameController))
+        #if DEBUG
+        let includeReal = debugController == nil
+        if let debugController, debugController.includesDebugPad { next.append(debugPad) }
+        #else
+        let includeReal = true
+        #endif
+        if includeReal {
+            for controller in GCController.controllers() where controller.extendedGamepad != nil {
+                let id = "gc-\(UInt(bitPattern: ObjectIdentifier(controller).hashValue))"
+                let name = controller.vendorName ?? controller.productCategory
+                gc[id] = controller
+                // Home/Guide is ours (long press opens the in-game menu), not the system's.
+                controller.extendedGamepad?.buttonHome?.preferredSystemGestureState = .disabled
+                next.append(Controller(id: id, name: name, type: "gc:\(controller.productCategory):\(name)", kind: .gameController))
+            }
         }
         gcByID = gc
         #if os(macOS)
         var hidDevices: [String: HIDGamepad] = [:]
-        for device in hid.gamepads {
-            let id = "hid-\(device.id)"
-            hidDevices[id] = device
-            next.append(Controller(id: id, name: device.productName, type: device.controllerType, kind: .hid))
+        if includeReal {
+            for device in hid.gamepads {
+                let id = "hid-\(device.id)"
+                hidDevices[id] = device
+                next.append(Controller(id: id, name: device.productName, type: device.controllerType, kind: .hid))
+            }
         }
         hidByID = hidDevices
-        #endif
-        #if DEBUG
-        if let debugPadExpiry, Date() < debugPadExpiry {
-            next.append(debugPad)
-        }
         #endif
         // Keep existing players in their slots; newcomers join at the end.
         let kept = controllers.filter { old in next.contains { $0.id == old.id } }
