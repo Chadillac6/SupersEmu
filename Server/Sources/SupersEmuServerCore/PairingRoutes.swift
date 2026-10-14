@@ -151,7 +151,7 @@ public final class PairingService: Sendable {
         try store.audit(caller, action: "pairing.code_created", detail: "user=\(user.id)")
 
         let environment = PairingEnvironment.resolve(for: store)
-        let payload = PairingPayload(serverName: store.serverName, urls: environment.urls,
+        let payload = PairingPayload(serverName: store.serverName, urls: environment.currentURLs,
                                      certificateSHA256: environment.certificateSHA256, code: code,
                                      publicURL: environment.publicURL)
         return PairingCode(code: code, expiresAt: expires, payload: payload, qrURL: try PairingLink.url(for: payload).absoluteString)

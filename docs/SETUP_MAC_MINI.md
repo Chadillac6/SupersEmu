@@ -30,6 +30,7 @@ ditto build/mac/Build/Products/Debug/SupersEmu.app /Applications/SupersEmu.app
    version: the App Store version only runs while someone is logged in. **[untested]**
 2. Install Tailscale on your iPhone/iPad with the same account.
 3. No router port forwarding is needed. Don't open any ports.
+Already-paired devices learn the Mac mini's Tailscale address the next time they connect at home, so re-pairing is not needed. The server also detects Tailscale if it starts after SupersEmu.
 
 ## Public access (invite-only)
 Use this only when invited players cannot use Tailscale. The public HTTPS listener is a loopback-only

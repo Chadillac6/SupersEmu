@@ -45,8 +45,12 @@ public enum ServerLauncher {
         let urls = options.advertiseURLs.isEmpty
             ? LocalNetwork.advertisedURLs(scheme: scheme, port: options.port, tailscaleHost: options.tailscaleHost)
             : options.advertiseURLs
+        let detection = options.advertiseURLs.isEmpty
+            ? URLDetection(scheme: scheme, port: options.port, tailscaleHost: options.tailscaleHost)
+            : nil
         let publicAccess = options.publicAccess
-        let environment = PairingEnvironment(urls: urls, certificateSHA256: pin, publicURL: publicAccess?.publicURL)
+        let environment = PairingEnvironment(
+            urls: urls, certificateSHA256: pin, publicURL: publicAccess?.publicURL, detection: detection)
         let metadata = options.metadata ? MetadataService.standard(store: store) : nil
         let pairing = PairingServices(store: store)
         metadata?.enqueue()

@@ -261,6 +261,7 @@ final class ServerSession {
         do {
             let health = try await client.health()
             learnPublicURL(health.publicURL, credential: credential, reachedAt: url)
+            learnServerURLs(health.urls, reachedAt: url)
             guard let revision = health.libraryRevision else { return }
             guard revision != libraryRevision else { return }
             libraryRevision = revision
@@ -402,6 +403,17 @@ final class ServerSession {
         urlSession?.finishTasksAndInvalidate()
         urlSession = nil
         trust = nil
+    }
+
+    private func learnServerURLs(_ advertised: [URL]?, reachedAt url: URL) {
+        guard var credential = self.credential,
+              credential.certificateSHA256 != nil,
+              url.scheme?.lowercased() == "https",
+              url != credential.publicURL,
+              let urls = ServerAddressLearning.merged(current: credential.urls, advertised: advertised, reachedAt: url) else { return }
+        credential.urls = urls
+        try? store.save(credential)
+        self.credential = credential
     }
 
     private struct Snapshot: Codable {

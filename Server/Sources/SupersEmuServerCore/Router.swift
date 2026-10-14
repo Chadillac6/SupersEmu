@@ -34,7 +34,8 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
             serverVersion: ServerInfo.version,
             libraryRevision: try store.libraryRevision(),
             certificateSHA256: certificateSHA256,
-            publicURL: publicURL)
+            publicURL: publicURL,
+            urls: exposure == .publicInternet ? nil : PairingEnvironment.resolve(for: store).currentURLs)
     }
 
     let authed = router.group("v1").add(middleware: TokenAuthMiddleware(
