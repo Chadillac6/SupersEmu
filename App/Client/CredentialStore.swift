@@ -48,11 +48,18 @@ final class LaunchEnvironmentCredentialStore: CredentialStore, @unchecked Sendab
 
     init?(environment: [String: String] = ProcessInfo.processInfo.environment) {
         guard let raw = environment["SUPERSEMU_SERVER_URL"], let url = URL(string: raw),
+              Self.isAllowed(url),
               let token = environment["SUPERSEMU_SERVER_TOKEN"], !token.isEmpty else { return nil }
         credential = ServerCredential(
             serverName: environment["SUPERSEMU_SERVER_NAME"] ?? "Local SupersEmu Server", urls: [url],
             certificateSHA256: nil, token: token, deviceID: "launch-environment",
             user: UserInfo(id: "launch-environment", displayName: "Test", role: .admin))
+    }
+
+    private static func isAllowed(_ url: URL) -> Bool {
+        let scheme = url.scheme?.lowercased()
+        return scheme == "https" ||
+            (scheme == "http" && ["127.0.0.1", "localhost", "::1"].contains(url.host?.lowercased() ?? ""))
     }
 
     func load() -> ServerCredential? { credential }
