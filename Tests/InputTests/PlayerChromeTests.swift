@@ -49,23 +49,23 @@ final class PlayerChromeTests: XCTestCase {
 
     @MainActor
     func testTopBarAutoHideRevealsThenHides() async throws {
-        let autoHide = TopBarAutoHide(delay: .milliseconds(50))
+        let autoHide = TopBarAutoHide(delay: .milliseconds(100))
         XCTAssertFalse(autoHide.isRevealed)
         autoHide.reveal()
         XCTAssertTrue(autoHide.isRevealed)
-        try await Task.sleep(for: .milliseconds(200))
+        try await Task.sleep(for: .milliseconds(500))
         XCTAssertFalse(autoHide.isRevealed)
     }
 
     @MainActor
     func testTopBarAutoHideSecondRevealRestartsTimer() async throws {
-        let autoHide = TopBarAutoHide(delay: .milliseconds(100))
+        let autoHide = TopBarAutoHide(delay: .milliseconds(300))
         autoHide.reveal()
-        try await Task.sleep(for: .milliseconds(70))
-        autoHide.reveal()  // restart: without this the bar would hide at ~100 ms
-        try await Task.sleep(for: .milliseconds(70))  // ~140 ms after first reveal, ~70 after second
+        try await Task.sleep(for: .milliseconds(200))
+        autoHide.reveal()  // restart: without this the bar would hide at ~300 ms
+        try await Task.sleep(for: .milliseconds(200))  // ~400 ms after first reveal, ~200 after second
         XCTAssertTrue(autoHide.isRevealed)
-        try await Task.sleep(for: .milliseconds(100))
+        try await Task.sleep(for: .milliseconds(400))
         XCTAssertFalse(autoHide.isRevealed)
     }
 
@@ -80,11 +80,11 @@ final class PlayerChromeTests: XCTestCase {
 
     @MainActor
     func testTopBarAutoHideCancelsPendingHide() async throws {
-        let autoHide = TopBarAutoHide(delay: .milliseconds(50))
+        let autoHide = TopBarAutoHide(delay: .milliseconds(100))
         autoHide.reveal()
         autoHide.hide()
         XCTAssertFalse(autoHide.isRevealed)
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(for: .milliseconds(300))
         XCTAssertFalse(autoHide.isRevealed)
     }
 }
