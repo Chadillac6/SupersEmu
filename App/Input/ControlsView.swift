@@ -21,6 +21,9 @@ struct ControlsView: View {
     #if os(macOS)
     @State private var keyMonitor: Any?
     #endif
+    #if os(iOS)
+    @AppStorage(PlayerChrome.hideTouchControlsKey) private var hideTouchControls = true
+    #endif
     @Environment(\.dismiss) private var dismiss
 
     private var layout: ConsoleLayout { .forSystem(system) }
@@ -45,6 +48,14 @@ struct ControlsView: View {
 
     var body: some View {
         Form {
+            #if os(iOS)
+            Section {
+                Toggle("Hide on-screen controls when a controller is connected", isOn: $hideTouchControls)
+                    .accessibilityIdentifier("controls-hide-touch-with-controller")
+            } footer: {
+                Text("The game goes full screen; tap the screen to show the toolbar.")
+            }
+            #endif
             Section {
                 Picker("Controller", selection: $controllerType) {
                     ForEach(controllerTypes, id: \.type) { Text($0.name).tag($0.type) }

@@ -898,6 +898,7 @@ targets:
       - App/Input/InputMapping.swift
       - App/Input/HIDReport.swift
       - App/Input/HIDPresets.swift
+      - App/Input/PlayerChrome.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

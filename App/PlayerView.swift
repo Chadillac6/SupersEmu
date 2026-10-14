@@ -7,20 +7,48 @@ struct PlayerView: View {
     @Environment(\.scenePhase) private var scenePhase
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @AppStorage(PlayerChrome.hideTouchControlsKey) private var hideTouchControls = true
+    @State private var hub = ControllerHub.shared
     #endif
+    @State private var topBarAutoHide = TopBarAutoHide()
+
+    private var chrome: PlayerChrome {
+        #if os(iOS)
+        PlayerChrome.resolve(
+            controllerActive: PlayerChrome.isControllerActive(connectedGamepads: hub.controllers.count),
+            hideWhenControllerConnected: hideTouchControls, hasTouchControls: true)
+        #else
+        PlayerChrome.resolve(controllerActive: false, hideWhenControllerConnected: false, hasTouchControls: false)
+        #endif
+    }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 0) {
-                topBar
+                if !chrome.isFullScreen { topBar }
                 EmulatorScreen(session: session)
                     .accessibilityIdentifier("emulator-screen")
+                    #if os(iOS)
+                    .ignoresSafeArea(edges: chrome.isFullScreen ? .all : [])
+                    .contentShape(Rectangle())
+                    .onTapGesture { if chrome.isFullScreen { topBarAutoHide.toggle() } }
+                    #endif
                 #if os(iOS)
-                TouchControls(input: session.input)
-                    .containerRelativeFrame(.horizontal)
+                if chrome.showsTouchControls {
+                    TouchControls(input: session.input)
+                        .containerRelativeFrame(.horizontal)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 #endif
             }
+            #if os(iOS)
+            .overlay(alignment: .top) {
+                if chrome.isFullScreen && topBarAutoHide.isRevealed {
+                    topBar.transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            #endif
             if session.isChoosingDisc {
                 DiscPicker(session: session)
             }
@@ -52,7 +80,20 @@ struct PlayerView: View {
         #if os(iOS)
         .defersSystemGestures(on: .all)
         .persistentSystemOverlays(.hidden)
+        .statusBarHidden(chrome.isFullScreen)
         #endif
+        .animation(.easeInOut(duration: 0.25), value: chrome)
+        .animation(.easeInOut(duration: 0.25), value: topBarAutoHide.isRevealed)
+        .onChange(of: chrome.isFullScreen) { _, fullScreen in
+            if fullScreen {
+                topBarAutoHide.reveal()
+            } else {
+                topBarAutoHide.hide()
+            }
+        }
+        .onChange(of: chrome.showsTouchControls) { _, shows in
+            if !shows { session.input.touchState = PadState() }
+        }
         .sheet(isPresented: $session.isShowingControls) {
             NavigationStack {
                 ControlsView(fixedSystem: session.input.layout.system, gameID: session.game.id, gameTitle: session.game.title)
@@ -65,7 +106,10 @@ struct PlayerView: View {
                 onExit()
             }
         }
-        .onAppear { session.start() }
+        .onAppear {
+            session.start()
+            if chrome.isFullScreen { topBarAutoHide.reveal() }
+        }
         .onDisappear { session.stop() }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
