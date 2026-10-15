@@ -1,6 +1,14 @@
 import Foundation
 import SupersEmuKit
 
+enum LaunchEnvironment {
+    static func isAllowedLaunchURL(_ url: URL) -> Bool {
+        let scheme = url.scheme?.lowercased()
+        return scheme == "https" ||
+            (scheme == "http" && ["127.0.0.1", "localhost", "::1"].contains(url.host?.lowercased() ?? ""))
+    }
+}
+
 /// What this device needs to talk to its server after pairing.
 struct ServerCredential: Codable, Equatable, Sendable {
     var serverName: String
@@ -48,6 +56,7 @@ final class LaunchEnvironmentCredentialStore: CredentialStore, @unchecked Sendab
 
     init?(environment: [String: String] = ProcessInfo.processInfo.environment) {
         guard let raw = environment["SUPERSEMU_SERVER_URL"], let url = URL(string: raw),
+              LaunchEnvironment.isAllowedLaunchURL(url),
               let token = environment["SUPERSEMU_SERVER_TOKEN"], !token.isEmpty else { return nil }
         credential = ServerCredential(
             serverName: environment["SUPERSEMU_SERVER_NAME"] ?? "Local SupersEmu Server", urls: [url],
