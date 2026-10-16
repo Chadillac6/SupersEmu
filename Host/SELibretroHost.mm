@@ -30,6 +30,7 @@ namespace {
 struct AudioRing {
     std::vector<int16_t> samples;
     size_t capacity = 0, readIndex = 0, writeIndex = 0, count = 0;
+    uint64_t underrunFrames = 0, overflowFrames = 0;
     os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
 
     void reset(size_t frames) {
@@ -37,6 +38,7 @@ struct AudioRing {
         samples.assign(frames * 2, 0);
         capacity = frames;
         readIndex = writeIndex = count = 0;
+        underrunFrames = overflowFrames = 0;
         os_unfair_lock_unlock(&lock);
     }
 
@@ -44,7 +46,11 @@ struct AudioRing {
         os_unfair_lock_lock(&lock);
         if (capacity > 0) {
             for (size_t i = 0; i < frames; i++) {
-                if (count == capacity) { readIndex = (readIndex + 1) % capacity; count--; }
+                if (count == capacity) {
+                    readIndex = (readIndex + 1) % capacity;
+                    count--;
+                    overflowFrames++;
+                }
                 samples[writeIndex * 2] = data[i * 2];
                 samples[writeIndex * 2 + 1] = data[i * 2 + 1];
                 writeIndex = (writeIndex + 1) % capacity;
@@ -64,6 +70,7 @@ struct AudioRing {
             readIndex = (readIndex + 1) % capacity;
             count--;
         }
+        underrunFrames += frames - i;
         os_unfair_lock_unlock(&lock);
         for (; i < frames; i++) { left[i] = 0; right[i] = 0; }
     }
@@ -87,6 +94,7 @@ struct HardwareRender {
     GLuint fbo = 0, color = 0, depth = 0, outFBO = 0, outTexture = 0;
     unsigned fbWidth = 0, fbHeight = 0, outWidth = 0, outHeight = 0;
     bool surfaceUnavailable = false;
+    std::string graphicsRenderer;
     std::vector<uint32_t> readback;
 };
 
@@ -107,6 +115,8 @@ struct HostState {
     HardwareRender hw;
     /// Defaults the core declared via SET_VARIABLES, answered when kCoreOptions doesn't override a key.
     std::vector<std::pair<std::string, std::string>> optionDefaults;
+    /// Snapshot of pending overrides for this host. Values are used only for declared options.
+    std::vector<std::pair<std::string, std::string>> optionOverrides;
 };
 
 struct CoreEntry {
@@ -142,6 +152,9 @@ const CoreOption kCoreOptions[] = {
 #endif
 };
 
+NSDictionary<NSString *, NSString *> *gPendingCoreOptionOverrides = nil;
+void (^gLogHandler)(NSInteger, NSString *) = nil;
+
 std::vector<CoreEntry> &registeredCores() {
     static std::vector<CoreEntry> cores;
     return cores;
@@ -160,10 +173,34 @@ const SECoreAPI *coreNamed(NSString *identifier) {
 HostState g;
 
 void logCallback(enum retro_log_level level, const char *fmt, ...) {
-    if (level < RETRO_LOG_WARN) return;
     va_list args;
     va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
+    if (level >= RETRO_LOG_WARN) {
+        va_list printArgs;
+        va_copy(printArgs, args);
+        vfprintf(stderr, fmt, printArgs);
+        va_end(printArgs);
+    }
+
+    va_list countArgs;
+    va_copy(countArgs, args);
+    int length = vsnprintf(nullptr, 0, fmt, countArgs);
+    va_end(countArgs);
+    if (length >= 0) {
+        std::vector<char> buffer(size_t(length) + 1);
+        va_list formatArgs;
+        va_copy(formatArgs, args);
+        vsnprintf(buffer.data(), buffer.size(), fmt, formatArgs);
+        va_end(formatArgs);
+        NSString *message = [[NSString alloc] initWithBytes:buffer.data()
+                                                     length:size_t(length)
+                                                   encoding:NSUTF8StringEncoding];
+        if (message.length && [message hasSuffix:@"\n"]) {
+            message = [message substringToIndex:message.length - 1];
+        }
+        void (^handler)(NSInteger, NSString *) = SELibretroHost.logHandler;
+        if (handler && message) handler(level, message);
+    }
     va_end(args);
 }
 
@@ -203,7 +240,14 @@ bool hwCreateContext(retro_hw_context_type type) {
     }
     if (!g.hw.context) return false;
 #endif
-    return hwMakeCurrent();
+    if (!hwMakeCurrent()) return false;
+    const GLubyte *renderer = glGetString(GL_RENDERER);
+    const GLubyte *version = glGetString(GL_VERSION);
+    if (renderer && version) {
+        g.hw.graphicsRenderer = std::string(reinterpret_cast<const char *>(renderer))
+            + " " + reinterpret_cast<const char *>(version);
+    }
+    return true;
 }
 
 void hwCreateFramebuffer(unsigned width, unsigned height) {
@@ -423,6 +467,18 @@ bool environmentCallback(unsigned cmd, void *data) {
             return true;
         case RETRO_ENVIRONMENT_GET_VARIABLE: {
             auto variable = static_cast<retro_variable *>(data);
+            if (variable->key) {
+                auto declared = std::find_if(g.optionDefaults.begin(), g.optionDefaults.end(),
+                    [&](const auto &option) { return option.first == variable->key; });
+                if (declared != g.optionDefaults.end()) {
+                    auto override = std::find_if(g.optionOverrides.begin(), g.optionOverrides.end(),
+                        [&](const auto &option) { return option.first == variable->key; });
+                    if (override != g.optionOverrides.end()) {
+                        variable->value = override->second.c_str();
+                        return true;
+                    }
+                }
+            }
             for (const CoreOption &option : kCoreOptions) {
                 if (variable->key && strcmp(variable->key, option.key) == 0) {
                     variable->value = option.value;
@@ -569,6 +625,7 @@ static __weak SELibretroHost *gActiveHost;
     NSData *_romData;
     NSURL *_saveRAMURL;
     retro_system_av_info _avInfo;
+    NSDictionary<NSString *, NSString *> *_coreOptions;
     BOOL _loaded;
     AVAudioEngine *_engine;
     AVAudioSourceNode *_sourceNode;
@@ -576,6 +633,22 @@ static __weak SELibretroHost *gActiveHost;
 }
 
 + (SELibretroHost *)activeHost { return gActiveHost; }
+
++ (NSDictionary<NSString *,NSString *> *)pendingCoreOptionOverrides {
+    @synchronized (self) { return [gPendingCoreOptionOverrides copy] ?: @{}; }
+}
+
++ (void)setPendingCoreOptionOverrides:(NSDictionary<NSString *,NSString *> *)overrides {
+    @synchronized (self) { gPendingCoreOptionOverrides = [overrides copy] ?: @{}; }
+}
+
++ (void (^)(NSInteger, NSString *))logHandler {
+    @synchronized (self) { return [gLogHandler copy]; }
+}
+
++ (void)setLogHandler:(void (^)(NSInteger, NSString *))handler {
+    @synchronized (self) { gLogHandler = [handler copy]; }
+}
 
 + (NSArray<NSString *> *)availableCoreIDs {
     NSMutableArray *ids = [NSMutableArray array];
@@ -633,6 +706,14 @@ static __weak SELibretroHost *gActiveHost;
     g.core = core;
     g.disk = {};
     g.optionDefaults.clear();
+    g.optionOverrides.clear();
+    NSDictionary<NSString *, NSString *> *overrides = SELibretroHost.pendingCoreOptionOverrides;
+    for (NSString *key in overrides) {
+        NSString *value = overrides[key];
+        if (key.length && value.length) {
+            g.optionOverrides.emplace_back(key.UTF8String, value.UTF8String);
+        }
+    }
     g.hw = HardwareRender();
 
     core->set_environment(environmentCallback);
@@ -668,6 +749,26 @@ static __weak SELibretroHost *gActiveHost;
         if (error) *error = hostError(2, @"The emulator could not load this game.");
         return nil;
     }
+    NSMutableDictionary<NSString *, NSString *> *effectiveOptions = [NSMutableDictionary dictionary];
+    for (const auto &option : g.optionDefaults) {
+        std::string value = option.second;
+        for (const CoreOption &coreOption : kCoreOptions) {
+            if (option.first == coreOption.key) {
+                value = coreOption.value;
+                break;
+            }
+        }
+        for (const auto &override : g.optionOverrides) {
+            if (option.first == override.first) {
+                value = override.second;
+                break;
+            }
+        }
+        NSString *key = [NSString stringWithUTF8String:option.first.c_str()];
+        NSString *stringValue = [NSString stringWithUTF8String:value.c_str()];
+        if (key && stringValue) effectiveOptions[key] = stringValue;
+    }
+    _coreOptions = [effectiveOptions copy];
     core->set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
     core->get_system_av_info(&_avInfo);
     hwStart(_avInfo);
@@ -688,6 +789,34 @@ static __weak SELibretroHost *gActiveHost;
 - (double)sampleRate { return _avInfo.timing.sample_rate; }
 - (NSInteger)frameWidth { return g.width; }
 - (NSInteger)frameHeight { return g.height; }
+- (uint64_t)audioUnderrunFrames {
+    os_unfair_lock_lock(&g.audio.lock);
+    uint64_t frames = g.audio.underrunFrames;
+    os_unfair_lock_unlock(&g.audio.lock);
+    return frames;
+}
+- (uint64_t)audioOverflowFrames {
+    os_unfair_lock_lock(&g.audio.lock);
+    uint64_t frames = g.audio.overflowFrames;
+    os_unfair_lock_unlock(&g.audio.lock);
+    return frames;
+}
+- (NSInteger)audioBufferedFrames {
+    os_unfair_lock_lock(&g.audio.lock);
+    NSInteger frames = NSInteger(g.audio.count);
+    os_unfair_lock_unlock(&g.audio.lock);
+    return frames;
+}
+- (NSString *)renderPath {
+    if (!g.hw.requested) return @"software";
+    if (g.hw.surfaceUnavailable) return @"gl-readback";
+    return g.hw.outFBO ? @"gl-iosurface" : @"gl-pending";
+}
+- (NSString *)graphicsRenderer {
+    return g.hw.graphicsRenderer.empty()
+        ? nil : [NSString stringWithUTF8String:g.hw.graphicsRenderer.c_str()];
+}
+- (NSDictionary<NSString *,NSString *> *)coreOptions { return _coreOptions ?: @{}; }
 - (SEJoypadButtons)buttons { return g.buttons[0].load(); }
 - (void)setButtons:(SEJoypadButtons)buttons { g.buttons[0] = buttons; }
 
@@ -778,6 +907,23 @@ static __weak SELibretroHost *gActiveHost;
 
 - (NSData *)frameBufferData {
     return [NSData dataWithBytes:g.frame.data() length:g.frame.size() * 4];
+}
+
+- (void)_testResetAudioRing:(NSInteger)capacity {
+    g.audio.reset(capacity > 0 ? size_t(capacity) : 0);
+}
+
+- (void)_testPushSilentAudioFrames:(NSInteger)frames {
+    if (frames <= 0) return;
+    std::vector<int16_t> samples(size_t(frames) * 2, 0);
+    g.audio.push(samples.data(), size_t(frames));
+}
+
+- (void)_testPopAudioFrames:(NSInteger)frames {
+    if (frames <= 0) return;
+    std::vector<float> left(static_cast<size_t>(frames), 0.0f);
+    std::vector<float> right(static_cast<size_t>(frames), 0.0f);
+    g.audio.pop(left.data(), right.data(), size_t(frames));
 }
 
 - (NSData *)serializeState {

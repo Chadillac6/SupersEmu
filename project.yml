@@ -869,6 +869,9 @@ targets:
     sources:
       - Tests/HostTests
       - App/ServerMode/ServerMenuStatus.swift
+      - App/Diagnostics/PerformanceStats.swift
+      - App/Diagnostics/DiagnosticsLog.swift
+      - App/Diagnostics/N64Preset.swift
       - Host/SELibretroHost.h
       - Host/SELibretroHost.mm
     dependencies:

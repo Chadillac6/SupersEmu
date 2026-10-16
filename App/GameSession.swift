@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import QuartzCore
+import Darwin
 import SupersEmuKit
 
 @MainActor
@@ -46,6 +47,12 @@ final class GameSession {
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var core: SaveCore?
+    @ObservationIgnored private var performanceStats = PerformanceStats()
+    @ObservationIgnored private var lastPerformanceSummaryAt: TimeInterval?
+    @ObservationIgnored private var diagnosticsLog: DiagnosticsLog?
+    @ObservationIgnored private var hasRecordedRenderPath = false
+    @ObservationIgnored private var lastLayoutDescription = ""
+    @ObservationIgnored private var pendingDiagnosticsEvents: [String] = []
     @ObservationIgnored private var pickerTimer: Timer?
     @ObservationIgnored private var pickerButtons: SEJoypadButtons = []
     /// The chord opens the picker only after it has been released since it last fired.
@@ -104,20 +111,34 @@ final class GameSession {
         // Battery saves are read when the core loads the game, so they sync before the host exists.
         await pull([SaveSync.nativeFile(for: game.id)])
         guard !Task.isCancelled else { return }
+        let coreID = CoreRegistry.coreID(for: game.fileURL, console: game.console)
+        let n64Preset = coreID == "mupen64plus_next"
+            ? N64Preset.selectedPreset(forGameID: game.id)
+            : nil
+        if UserDefaults.standard.object(forKey: "diagnostics.recordLogs") as? Bool ?? true {
+            diagnosticsLog = try? DiagnosticsLog(title: game.title)
+        }
+        installCoreLogHandler()
         let host: SELibretroHost
         do {
+            SELibretroHost.pendingCoreOptionOverrides = n64Preset?.coreOptionOverrides ?? [:]
             host = try SELibretroHost(
-                coreID: CoreRegistry.coreID(for: game.fileURL, console: game.console),
+                coreID: coreID,
                 romURL: game.fileURL,
                 saveRAMURL: AppPaths.saveRAM(for: game.id),
                 systemDirectory: AppPaths.system)
         } catch {
+            SELibretroHost.logHandler = nil
+            diagnosticsLog?.appendEvent("start failed")
+            diagnosticsLog?.stop()
+            diagnosticsLog = nil
             isSyncing = false
             errorMessage = error.localizedDescription
             startTask = nil
             return
         }
         self.host = host
+        startDiagnostics(host: host, n64Preset: n64Preset)
         diskCount = host.diskCount
         currentDisk = host.currentDisk
         #if DEBUG
@@ -136,8 +157,12 @@ final class GameSession {
             do {
                 try AutoStateCheckpoint.moveAside(autoState)
             } catch {
+                diagnosticsLog?.appendEvent("stop")
                 host.shutdown()
                 self.host = nil
+                SELibretroHost.logHandler = nil
+                diagnosticsLog?.stop()
+                diagnosticsLog = nil
                 errorMessage = "Couldn't preserve the previous resume point: \(error.localizedDescription)"
                 startTask = nil
                 return
@@ -151,6 +176,7 @@ final class GameSession {
             if FileManager.default.fileExists(atPath: autoState.path) {
                 do {
                     try host.loadState(from: autoState)
+                    diagnosticsLog?.appendEvent("save-state load auto")
                     status = pulled ?? "Resumed where you left off"
                 } catch {
                     preserveIncompatibleState(at: autoState)
@@ -233,6 +259,9 @@ final class GameSession {
     func resume() {
         // Never run frames while saves are still syncing or a conflict is waiting for an answer.
         guard let host, hasStarted, timer == nil, !isChoosingDisc, !isShowingSaveSlots, !isMenuOpen, disconnectedController == nil else { return }
+        performanceStats.resetBaseline()
+        lastPerformanceSummaryAt = ProcessInfo.processInfo.systemUptime
+        diagnosticsLog?.appendEvent("resume")
         let timer = Timer(timeInterval: 1.0 / max(host.framesPerSecond, 1), repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -241,8 +270,10 @@ final class GameSession {
     }
 
     func pause() {
+        let wasRunning = timer != nil
         timer?.invalidate()
         timer = nil
+        if wasRunning { diagnosticsLog?.appendEvent("pause") }
         #if os(macOS)
         input.releaseAll()
         #endif
@@ -272,12 +303,39 @@ final class GameSession {
             host.setAnalog(.left, x: output.leftStick.x, y: output.leftStick.y, port: port)
             host.setAnalog(.right, x: output.rightStick.x, y: output.rightStick.y, port: port)
         }
-        let frameStart = ContinuousClock.now
+        let tickTimestamp = ProcessInfo.processInfo.systemUptime
+        let frameStart = ProcessInfo.processInfo.systemUptime
         host.runFrame()
+        let runDuration = ProcessInfo.processInfo.systemUptime - frameStart
+        let presentStart = ProcessInfo.processInfo.systemUptime
         if let image = host.copyFrameImage() {
             displayLayer?.contents = image
         }
-        if Self.logsFrameTime { logFrameTime(ContinuousClock.now - frameStart) }
+        let presentDuration = ProcessInfo.processInfo.systemUptime - presentStart
+        performanceStats.record(
+            runDuration: runDuration,
+            presentDuration: presentDuration,
+            timestamp: tickTimestamp,
+            framesPerSecond: host.framesPerSecond,
+            sampleRate: host.sampleRate,
+            audioUnderrunFrames: host.audioUnderrunFrames,
+            audioOverflowFrames: host.audioOverflowFrames,
+            bufferedAudioFrames: host.audioBufferedFrames)
+        if !hasRecordedRenderPath, host.frameWidth > 0 {
+            hasRecordedRenderPath = true
+            diagnosticsLog?.appendEvent(
+                "renderPath=\(host.renderPath) graphicsRenderer=\(host.graphicsRenderer ?? "nil")")
+        }
+        if let lastPerformanceSummaryAt, tickTimestamp - lastPerformanceSummaryAt >= 5 {
+            let summary = performanceStats.summary(framesPerSecond: host.framesPerSecond, sampleRate: host.sampleRate)
+            let thermalState = Self.thermalStateName
+            diagnosticsLog?.appendPerformance(summary, thermalState: thermalState)
+            if Self.logsFrameTime {
+                print(summary.performanceLine(thermalState: thermalState))
+                fflush(stdout)
+            }
+            self.lastPerformanceSummaryAt = tickTimestamp
+        }
         if needsFreshCheckpoint {
             needsFreshCheckpoint = false
             autosave(preservingStatus: true)
@@ -286,21 +344,104 @@ final class GameSession {
         }
     }
 
-    /// `SUPERSEMU_LOG_FRAME_TIME=1`: prints the average emulate + present time every 300 frames.
+    /// `SUPERSEMU_LOG_FRAME_TIME=1`: prints a five-second performance summary to stdout.
     private static let logsFrameTime = ProcessInfo.processInfo.environment["SUPERSEMU_LOG_FRAME_TIME"] == "1"
-    @ObservationIgnored private var frameTimeTotal = Duration.zero
-    @ObservationIgnored private var frameTimeCount = 0
 
-    private func logFrameTime(_ elapsed: Duration) {
-        frameTimeTotal += elapsed
-        frameTimeCount += 1
-        guard frameTimeCount == 300 else { return }
-        let ms = Double(frameTimeTotal.components.attoseconds) / 1e15 / Double(frameTimeCount)
-            + Double(frameTimeTotal.components.seconds) * 1000 / Double(frameTimeCount)
-        print(String(format: "SupersEmu frame time: %.2f ms/frame (%.0f fps max)", ms, 1000 / ms))
-        fflush(stdout)
-        frameTimeTotal = .zero
-        frameTimeCount = 0
+    var performanceOverlayText: String {
+        let summary = performanceStats.summary(
+            framesPerSecond: host?.framesPerSecond ?? 60,
+            sampleRate: host?.sampleRate ?? 48_000)
+        return String(
+            format: "%.0f%% · %.1f ms · gaps %.0f ms",
+            locale: Locale(identifier: "en_US_POSIX"),
+            summary.speedPercent,
+            summary.averageRunMilliseconds,
+            summary.audioUnderrunMilliseconds)
+    }
+
+    func recordEvent(_ event: String) {
+        if let diagnosticsLog {
+            diagnosticsLog.appendEvent(event)
+        } else if UserDefaults.standard.object(forKey: "diagnostics.recordLogs") as? Bool ?? true {
+            pendingDiagnosticsEvents.append(event)
+        }
+    }
+
+    func recordLayout(width: CGFloat, height: CGFloat) {
+        let orientation = width >= height ? "landscape" : "portrait"
+        let description = "layout \(Int(width.rounded()))x\(Int(height.rounded())) \(orientation)"
+        guard description != lastLayoutDescription else { return }
+        lastLayoutDescription = description
+        recordEvent(description)
+    }
+
+    func appDidEnterBackground() {
+        recordEvent("app background")
+        diagnosticsLog?.flush()
+    }
+
+    func appDidBecomeActive() {
+        recordEvent("app foreground")
+    }
+
+    private func startDiagnostics(host: SELibretroHost, n64Preset: N64Preset?) {
+        guard let diagnosticsLog else {
+            SELibretroHost.logHandler = nil
+            return
+        }
+        let info = Bundle.main.infoDictionary ?? [:]
+        diagnosticsLog.writeHeader(DiagnosticsLog.Header(
+            appVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
+            appBuild: info["CFBundleVersion"] as? String ?? "unknown",
+            deviceModel: Self.deviceModel,
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
+            gameTitle: game.title,
+            gameID: game.id,
+            system: Self.system(for: game),
+            coreName: host.coreName,
+            coreVersion: host.coreVersion,
+            sampleRate: host.sampleRate,
+            framesPerSecond: host.framesPerSecond,
+            n64Preset: n64Preset?.rawValue ?? "n/a",
+            coreOptions: host.coreOptions))
+        diagnosticsLog.appendEvent("start")
+        for event in pendingDiagnosticsEvents {
+            diagnosticsLog.appendEvent(event)
+        }
+        pendingDiagnosticsEvents.removeAll(keepingCapacity: true)
+    }
+
+    private func installCoreLogHandler() {
+        guard let diagnosticsLog else {
+            SELibretroHost.logHandler = nil
+            return
+        }
+        SELibretroHost.logHandler = { [weak diagnosticsLog] level, message in
+            let detailed = UserDefaults.standard.object(forKey: "diagnostics.detailedCoreLogs") as? Bool ?? false
+            diagnosticsLog?.appendCoreLog(level: Int(level), message: message, detailedCoreLogging: detailed)
+        }
+    }
+
+    private static var deviceModel: String {
+        var information = utsname()
+        uname(&information)
+        let capacity = MemoryLayout.size(ofValue: information.machine)
+        return withUnsafePointer(to: &information.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: capacity) {
+                String(cString: $0)
+            }
+        }
+    }
+
+    private static var thermalStateName: String {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal: "nominal"
+        case .fair: "fair"
+        case .serious: "serious"
+        case .critical: "critical"
+        @unknown default: "unknown"
+        }
     }
 
     func autosave(preservingStatus: Bool = false) {
@@ -310,6 +451,7 @@ final class GameSession {
         host.flushSaveRAM()
         do {
             try host.saveState(to: AppPaths.autoState(for: game.id))
+            diagnosticsLog?.appendEvent("save-state save auto")
             if !preservingStatus { status = "Auto-saved on this device" }
         } catch {
             status = "Auto-save failed"
@@ -492,6 +634,7 @@ final class GameSession {
                 } else {
                     try slotStore.overwrite(slot, savedAt: Date(), screenshotPNG: screenshot, writeState: writeState)
                 }
+                diagnosticsLog?.appendEvent("save-state save slot=\(slot)")
                 host.flushSaveRAM()
                 refreshSaveSlots()
                 let saved = "Saved to Slot \(slot)"
@@ -512,6 +655,7 @@ final class GameSession {
             }
             do {
                 try host.loadState(from: slotStore.stateURL(slot))
+                diagnosticsLog?.appendEvent("save-state load slot=\(slot)")
                 refreshSaveSlots()
                 status = "Loaded Slot \(slot)"
                 closeSaveSlots()
@@ -718,6 +862,7 @@ final class GameSession {
         startTask?.cancel()
         startTask = nil
         abandonConflict()
+        diagnosticsLog?.appendEvent("stop")
         pause()
         autosave()
         hasStarted = false
@@ -736,5 +881,8 @@ final class GameSession {
         controllerObservers = []
         host?.shutdown()
         host = nil
+        SELibretroHost.logHandler = nil
+        diagnosticsLog?.stop()
+        diagnosticsLog = nil
     }
 }
