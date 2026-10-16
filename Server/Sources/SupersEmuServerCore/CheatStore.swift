@@ -14,10 +14,17 @@ public struct CheatStore: Sendable {
     let store: ServerStore
     public init(store: ServerStore) { self.store = store }
 
-    public func changes(userID: String, since: Int) throws -> CheatListResponse {
+    /// `visibleTo` limits the feed to games that caller can see (hidden games are left out).
+    public func changes(userID: String, since: Int, visibleTo auth: AuthContext? = nil) throws -> CheatListResponse {
         try store.db.read { db in
-            let rows = try Row.fetchAll(db, sql: "SELECT * FROM cheats WHERE user_id = ? AND revision > ? ORDER BY revision",
-                                        arguments: [userID, since])
+            var sql = "SELECT * FROM cheats WHERE user_id = ? AND revision > ?"
+            var arguments: StatementArguments = [userID, since]
+            if let auth, !auth.isAdmin {
+                let visible = Permissions.visibleGameIDsSQL(for: auth)
+                sql += " AND game_id IN (\(visible.sql))"
+                arguments += visible.arguments
+            }
+            let rows = try Row.fetchAll(db, sql: sql + " ORDER BY revision", arguments: arguments)
             return CheatListResponse(cheats: try rows.map(Self.record), revision: try Self.head(db, userID: userID))
         }
     }
@@ -56,7 +63,7 @@ public struct CheatStore: Sendable {
                 merged.revision = existing.revision
                 if merged == existing { return existing }
             }
-            merged.revision = try Self.head(db, userID: userID) + 1
+            merged.revision = try Self.nextRevision(db, userID: userID)
             try db.execute(sql: """
                 INSERT INTO cheats (user_id, id, game_id, label, code, format, enabled, created_at, label_updated_at,
                     code_updated_at, enabled_updated_at, deleted, deleted_at, revision, updated_by_device)
@@ -76,7 +83,13 @@ public struct CheatStore: Sendable {
     }
 
     static func head(_ db: Database, userID: String) throws -> Int {
-        try Int.fetchOne(db, sql: "SELECT MAX(revision) FROM cheats WHERE user_id = ?", arguments: [userID]) ?? 0
+        try Int.fetchOne(db, sql: "SELECT revision FROM cheat_revisions WHERE user_id = ?", arguments: [userID]) ?? 0
+    }
+
+    static func nextRevision(_ db: Database, userID: String) throws -> Int {
+        try db.execute(sql: "INSERT INTO cheat_revisions (user_id, revision) VALUES (?, 1) ON CONFLICT(user_id) DO UPDATE SET revision = revision + 1",
+                       arguments: [userID])
+        return try head(db, userID: userID)
     }
 
     static func record(_ row: Row) throws -> CheatRecord {

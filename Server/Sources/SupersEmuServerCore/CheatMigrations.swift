@@ -25,6 +25,11 @@ enum CheatMigrations {
                 );
                 CREATE INDEX cheats_user_game ON cheats(user_id, game_id);
                 CREATE INDEX cheats_user_revision ON cheats(user_id, revision);
+                -- Per-user change cursor. Kept apart from the rows so pruning tombstones never lowers it.
+                CREATE TABLE cheat_revisions (
+                    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    revision INTEGER NOT NULL
+                );
                 """)
         }
     }

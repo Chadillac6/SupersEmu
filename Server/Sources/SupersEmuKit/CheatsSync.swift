@@ -65,7 +65,7 @@ public actor CheatSyncEngine {
             }
             try write(file)
         }
-        persistState()
+        try persistState()
     }
 
     public func delete(_ id: UUID, gameID: String) throws {
@@ -107,7 +107,7 @@ public actor CheatSyncEngine {
         if requeueLocal {
             for file in allFiles() { for cheat in file.cheats { state.pending[cheat.id.uuidString] = file.gameID } }
         }
-        persistState()
+        try? persistState()
         status = .deviceOnly
     }
 
@@ -127,7 +127,7 @@ public actor CheatSyncEngine {
         }
         try apply(response.cheats)
         state.lastRevision = max(state.lastRevision, response.revision)
-        persistState()
+        try? persistState()
     }
 
     private func push(_ client: APIClient) async throws {
@@ -142,13 +142,13 @@ public actor CheatSyncEngine {
             } catch APIClientError.http(let code, _) where code == 400 || code == 403 || code == 404 || code == 409 {
                 // The server will never take this one (bad data, or the game was removed): keep it local only.
                 state.pending[id] = nil
-                persistState()
+                try? persistState()
                 continue
             }
             let current = file(for: gameID).cheats.first(where: { $0.id.uuidString == id })
             try apply([saved])
             if current == local { state.pending[id] = nil }
-            persistState()
+            try? persistState()
         }
     }
 
@@ -193,8 +193,9 @@ public actor CheatSyncEngine {
         files[file.gameID] = file
     }
 
-    private func persistState() {
-        guard let data = try? SupersEmuJSON.encoder().encode(state) else { return }
-        try? data.write(to: directory.appendingPathComponent("sync-state.json"), options: .atomic)
+    /// Throws so a save whose upload couldn't be queued reports failure instead of silently never syncing.
+    private func persistState() throws {
+        let data = try SupersEmuJSON.encoder().encode(state)
+        try data.write(to: directory.appendingPathComponent("sync-state.json"), options: .atomic)
     }
 }

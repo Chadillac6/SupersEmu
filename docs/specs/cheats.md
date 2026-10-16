@@ -26,7 +26,8 @@ SaveRAM or save-state format changed, and cheat sync has its own files, queue, t
 
 ## API
 - `GET /v1/cheats?since=<revision>`: every change (tombstones included) for the caller's user newer than
-  `since`, plus the user's head `revision`.
+  `since`, plus the user's head `revision`. Players don't see cheats for games they've hidden. The head comes from
+  a per-user counter (`cheat_revisions`), so it never goes backwards when old tombstones are pruned.
 - `GET /v1/cheats/:game`: the game's live cheats.
 - `PUT /v1/cheats/:game/:id` (paired devices only): body is a `CheatRecord`. The server merges it field by field
   and returns the result; replaying the same body doesn't create a new revision.
@@ -36,7 +37,8 @@ are ignored and unknown `format` values decode as `unknown`.
 
 ## Merge rules
 Name, code and on/off each keep their newest edit (timestamps are whole seconds; ties go to the upload the server
-saw last). A delete is a tombstone: it beats edits made before it and loses to edits made after it. The server
+saw last). A device stamps each change at least one second after the change it follows, so an edit right after a
+delete brings the cheat back and a delete right after an edit sticks. A delete is a tombstone: it beats edits made before it and loses to edits made after it. The server
 drops tombstones after 90 days. Sign-out drops the queue so the next account never receives this account's edits.
 
 ## Applying codes

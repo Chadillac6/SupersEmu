@@ -15,7 +15,7 @@ func registerCheatRoutes(_ group: RouterGroup<SERequestContext>, store: ServerSt
         let auth = try context.caller()
         try auth.require(.savesRead)
         let since = request.uri.queryParameters["since"].flatMap { Int(String($0)) } ?? 0
-        return try cheats.changes(userID: auth.user.id, since: max(0, since))
+        return try cheats.changes(userID: auth.user.id, since: max(0, since), visibleTo: auth)
     }
 
     group.get("cheats/:game") { _, context in

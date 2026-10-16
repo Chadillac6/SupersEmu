@@ -362,3 +362,79 @@ final class CheatSyncEngineTests: XCTestCase {
         }
     }
 }
+
+extension CheatRoutesTests {
+    func testRevisionNeverGoesBackAfterTombstonesExpire() throws {
+        let cheats = CheatStore(store: store)
+        let old = Date().addingTimeInterval(-100 * 24 * 3600)
+        var expired = CheatRecord(gameID: game, label: "Old", code: "C2C3-CF0D", format: .snesGameGenie, now: CheatRecord.now(old))
+        _ = try cheats.put(userID: chad.id, deviceID: iPhone.deviceID, expired)
+        expired.markDeleted(at: CheatRecord.now(old.addingTimeInterval(5)))
+        let tomb = try cheats.put(userID: chad.id, deviceID: iPhone.deviceID, expired)
+        let fresh = cheat("New")
+        let next = try cheats.put(userID: chad.id, deviceID: iPhone.deviceID, fresh)
+        XCTAssertGreaterThan(next.revision, tomb.revision)
+        let feed = try cheats.changes(userID: chad.id, since: tomb.revision)
+        XCTAssertEqual(feed.cheats.map(\.id), [fresh.id])
+        XCTAssertEqual(feed.revision, next.revision)
+    }
+
+    func testFeedLeavesOutGamesThePlayerHid() async throws {
+        let kid = try store.createUser(displayName: "Kid", role: .player)
+        let game = self.game, other = self.other
+        try await store.db.write { db in
+            for id in [game, other] {
+                try db.execute(sql: "INSERT INTO games (id, title, system, created_at) VALUES (?, ?, 'snes', ?)", arguments: [id, id, Date()])
+            }
+            try db.execute(sql: "INSERT INTO user_hidden_games (user_id, game_id) VALUES (?, ?)", arguments: [kid.id, other])
+        }
+        let cheats = CheatStore(store: store)
+        _ = try cheats.put(userID: kid.id, deviceID: nil, cheat("Seen"))
+        _ = try cheats.put(userID: kid.id, deviceID: nil, cheat("Hidden", game: other))
+        let kidDevice = try store.createDeviceToken(userID: kid.id, deviceName: "Kid's iPad")
+        try await app().test(.router) { client in
+            let feed = try await self.changes(client, since: 0, token: kidDevice.token)
+            XCTAssertEqual(feed.cheats.map(\.label), ["Seen"])
+        }
+    }
+}
+
+final class CheatReviewFixTests: XCTestCase {
+    let game = String(repeating: "12", count: 32)
+
+    func testNamedUndashedGenesisCodeInBatch() {
+        let entries = CheatCodec.parseBatch("Infinite lives RFAAA6VR", system: .genesis)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?.label, "Infinite lives")
+        XCTAssertEqual(entries.first?.result.normalized, "RFAA-A6VR")
+        XCTAssertEqual(entries.first?.result.isValid, true)
+    }
+
+    func testSameSecondDeleteThenEditRevivesAndEditThenDeleteSticks() {
+        let t = CheatRecord.now()
+        var record = CheatRecord(gameID: game, label: "A", code: "C2C3-CF0D", format: .snesGameGenie, now: t)
+        record.setEnabled(false, at: t)
+        var deleted = record
+        deleted.markDeleted(at: t)
+        XCTAssertTrue(CheatMerge.merge(record, deleted).deleted)
+        var revived = deleted
+        revived.setLabel("B", at: t)
+        let merged = CheatMerge.merge(deleted, revived)
+        XCTAssertFalse(merged.deleted)
+        XCTAssertEqual(merged.label, "B")
+    }
+}
+
+extension CheatSyncEngineTests {
+    func testSaveFailsWhenTheUploadQueueCannotBeWritten() async throws {
+        let dir = scratch.appendingPathComponent("blocked", isDirectory: true)
+        let blocker = dir.appendingPathComponent("sync-state.json", isDirectory: true)
+        try FileManager.default.createDirectory(at: blocker, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: blocker.appendingPathComponent("keep"))
+        let engine = CheatSyncEngine(directory: dir, provider: nil)
+        do {
+            try await engine.save([CheatRecord(gameID: game, label: "A", code: "C2C3-CF0D", format: .snesGameGenie)])
+            XCTFail("save should report that the upload couldn't be queued")
+        } catch {}
+    }
+}

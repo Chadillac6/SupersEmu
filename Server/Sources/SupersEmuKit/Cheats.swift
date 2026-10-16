@@ -56,12 +56,27 @@ public struct CheatRecord: Codable, Sendable, Identifiable, Equatable, Hashable 
     /// Whole seconds: the JSON date format drops fractions, so every device and the server compare the same values.
     public static func now(_ date: Date = Date()) -> Date { Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down)) }
 
-    public mutating func setLabel(_ value: String, at date: Date = CheatRecord.now()) { label = value; labelUpdatedAt = max(date, labelUpdatedAt) }
-    public mutating func setCode(_ value: String, format: CheatFormat, at date: Date = CheatRecord.now()) {
-        code = value; self.format = format; codeUpdatedAt = max(date, codeUpdatedAt)
+    // Timestamps are whole seconds, so each local change is stamped strictly after the one it follows:
+    // an edit right after a delete revives the cheat, and a delete right after an edit sticks.
+    public mutating func setLabel(_ value: String, at date: Date = CheatRecord.now()) {
+        label = value; labelUpdatedAt = stamp(date, after: labelUpdatedAt)
     }
-    public mutating func setEnabled(_ value: Bool, at date: Date = CheatRecord.now()) { enabled = value; enabledUpdatedAt = max(date, enabledUpdatedAt) }
-    public mutating func markDeleted(at date: Date = CheatRecord.now()) { deleted = true; deletedAt = max(date, updatedAt) }
+    public mutating func setCode(_ value: String, format: CheatFormat, at date: Date = CheatRecord.now()) {
+        code = value; self.format = format; codeUpdatedAt = stamp(date, after: codeUpdatedAt)
+    }
+    public mutating func setEnabled(_ value: Bool, at date: Date = CheatRecord.now()) {
+        enabled = value; enabledUpdatedAt = stamp(date, after: enabledUpdatedAt)
+    }
+    public mutating func markDeleted(at date: Date = CheatRecord.now()) {
+        let lastEdit = [labelUpdatedAt, codeUpdatedAt, enabledUpdatedAt].max()!
+        deleted = true
+        deletedAt = max(date, lastEdit.addingTimeInterval(1), deletedAt ?? .distantPast)
+    }
+
+    private func stamp(_ date: Date, after previous: Date) -> Date {
+        guard let deletedAt else { return max(date, previous) }
+        return max(date, previous, deletedAt.addingTimeInterval(1))
+    }
 
     public var updatedAt: Date { [labelUpdatedAt, codeUpdatedAt, enabledUpdatedAt, deletedAt ?? .distantPast].max()! }
 
@@ -272,7 +287,7 @@ public enum CheatCodec {
         for line in text.split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { continue }
-            let (code, label) = splitLine(trimmed)
+            let (code, label) = splitLine(trimmed, system: system)
             for part in code.split(separator: "+") {
                 let result = parse(String(part), system: system)
                 let n = existingCount + entries.count + 1
@@ -283,9 +298,9 @@ public enum CheatCodec {
         return entries
     }
 
-    static func splitLine(_ line: String) -> (code: String, label: String) {
+    static func splitLine(_ line: String, system: SystemID) -> (code: String, label: String) {
         let words = line.split(separator: " ").map(String.init)
-        if let index = words.firstIndex(where: { looksLikeCode($0) }) {
+        if let index = words.firstIndex(where: { looksLikeCode($0, system: system) }) {
             var rest = words
             let code = rest.remove(at: index)
             return (code, rest.joined(separator: " ").trimmingCharacters(in: CharacterSet(charactersIn: " -–:\t")))
@@ -293,13 +308,16 @@ public enum CheatCodec {
         return (words.first ?? line, words.dropFirst().joined(separator: " "))
     }
 
-    static func looksLikeCode(_ word: String) -> Bool {
+    static func looksLikeCode(_ word: String, system: SystemID) -> Bool {
         let w = word.uppercased()
         if w.count == 9, Array(w)[4] == "-" { return true }
         if w.count == 8, w.allSatisfy({ hexDigits.contains($0) }) { return true }
+        if system == .genesis, w.count == 8, w.allSatisfy({ genesisUndashed.contains($0) }) { return true }
         if w.contains("+") { return true }
         return w.count == 11 && w.contains(":")
     }
+
+    private static let genesisUndashed = Set("ABCDEFGHJKLMNPRSTVWXYZ0123456789")
 
     public static func defaultLabel(index: Int) -> String { "Cheat \(index)" }
 }
