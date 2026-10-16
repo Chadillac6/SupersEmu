@@ -57,7 +57,7 @@ public struct CheatRecord: Codable, Sendable, Identifiable, Equatable, Hashable 
     public static func now(_ date: Date = Date()) -> Date { Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down)) }
 
     // Timestamps are whole seconds, so each local change is stamped strictly after the one it follows:
-    // an edit right after a delete revives the cheat, and a delete right after an edit sticks.
+    // an edit right after a delete this device knows about revives the cheat. Deletes win ties.
     public mutating func setLabel(_ value: String, at date: Date = CheatRecord.now()) {
         label = value; labelUpdatedAt = stamp(date, after: labelUpdatedAt)
     }
@@ -70,7 +70,8 @@ public struct CheatRecord: Codable, Sendable, Identifiable, Equatable, Hashable 
     public mutating func markDeleted(at date: Date = CheatRecord.now()) {
         let lastEdit = [labelUpdatedAt, codeUpdatedAt, enabledUpdatedAt].max()!
         deleted = true
-        deletedAt = max(date, lastEdit.addingTimeInterval(1), deletedAt ?? .distantPast)
+        // A tie with the last edit already counts as deleted in `CheatMerge`, so no artificial bump is needed.
+        deletedAt = max(date, lastEdit, deletedAt ?? .distantPast)
     }
 
     private func stamp(_ date: Date, after previous: Date) -> Date {
@@ -300,7 +301,9 @@ public enum CheatCodec {
 
     static func splitLine(_ line: String, system: SystemID) -> (code: String, label: String) {
         let words = line.split(separator: " ").map(String.init)
-        if let index = words.firstIndex(where: { looksLikeCode($0, system: system) }) {
+        // Prefer the most code-like word: dashed, then hex, then Genesis letters, so a name never wins over the code.
+        let ranked = words.indices.compactMap { i in codeShapeRank(words[i], system: system).map { (rank: $0, index: i) } }
+        if let index = ranked.min(by: { ($0.rank, $0.index) < ($1.rank, $1.index) })?.index {
             var rest = words
             let code = rest.remove(at: index)
             return (code, rest.joined(separator: " ").trimmingCharacters(in: CharacterSet(charactersIn: " -–:\t")))
@@ -308,14 +311,17 @@ public enum CheatCodec {
         return (words.first ?? line, words.dropFirst().joined(separator: " "))
     }
 
-    static func looksLikeCode(_ word: String, system: SystemID) -> Bool {
+    static func looksLikeCode(_ word: String, system: SystemID) -> Bool { codeShapeRank(word, system: system) != nil }
+
+    static func codeShapeRank(_ word: String, system: SystemID) -> Int? {
         let w = word.uppercased()
-        if w.count == 9, Array(w)[4] == "-" { return true }
-        if w.count == 8, w.allSatisfy({ hexDigits.contains($0) }) { return true }
-        if system == .genesis, w.count == 8, w.allSatisfy({ genesisUndashed.contains($0) }) { return true }
-        if w.contains("+") { return true }
-        return w.count == 11 && w.contains(":")
+        if w.count == 9, Array(w)[4] == "-" { return 0 }
+        if w.contains("+") || (w.count == 11 && w.contains(":")) { return 0 }
+        if w.count == 8, w.allSatisfy({ hexDigits.contains($0) }) { return 1 }
+        if system == .genesis, w.count == 8, w.allSatisfy({ genesisUndashed.contains($0) }) { return 2 }
+        return nil
     }
+
 
     private static let genesisUndashed = Set("ABCDEFGHJKLMNPRSTVWXYZ0123456789")
 

@@ -52,14 +52,15 @@ final class CheatLibrary {
     }
 
     func save(_ records: [CheatRecord]) async throws {
+        // Reload even on failure: the record may be on disk though its upload couldn't be queued.
+        defer { Task { for gameID in Set(records.map(\.gameID)) { await load(gameID) } } }
         try await engine.save(records)
-        for gameID in Set(records.map(\.gameID)) { await load(gameID) }
         Task { await sync() }
     }
 
     func delete(_ cheat: CheatRecord) async throws {
+        defer { Task { await load(cheat.gameID) } }
         try await engine.delete(cheat.id, gameID: cheat.gameID)
-        await load(cheat.gameID)
         Task { await sync() }
     }
 

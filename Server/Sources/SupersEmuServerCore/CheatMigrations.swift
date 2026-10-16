@@ -25,11 +25,17 @@ enum CheatMigrations {
                 );
                 CREATE INDEX cheats_user_game ON cheats(user_id, game_id);
                 CREATE INDEX cheats_user_revision ON cheats(user_id, revision);
-                -- Per-user change cursor. Kept apart from the rows so pruning tombstones never lowers it.
-                CREATE TABLE cheat_revisions (
+                """)
+        }
+        // Per-user change cursor, kept apart from the rows so pruning tombstones never lowers it.
+        migrator.registerMigration("v10_cheat_revisions") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS cheat_revisions (
                     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                     revision INTEGER NOT NULL
                 );
+                INSERT OR IGNORE INTO cheat_revisions (user_id, revision)
+                    SELECT user_id, MAX(revision) FROM cheats GROUP BY user_id;
                 """)
         }
     }

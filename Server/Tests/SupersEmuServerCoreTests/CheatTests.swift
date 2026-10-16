@@ -395,6 +395,14 @@ extension CheatRoutesTests {
         try await app().test(.router) { client in
             let feed = try await self.changes(client, since: 0, token: kidDevice.token)
             XCTAssertEqual(feed.cheats.map(\.label), ["Seen"])
+            let unhide = try await self.store.db.write { db in
+                let previouslyHidden: Set<String> = [other]
+                try db.execute(sql: "DELETE FROM user_hidden_games WHERE user_id = ?", arguments: [kid.id])
+                try CheatStore.republish(db, userID: kid.id, gameIDs: previouslyHidden)
+            }
+            _ = unhide
+            let after = try await self.changes(client, since: feed.revision, token: kidDevice.token)
+            XCTAssertEqual(after.cheats.map(\.label), ["Hidden"])
         }
     }
 }
@@ -408,6 +416,9 @@ final class CheatReviewFixTests: XCTestCase {
         XCTAssertEqual(entries.first?.label, "Infinite lives")
         XCTAssertEqual(entries.first?.result.normalized, "RFAA-A6VR")
         XCTAssertEqual(entries.first?.result.isValid, true)
+        let named = CheatCodec.parseBatch("CHEATERS RFAA-A6VR", system: .genesis)
+        XCTAssertEqual(named.first?.label, "CHEATERS")
+        XCTAssertEqual(named.first?.result.normalized, "RFAA-A6VR")
     }
 
     func testSameSecondDeleteThenEditRevivesAndEditThenDeleteSticks() {
@@ -417,6 +428,10 @@ final class CheatReviewFixTests: XCTestCase {
         var deleted = record
         deleted.markDeleted(at: t)
         XCTAssertTrue(CheatMerge.merge(record, deleted).deleted)
+        XCTAssertEqual(deleted.deletedAt, t)
+        var otherDevice = record
+        otherDevice.setLabel("Later", at: t.addingTimeInterval(1))
+        XCTAssertFalse(CheatMerge.merge(deleted, otherDevice).deleted)
         var revived = deleted
         revived.setLabel("B", at: t)
         let merged = CheatMerge.merge(deleted, revived)

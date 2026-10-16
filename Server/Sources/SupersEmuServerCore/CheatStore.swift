@@ -86,6 +86,17 @@ public struct CheatStore: Sendable {
         try Int.fetchOne(db, sql: "SELECT revision FROM cheat_revisions WHERE user_id = ?", arguments: [userID]) ?? 0
     }
 
+    static func republish(_ db: Database, userID: String, gameIDs: Set<String>) throws {
+        for gameID in gameIDs.sorted() {
+            let ids = try String.fetchAll(db, sql: "SELECT id FROM cheats WHERE user_id = ? AND game_id = ? ORDER BY revision",
+                                          arguments: [userID, gameID])
+            for id in ids {
+                try db.execute(sql: "UPDATE cheats SET revision = ? WHERE user_id = ? AND id = ?",
+                               arguments: [try nextRevision(db, userID: userID), userID, id])
+            }
+        }
+    }
+
     static func nextRevision(_ db: Database, userID: String) throws -> Int {
         try db.execute(sql: "INSERT INTO cheat_revisions (user_id, revision) VALUES (?, 1) ON CONFLICT(user_id) DO UPDATE SET revision = revision + 1",
                        arguments: [userID])

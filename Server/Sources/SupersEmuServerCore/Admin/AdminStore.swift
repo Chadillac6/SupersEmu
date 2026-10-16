@@ -67,7 +67,11 @@ extension ServerStore {
                 throw HTTPError(.badRequest, message: "Unknown game IDs: \(unknown.sorted().joined(separator: ", "))")
             }
 
+            let previouslyHidden = Set(try String.fetchAll(
+                db, sql: "SELECT game_id FROM user_hidden_games WHERE user_id = ?", arguments: [userID]))
             try db.execute(sql: "DELETE FROM user_hidden_games WHERE user_id = ?", arguments: [userID])
+            // Devices skipped these games' cheats while they were hidden; give them new revisions so they arrive.
+            try CheatStore.republish(db, userID: userID, gameIDs: previouslyHidden.subtracting(requested))
             for gameID in requested {
                 try db.execute(sql: """
                     INSERT INTO user_hidden_games (user_id, game_id) VALUES (?, ?)
