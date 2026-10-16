@@ -27,6 +27,17 @@ bool SE_CORE_UNSERIALIZE(const void *data, size_t size);
 #define SE_CORE_UNSERIALIZE retro_unserialize
 #endif
 
+// Cores with cheat support name an accessor returning how many codes they hold.
+#ifdef SE_CORE_CHEAT_COUNT
+unsigned SE_CORE_CHEAT_COUNT(void);
+#define SE_CHEAT_RESET retro_cheat_reset
+#define SE_CHEAT_SET retro_cheat_set
+#else
+#define SE_CHEAT_RESET NULL
+#define SE_CHEAT_SET NULL
+#define SE_CORE_CHEAT_COUNT NULL
+#endif
+
 const SECoreAPI *SE_ENTRY(SE_CORE_ID)(void) {
     static const SECoreAPI api = {
         SE_STR(SE_CORE_ID), SE_STR(SE_CORE_REVISION),
@@ -35,7 +46,7 @@ const SECoreAPI *SE_ENTRY(SE_CORE_ID)(void) {
         retro_init, SE_CORE_DEINIT, retro_get_system_info, retro_get_system_av_info,
         retro_set_controller_port_device, retro_run, retro_reset, retro_serialize_size, retro_serialize,
         SE_CORE_UNSERIALIZE, SE_CORE_LOAD_GAME, retro_unload_game, retro_get_memory_data,
-        retro_get_memory_size,
+        retro_get_memory_size, SE_CHEAT_RESET, SE_CHEAT_SET, SE_CORE_CHEAT_COUNT,
     };
     return &api;
 }

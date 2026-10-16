@@ -71,6 +71,9 @@ struct PlayerView: View {
             if session.isChoosingDisc {
                 DiscPicker(session: session)
             }
+            if session.isChoosingCheat {
+                CheatPicker(session: session)
+            }
             if session.isMenuOpen && !session.isShowingSaveSlots {
                 InGameMenu(session: session)
             }
@@ -221,7 +224,28 @@ struct PlayerView: View {
                 .frame(maxWidth: compact ? .infinity : nil, alignment: .center)
                 .foregroundStyle(.white.opacity(0.7))
                 .accessibilityIdentifier("session-status")
+            if session.cheatsActive {
+                Text("Cheats on")
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.85), in: Capsule())
+                    .foregroundStyle(.black)
+                    .fixedSize()
+                    .accessibilityIdentifier("cheats-on-badge")
+            }
             if !compact { Spacer(minLength: 0) }
+            if session.supportsCheats {
+                Button { session.openCheatPicker() } label: {
+                    toolbarLabel("Cheats", systemImage: "wand.and.stars", compact: compact)
+                }
+                .fixedSize()
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(session.isSyncing || session.pendingConflict != nil)
+                .help("Cheats (Shift-Command-C)")
+                .accessibilityLabel("Cheats")
+                .accessibilityIdentifier("open-cheats")
+            }
             Button { session.openMenu() } label: {
                 toolbarLabel("Menu", systemImage: "line.3.horizontal", compact: compact)
             }

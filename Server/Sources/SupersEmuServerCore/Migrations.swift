@@ -107,5 +107,6 @@ public enum ServerMigrations {
         LibraryRevisionMigrations.register(&migrator)
         MetadataMigrations.registerArtworkRecordHash(&migrator)
         UserHiddenGamesMigrations.register(&migrator)
+        CheatMigrations.register(&migrator)
     }
 }

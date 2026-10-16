@@ -39,7 +39,8 @@ targets:
     platform: [iOS, macOS]
     sources:
       - path: Host/CoreEntry/SECoreEntry.c
-        compilerFlags: ["-DSE_CORE_ID=snes9x", "-DSE_CORE_REVISION=fae2fea"]
+        compilerFlags: ["-DSE_CORE_ID=snes9x", "-DSE_CORE_REVISION=fae2fea", "-DSE_CORE_CHEAT_COUNT=se_snes9x_cheat_count"]
+      - path: Host/CoreEntry/snes9x/se_cheats.cpp
       - path: Vendor/cores/snes9x
         includes:
           - "apu/apu.cpp"
@@ -205,8 +206,9 @@ targets:
     platform: [iOS, macOS]
     sources:
       - path: Host/CoreEntry/SECoreEntry.c
-        compilerFlags: ["-DSE_CORE_ID=genesis_plus_gx", "-DSE_CORE_REVISION=393f70c", "-DSE_CORE_LOAD_GAME=se_gpgx_load_game"]
+        compilerFlags: ["-DSE_CORE_ID=genesis_plus_gx", "-DSE_CORE_REVISION=393f70c", "-DSE_CORE_LOAD_GAME=se_gpgx_load_game", "-DSE_CORE_CHEAT_COUNT=se_gpgx_cheat_count"]
       - path: Host/CoreEntry/genesis_plus_gx/se_load_game.c
+      - path: Host/CoreEntry/genesis_plus_gx/se_libretro.c
       - path: Vendor/cores/genesis_plus_gx
         includes:
           - "core/*.c"
@@ -218,7 +220,7 @@ targets:
           - "core/cd_hw/*.c"
           - "core/cart_hw/*.c"
           - "core/cart_hw/svp/*.c"
-          - "libretro/libretro.c"
+          # libretro/libretro.c is compiled via Host/CoreEntry/genesis_plus_gx/se_libretro.c.
           - "libretro/libretro-common/streams/file_stream.c"
           - "libretro/libretro-common/streams/file_stream_transforms.c"
           - "libretro/libretro-common/compat/fopen_utf8.c"

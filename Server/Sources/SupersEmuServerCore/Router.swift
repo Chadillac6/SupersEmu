@@ -69,6 +69,7 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
                           services: pairing ?? PairingServices(store: store), exposure: exposure,
                           includeAdminRoutes: exposure == .local)
     registerSaveRoutes(authed, store: store)
+    registerCheatRoutes(authed, store: store)
     if exposure == .local {
         registerAdminLibraryRoutes(authed, store: store, metadata: metadata)
         registerAdminLibraryManagementRoutes(authed, store: store, metadata: metadata)

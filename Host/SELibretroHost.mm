@@ -751,6 +751,8 @@ static __weak SELibretroHost *gActiveHost;
         if (error) *error = hostError(2, @"The emulator could not load this game.");
         return nil;
     }
+    // Cores keep cheats in globals: never let one game's codes reach the next.
+    if (core->cheat_reset) core->cheat_reset();
     NSMutableDictionary<NSString *, NSString *> *effectiveOptions = [NSMutableDictionary dictionary];
     for (const auto &option : g.optionDefaults) {
         std::string value = option.second;
@@ -849,6 +851,36 @@ static __weak SELibretroHost *gActiveHost;
     if (!_loaded) return;
     resetInput();
     g.core->reset();
+}
+
+- (BOOL)supportsCheats {
+    return _loaded && g.core->cheat_reset && g.core->cheat_set;
+}
+
+- (NSArray<NSNumber *> *)applyCheatCodes:(NSArray<NSString *> *)codes {
+    NSMutableArray<NSNumber *> *outcomes = [NSMutableArray arrayWithCapacity:codes.count];
+    if (!self.supportsCheats) {
+        for (NSUInteger i = 0; i < codes.count; i++) [outcomes addObject:@(SECheatOutcomeRejected)];
+        return outcomes;
+    }
+    g.core->cheat_reset();
+    unsigned index = 0;
+    for (NSString *code in codes) {
+        const char *text = code.UTF8String;
+        // Cores copy into 256-byte buffers and split on '+'; send exactly one bounded code per call.
+        if (!text || !*text || strlen(text) >= 64 || strchr(text, '+')) {
+            [outcomes addObject:@(SECheatOutcomeRejected)];
+            continue;
+        }
+        unsigned before = g.core->cheat_count ? g.core->cheat_count() : 0;
+        g.core->cheat_set(index++, true, text);
+        if (!g.core->cheat_count) {
+            [outcomes addObject:@(SECheatOutcomeUnverified)];
+        } else {
+            [outcomes addObject:@(g.core->cheat_count() > before ? SECheatOutcomeApplied : SECheatOutcomeRejected)];
+        }
+    }
+    return outcomes;
 }
 
 - (NSInteger)diskCount {
@@ -1135,6 +1167,8 @@ static __weak SELibretroHost *gActiveHost;
     [self flushSaveRAM];
     self.audioEnabled = NO;
     if (g.hw.requested) hwMakeCurrent();
+    // Before unload: Genesis Plus GX restores patched ROM bytes while the ROM is still loaded.
+    if (g.core->cheat_reset) g.core->cheat_reset();
     g.core->unload_game();
     g.core->deinit();
     hwDestroy();

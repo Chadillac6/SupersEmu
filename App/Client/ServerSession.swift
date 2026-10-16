@@ -324,6 +324,7 @@ final class ServerSession {
     func signOut() {
         // Queued saves belong to this account; never let the next pairing upload them.
         Task { await SaveSync.shared.engine.reset() }
+        Task { await CheatLibrary.shared.engine.resetSync() }
         generation += 1
         refreshTask?.cancel()
         refreshTask = nil
