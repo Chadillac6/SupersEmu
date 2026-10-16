@@ -2,6 +2,35 @@ import Foundation
 import XCTest
 
 final class DiagnosticsLogTests: XCTestCase {
+    func testFailedWriteRetainsPendingTextUntilNextFlush() throws {
+        enum WriteError: Error {
+            case failed
+        }
+
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = try DiagnosticsLog(title: "Retry Test", directory: directory)
+        let logURL = log.url
+        var writeAttempts = 0
+        log.writeData = { data in
+            writeAttempts += 1
+            guard writeAttempts > 1 else { throw WriteError.failed }
+            let fileHandle = try FileHandle(forWritingTo: logURL)
+            fileHandle.seekToEndOfFile()
+            try fileHandle.write(contentsOf: data)
+            fileHandle.closeFile()
+        }
+
+        log.appendEvent("event survives retry")
+        log.flush()
+        log.flush()
+        log.stop()
+
+        let contents = try String(contentsOf: logURL, encoding: .utf8)
+        XCTAssertEqual(writeAttempts, 2)
+        XCTAssertEqual(contents.components(separatedBy: "event survives retry").count - 1, 1)
+    }
+
     func testConsecutiveCoreLinesAreCollapsed() throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

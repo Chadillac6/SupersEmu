@@ -36,6 +36,7 @@ final class DiagnosticsLog: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.chadillac6.supersemu.diagnostics", qos: .utility)
     private var timer: DispatchSourceTimer?
     private var fileHandle: FileHandle?
+    var writeData: (Data) throws -> Void = { _ in }
     private var pendingText = ""
     private var pendingCoreLine: String?
     private var preHeaderCoreLines: [String] = []
@@ -65,8 +66,10 @@ final class DiagnosticsLog: @unchecked Sendable {
         }
         url = candidate
         FileManager.default.createFile(atPath: candidate.path, contents: nil)
-        fileHandle = try FileHandle(forWritingTo: candidate)
-        fileHandle?.seekToEndOfFile()
+        let fileHandle = try FileHandle(forWritingTo: candidate)
+        self.fileHandle = fileHandle
+        fileHandle.seekToEndOfFile()
+        writeData = { data in try fileHandle.write(contentsOf: data) }
         Self.retainNewestLogs(in: directory)
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -250,10 +253,25 @@ final class DiagnosticsLog: @unchecked Sendable {
 
     private func writePendingText() {
         guard !pendingText.isEmpty else { return }
-        if let data = pendingText.data(using: .utf8) {
-            try? fileHandle?.write(contentsOf: data)
+        guard let data = pendingText.data(using: .utf8) else { return }
+        do {
+            try writeData(data)
+            pendingText.removeAll(keepingCapacity: true)
+        } catch {
+            capPendingTextAfterWriteFailure()
         }
-        pendingText.removeAll(keepingCapacity: true)
+    }
+
+    private func capPendingTextAfterWriteFailure() {
+        let maximumBytes = 1_048_576
+        let retainedBytes = 512 * 1_024
+        guard let data = pendingText.data(using: .utf8), data.count > maximumBytes else { return }
+
+        let targetStart = data.index(data.startIndex, offsetBy: data.count - retainedBytes)
+        let retainedStart = data[targetStart...].firstIndex(of: 10).map { data.index(after: $0) } ?? data.endIndex
+        let droppedBytes = data.distance(from: data.startIndex, to: retainedStart)
+        let retainedText = String(decoding: data[retainedStart...], as: UTF8.self)
+        pendingText = "[diagnostics] dropped \(droppedBytes) bytes after write failures\n\(retainedText)"
     }
 
     private static func timestamp() -> String {

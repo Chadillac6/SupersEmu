@@ -1,6 +1,23 @@
 import XCTest
 
 final class PerformanceStatsTests: XCTestCase {
+    func testLongStallCountsTowardSpeedWindow() {
+        var stats = PerformanceStats()
+        for timestamp in [10.0, 16.0] {
+            stats.record(
+                runDuration: 0.01,
+                presentDuration: 0.002,
+                timestamp: timestamp,
+                framesPerSecond: 60,
+                sampleRate: 48_000,
+                audioUnderrunFrames: 0,
+                audioOverflowFrames: 0,
+                bufferedAudioFrames: 0)
+        }
+
+        XCTAssertLessThan(stats.summary(framesPerSecond: 60, sampleRate: 48_000).speedPercent, 5)
+    }
+
     func testSpeedLateTicksAndAudioUnderrunMath() {
         var stats = PerformanceStats(windowDuration: 5)
         for frame in 1...60 {

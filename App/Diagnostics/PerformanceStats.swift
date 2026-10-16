@@ -39,6 +39,7 @@ struct PerformanceStats {
 
     private let windowDuration: TimeInterval
     private var ticks: [Tick] = []
+    private var baselineTimestamp: TimeInterval?
     private var previousTimestamp: TimeInterval?
     private var previousUnderrunFrames: UInt64?
     private var previousOverflowFrames: UInt64?
@@ -58,6 +59,9 @@ struct PerformanceStats {
         bufferedAudioFrames: Int
     ) {
         let targetInterval = framesPerSecond > 0 ? 1 / framesPerSecond : 0
+        if baselineTimestamp == nil {
+            baselineTimestamp = timestamp
+        }
         let interval = previousTimestamp.map { timestamp - $0 }
         let underrunDelta = previousUnderrunFrames.map { audioUnderrunFrames >= $0 ? audioUnderrunFrames - $0 : 0 } ?? 0
         let overflowDelta = previousOverflowFrames.map { audioOverflowFrames >= $0 ? audioOverflowFrames - $0 : 0 } ?? 0
@@ -77,6 +81,7 @@ struct PerformanceStats {
 
     mutating func resetBaseline() {
         ticks.removeAll(keepingCapacity: true)
+        baselineTimestamp = nil
         previousTimestamp = nil
         previousUnderrunFrames = nil
         previousOverflowFrames = nil
@@ -98,7 +103,11 @@ struct PerformanceStats {
         let runTotal = ticks.reduce(0) { $0 + $1.runSeconds }
         let presentTotal = ticks.reduce(0) { $0 + $1.presentSeconds }
         let targetInterval = framesPerSecond > 0 ? 1 / framesPerSecond : 0
-        let elapsed = max(targetInterval, ticks[ticks.count - 1].timestamp - ticks[0].timestamp + targetInterval)
+        let first = ticks[0]
+        let last = ticks[ticks.count - 1]
+        let elapsed = max(
+            targetInterval,
+            last.timestamp - max(baselineTimestamp ?? first.timestamp, last.timestamp - windowDuration) + targetInterval)
         let windowSeconds = min(windowDuration, elapsed)
         let speed = framesPerSecond > 0 && windowSeconds > 0
             ? Double(ticks.count) / (windowSeconds * framesPerSecond) * 100
