@@ -118,6 +118,16 @@ Build notes:
 The server importer groups `.cue`+tracks, `.chd`, `.iso` and `.m3u` into disc games for PS1 (`psx`) and Sega CD (`segacd`), and detects 32X carts (`sega32x`). It files BIOS files by hash (`KnownBIOS`) and serves them at `/v1/bios`. Details and the verification status are in [disc-games.md](disc-games.md#import-track-built-and-verified-server).
 Verified with synthetic fixtures only. Core playback of these games belongs to the PS1 and Sega CD tracks.
 
+## Cheats
+
+| Core | Cheat support in SupersEmu | How "Applied" is checked |
+| --- | --- | --- |
+| Snes9x | SNES Game Genie | `Cheat.group.size()` via `Host/CoreEntry/snes9x/se_cheats.cpp` (verified by host tests) |
+| Genesis Plus GX | Genesis Game Genie (cartridge games only) | `maxcheats` via `Host/CoreEntry/genesis_plus_gx/se_libretro.c`, which compiles the vendored `libretro.c` in the same file (verified by host tests) |
+| PicoDrive, Gambatte, mGBA, Beetle PSX, Mupen64Plus-Next | none yet (`cheat_set` is NULL in `SECoreAPI`) | n/a |
+
+See `docs/specs/cheats.md`.
+
 ## Tests and fixtures
 
 `Tests/HostTests/SECoreMatrixTests.mm` runs per core: loads + reports id/version/timing, renders

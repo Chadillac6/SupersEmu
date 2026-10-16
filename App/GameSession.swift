@@ -26,6 +26,13 @@ final class GameSession {
     var discSelection = 0
     /// The in-game menu (Select+Start held 1 s, long-press Home/Guide, or the Menu button) is open; the game is paused.
     private(set) var isMenuOpen = false
+    /// Saved cheats for this game (enabled or not) and what the core did with each enabled one.
+    private(set) var cheats: [CheatRecord] = []
+    private(set) var cheatStates: [UUID: CheatRunState] = [:]
+    /// The in-game Cheats list is open; the game stays paused until it closes.
+    private(set) var isChoosingCheat = false
+    var cheatSelection = 0
+    private(set) var coreSupportsCheats = false
     var menuSelection = 0
     var isConfirmingRestart = false
     var isShowingControls = false
@@ -118,6 +125,8 @@ final class GameSession {
             return
         }
         self.host = host
+        coreSupportsCheats = host.supportsCheats && CheatCodec.supportsCheats(systemID)
+        if coreSupportsCheats { cheats = await CheatLibrary.shared.load(game.id) }
         diskCount = host.diskCount
         currentDisk = host.currentDisk
         #if DEBUG
@@ -158,9 +167,74 @@ final class GameSession {
                 }
             }
         }
+        applyCheats()
         host.audioEnabled = true
         lastAutosave = .now
         hasStarted = true
+        resume()
+    }
+
+    // MARK: Cheats
+
+    var systemID: SystemID { SystemID(rawValue: Self.system(for: game)) ?? .snes }
+    var supportsCheats: Bool { coreSupportsCheats }
+    /// At least one cheat is changing the game right now (shown as a "Cheats on" badge).
+    var cheatsActive: Bool { cheatStates.values.contains { $0 == .applied || $0 == .sent } }
+
+    /// Sends every enabled, valid cheat to the core (clearing the old set first). Called after load, a state load,
+    /// a restart and every toggle, so the core always holds exactly the enabled list.
+    private func applyCheats() {
+        guard let host, coreSupportsCheats else { return }
+        var states: [UUID: CheatRunState] = [:]
+        var sent: [CheatRecord] = []
+        for cheat in cheats {
+            if !cheat.enabled { states[cheat.id] = .off; continue }
+            guard case .valid(_, let code, _, _) = CheatCodec.parse(cheat.code, system: systemID) else {
+                states[cheat.id] = .invalid
+                continue
+            }
+            var normalized = cheat
+            normalized.code = code
+            sent.append(normalized)
+        }
+        let outcomes = host.applyCheats(sent.map(\.code))
+        for (cheat, outcome) in zip(sent, outcomes) {
+            switch CheatOutcome(rawValue: outcome.intValue) {
+            case .applied: states[cheat.id] = .applied
+            case .unverified: states[cheat.id] = .sent
+            default: states[cheat.id] = .rejected
+            }
+        }
+        cheatStates = states
+    }
+
+    func setCheat(_ id: UUID, enabled: Bool) {
+        guard let index = cheats.firstIndex(where: { $0.id == id }) else { return }
+        cheats[index].setEnabled(enabled)
+        let record = cheats[index]
+        applyCheats()
+        status = enabled ? "\(record.label) on" : "\(record.label) off"
+        if cheatStates[id] == .rejected { status = "\(record.label): the core didn't accept this code" }
+        Task { try? await CheatLibrary.shared.save([record]) }
+    }
+
+    func openCheatPicker() {
+        guard hasStarted, coreSupportsCheats, pendingConflict == nil, !isChoosingDisc, !isShowingSaveSlots else { return }
+        pause()
+        isMenuOpen = false
+        isChoosingCheat = true
+        cheatSelection = 0
+        overlayHeld = navigationInputs()
+        if overlayTimer == nil { startOverlayPolling() }
+    }
+
+    func closeCheatPicker() {
+        guard isChoosingCheat else { return }
+        isChoosingCheat = false
+        if disconnectedController == nil { stopOverlayPolling() }
+        #if os(macOS)
+        input.releaseAll()
+        #endif
         resume()
     }
 
@@ -232,7 +306,7 @@ final class GameSession {
 
     func resume() {
         // Never run frames while saves are still syncing or a conflict is waiting for an answer.
-        guard let host, hasStarted, timer == nil, !isChoosingDisc, !isShowingSaveSlots, !isMenuOpen, disconnectedController == nil else { return }
+        guard let host, hasStarted, timer == nil, !isChoosingDisc, !isChoosingCheat, !isShowingSaveSlots, !isMenuOpen, disconnectedController == nil else { return }
         let timer = Timer(timeInterval: 1.0 / max(host.framesPerSecond, 1), repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -352,6 +426,7 @@ final class GameSession {
         input.releaseAll()
         #endif
         host.reset()
+        applyCheats()
         status = "Restarted"
     }
 
@@ -370,7 +445,7 @@ final class GameSession {
 
     enum MenuItem: String, CaseIterable, Identifiable, Equatable {
         case resume = "Resume", restart = "Restart Game", save = "Save State", load = "Load State", swapDisc = "Swap Disc"
-        case controls = "Controls", exit = "Exit to Library"
+        case cheats = "Cheats", controls = "Controls", exit = "Exit to Library"
         var id: String { rawValue }
     }
 
@@ -378,6 +453,7 @@ final class GameSession {
         MenuItem.allCases.filter { item in
             switch item {
             case .swapDisc: diskCount > 1
+            case .cheats: coreSupportsCheats
             case .load: hasManualState
             default: true
             }
@@ -404,7 +480,7 @@ final class GameSession {
     }
 
     func openMenu() {
-        guard hasStarted, !isMenuOpen, !isChoosingDisc, !isShowingSaveSlots, pendingConflict == nil else { return }
+        guard hasStarted, !isMenuOpen, !isChoosingDisc, !isChoosingCheat, !isShowingSaveSlots, pendingConflict == nil else { return }
         pause()
         hotkeyHeldSince = nil
         hotkeyArmed = false
@@ -436,6 +512,8 @@ final class GameSession {
             isMenuOpen = false
             stopOverlayPolling()
             openDiscPicker()
+        case .cheats:
+            openCheatPicker()
         case .controls:
             isShowingControls = true
         case .exit:
@@ -512,6 +590,7 @@ final class GameSession {
             }
             do {
                 try host.loadState(from: slotStore.stateURL(slot))
+                applyCheats()
                 refreshSaveSlots()
                 status = "Loaded Slot \(slot)"
                 closeSaveSlots()
@@ -611,6 +690,17 @@ final class GameSession {
         let pressed = held.subtracting(overlayHeld)
         overlayHeld = held
         if isShowingControls { return }
+        if isChoosingCheat {
+            if pressed.contains(.dpadUp) { cheatSelection = max(cheatSelection - 1, 0) }
+            if pressed.contains(.dpadDown) { cheatSelection = min(cheatSelection + 1, max(cheats.count - 1, 0)) }
+            if !pressed.isDisjoint(with: [.south, .start]), cheats.indices.contains(cheatSelection) {
+                let cheat = cheats[cheatSelection]
+                setCheat(cheat.id, enabled: !cheat.enabled)
+            } else if !pressed.isDisjoint(with: [.east, .select, .home]) {
+                closeCheatPicker()
+            }
+            return
+        }
         if isShowingSaveSlots {
             if let command = slotNavigator.handle(pressed, occupied: saveSlots.map { !$0.isEmpty }) {
                 command == .close ? closeSaveSlots() : perform(command)
@@ -731,10 +821,12 @@ final class GameSession {
         overlayTimer?.invalidate()
         overlayTimer = nil
         isMenuOpen = false
+        isChoosingCheat = false
         disconnectedController = nil
         controllerObservers.forEach { NotificationCenter.default.removeObserver($0) }
         controllerObservers = []
         host?.shutdown()
         host = nil
+        if coreSupportsCheats { Task { await CheatLibrary.shared.sync() } }
     }
 }
