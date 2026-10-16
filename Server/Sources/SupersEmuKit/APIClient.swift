@@ -43,6 +43,18 @@ public struct APIClient: Sendable {
     public func me() async throws -> MeResponse { try await get("/v1/me") }
     public func library() async throws -> LibraryResponse { try await get("/v1/library") }
 
+    // MARK: Cheats
+
+    public func cheatChanges(since revision: Int) async throws -> CheatListResponse {
+        try await get("/v1/cheats?since=\(revision)")
+    }
+
+    public func putCheat(_ cheat: CheatRecord) async throws -> CheatRecord {
+        let body = try SupersEmuJSON.encoder().encode(cheat)
+        let data = try await raw("PUT", "/v1/cheats/\(cheat.gameID)/\(cheat.id.uuidString)", body: body)
+        return try SupersEmuJSON.decoder().decode(CheatRecord.self, from: data)
+    }
+
     public func get<T: Decodable>(_ path: String) async throws -> T {
         try await send("GET", path, body: Optional<Empty>.none)
     }

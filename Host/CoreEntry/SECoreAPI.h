@@ -31,6 +31,11 @@ typedef struct SECoreAPI {
     void (*unload_game)(void);
     void *(*get_memory_data)(unsigned);
     size_t (*get_memory_size)(unsigned);
+    /// NULL for cores without cheat support in SupersEmu.
+    void (*cheat_reset)(void);
+    void (*cheat_set)(unsigned, bool, const char *);
+    /// Codes the core currently holds, so the host can tell an accepted code from a rejected one.
+    unsigned (*cheat_count)(void);
 } SECoreAPI;
 
 const SECoreAPI *se_core_snes9x(void);

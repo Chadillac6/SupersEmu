@@ -43,6 +43,16 @@ FOUNDATION_EXPORT NSString *const SECoreIDMupen64PlusNext;
 
 /// Thin libretro frontend. libretro cores use process-global callbacks,
 /// so only one host may be active at a time.
+/// What happened to one code passed to -applyCheatCodes:.
+typedef NS_ENUM(NSInteger, SECheatOutcome) {
+    /// The core's cheat count went up: it took the code.
+    SECheatOutcomeApplied = 0,
+    /// The core ignored the code (or the core has no cheat support).
+    SECheatOutcomeRejected = 1,
+    /// Sent, but the core can't report whether it took it.
+    SECheatOutcomeUnverified = 2,
+} NS_SWIFT_NAME(CheatOutcome);
+
 @interface SELibretroHost : NSObject
 
 @property (class, nonatomic, readonly, nullable) SELibretroHost *activeHost;
@@ -106,6 +116,12 @@ FOUNDATION_EXPORT NSString *const SECoreIDMupen64PlusNext;
 - (nullable NSString *)labelForDisk:(NSInteger)index;
 /// Swaps to the zero-based disc `index`: opens the tray, selects the image, closes the tray.
 - (BOOL)insertDisk:(NSInteger)index error:(NSError **)error NS_SWIFT_NAME(insertDisk(_:));
+
+/// True when the loaded core takes cheat codes (retro_cheat_set).
+@property (nonatomic, readonly) BOOL supportsCheats;
+/// Replaces the core's cheats with `codes` (all enabled), sending one code per retro_cheat_set call.
+/// Returns one SECheatOutcome per code, in order. An empty array clears every cheat.
+- (NSArray<NSNumber *> *)applyCheatCodes:(NSArray<NSString *> *)codes NS_SWIFT_NAME(applyCheats(_:));
 
 /// Writes battery-backed SRAM (if the game has any) to saveRAMURL.
 - (void)flushSaveRAM;

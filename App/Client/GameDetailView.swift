@@ -11,6 +11,7 @@ struct GameDetailView: View {
     let onStartFresh: (Game) -> Void
     @State private var detail: GameDetail?
     @State private var isConfirmingStartOver = false
+    @State private var isShowingCheats = false
 
     var body: some View {
         let theme = SystemTheme.theme(for: item.system)
@@ -202,6 +203,11 @@ struct GameDetailView: View {
         return parts.joined(separator: " · ")
     }
 
+    private var cheatsTitle: String {
+        let count = CheatLibrary.shared.cheats(for: item.id).count
+        return count == 0 ? "Cheats" : "Cheats (\(count))"
+    }
+
     @ViewBuilder private var actions: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let game = playableGame {
@@ -227,6 +233,23 @@ struct GameDetailView: View {
                         .controlSize(.large)
                         .disabled(bios.isMissing(item.system) || bios.isSyncing && item.system?.requiresBIOS == true)
                         .accessibilityIdentifier("detail-start-over")
+                    }
+
+                    if let system = item.system, CheatCodec.supportsCheats(system) {
+                        Button {
+                            isShowingCheats = true
+                        } label: {
+                            Label(cheatsTitle, systemImage: "wand.and.stars").frame(minWidth: 110)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        .keyboardShortcut("c", modifiers: [.command, .shift])
+                        .help("Cheats (Shift-Command-C)")
+                        .accessibilityIdentifier("detail-cheats")
+                        .sheet(isPresented: $isShowingCheats) {
+                            CheatsView(gameID: item.id, title: item.title, system: system)
+                        }
+                        .task { await CheatLibrary.shared.load(item.id) }
                     }
                 }
                 .confirmationDialog("Start over from the beginning?", isPresented: $isConfirmingStartOver, titleVisibility: .visible) {

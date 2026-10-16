@@ -95,6 +95,7 @@ struct RootView: View {
         .onChange(of: server.lastRefreshed) { _, refreshed in
             if refreshed != nil { Task { await SaveSync.shared.engine.flush() } }
             if refreshed != nil { Task { await bios.sync(using: server) } }
+            if refreshed != nil { Task { await CheatLibrary.shared.sync() } }
         }
         #if os(macOS)
         .onOpenURL { url in

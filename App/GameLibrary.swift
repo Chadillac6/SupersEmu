@@ -99,6 +99,8 @@ enum AppPaths {
     /// Downloaded server games: Cache/<gameID>/<files> + manifest.json.
     static let cache = root.appendingPathComponent("Cache", isDirectory: true)
     static let covers = root.appendingPathComponent("Covers", isDirectory: true)
+    /// One JSON file of Game Genie codes per game ID, plus the cheat sync queue.
+    static let cheats = root.appendingPathComponent("Cheats", isDirectory: true)
     static let serverLibrarySnapshot = root.appendingPathComponent("ServerLibrary.json")
 
     static func autoState(for gameID: String) -> URL {
