@@ -316,7 +316,11 @@ public enum CheatCodec {
     static func codeShapeRank(_ word: String, system: SystemID) -> Int? {
         let w = word.uppercased()
         if w.count == 9, Array(w)[4] == "-" { return 0 }
-        if w.contains("+") || (w.count == 11 && w.contains(":")) { return 0 }
+        if w.contains("+") {
+            let parts = w.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
+            return parts.count > 1 && parts.allSatisfy({ codeShapeRank($0, system: system) != nil }) ? 0 : nil
+        }
+        if w.count == 11 && w.contains(":") { return 0 }
         if w.count == 8, w.allSatisfy({ hexDigits.contains($0) }) { return 1 }
         if system == .genesis, w.count == 8, w.allSatisfy({ genesisUndashed.contains($0) }) { return 2 }
         return nil

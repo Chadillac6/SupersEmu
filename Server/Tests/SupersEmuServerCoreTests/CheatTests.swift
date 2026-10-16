@@ -419,6 +419,11 @@ final class CheatReviewFixTests: XCTestCase {
         let named = CheatCodec.parseBatch("CHEATERS RFAA-A6VR", system: .genesis)
         XCTAssertEqual(named.first?.label, "CHEATERS")
         XCTAssertEqual(named.first?.result.normalized, "RFAA-A6VR")
+        let plusLabel = CheatCodec.parseBatch("C2C3CF0D + 9 lives", system: .snes)
+        XCTAssertEqual(plusLabel.map(\.result.normalized), ["C2C3-CF0D"])
+        XCTAssertEqual(plusLabel.first?.label, "+ 9 lives")
+        let joined = CheatCodec.parseBatch("Max power C2C3-CF0D+D4A1-0FA4", system: .snes)
+        XCTAssertEqual(joined.count, 2)
     }
 
     func testSameSecondDeleteThenEditRevivesAndEditThenDeleteSticks() {
