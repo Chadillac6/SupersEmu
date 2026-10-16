@@ -13,43 +13,23 @@ private final class TouchPadModel {
 @MainActor
 struct TouchControls: View {
     let input: GameInput
+    let availableWidth: CGFloat
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var model = TouchPadModel()
     @State private var frames: [String: CGRect] = [:]
-    @State private var availableWidth: CGFloat = 375
 
     private static let coordinateSpace = "touch-controls"
     private var isCompactPortrait: Bool {
         horizontalSizeClass == .compact && verticalSizeClass != .compact
     }
     private var requiredPortraitWidth: CGFloat {
-        let dpad: CGFloat = 156
-        let pill: CGFloat = 64
-        let button: CGFloat = 62
-        let gap: CGFloat = 8
-        switch input.layout.system {
-        case "n64":
-            let cButtons: CGFloat = 116
-            let faceButtons: CGFloat = 134
-            let topRowWidth = dpad + pill + cButtons + 2 * gap
-            let bottomRowWidth: CGFloat = 120 + faceButtons + gap
-            return max(topRowWidth, bottomRowWidth)
-        case "genesis", "segacd", "sega32x":
-            let faceButtons = 3 * button + 8
-            let buttonRowWidth = dpad + faceButtons + gap
-            let pillRowWidth = 2 * pill + gap
-            return max(buttonRowWidth, pillRowWidth)
-        case "psx":
-            return dpad + pill + 2 * button + 10 + 2 * gap
-        case "gb", "gbc", "gba":
-            return dpad + pill + 2 * button + 8 + 2 * gap
-        default:
-            return dpad + pill + 2 * button + 10 + 2 * gap
-        }
+        TouchControlSizing.requiredPortraitWidth(system: input.layout.system)
     }
     private var scale: CGFloat {
-        isCompactPortrait ? min(1.3, max(0.75, (availableWidth - 24) / requiredPortraitWidth)) : 1
+        isCompactPortrait
+            ? TouchControlSizing.portraitScale(availableWidth: availableWidth, requiredWidth: requiredPortraitWidth)
+            : 1
     }
 
     var body: some View {
@@ -64,13 +44,6 @@ struct TouchControls: View {
         .padding(.vertical, isCompactPortrait ? 8 : 12)
         .frame(maxWidth: .infinity)
         .coordinateSpace(name: Self.coordinateSpace)
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear { availableWidth = geometry.size.width }
-                    .onChange(of: geometry.size.width) { _, width in availableWidth = width }
-            }
-        }
         .overlay {
             TouchPadSurface(input: input, model: model, zones: touchZones)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

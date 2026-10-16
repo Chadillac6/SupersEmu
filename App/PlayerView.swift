@@ -1,3 +1,4 @@
+import Foundation
 import SupersEmuKit
 import SwiftUI
 
@@ -7,10 +8,12 @@ struct PlayerView: View {
     @Environment(\.scenePhase) private var scenePhase
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @AppStorage(PlayerChrome.hideTouchControlsKey) private var hideTouchControls = true
     @AppStorage("diagnostics.showPerformanceOverlay") private var showPerformanceOverlay = false
     @State private var hub = ControllerHub.shared
     @State private var performanceOverlayText = ""
+    @State private var playerWidth: CGFloat = 0
     #endif
     @State private var topBarAutoHide = TopBarAutoHide()
 
@@ -52,7 +55,7 @@ struct PlayerView: View {
                     #endif
                 #if os(iOS)
                 if chrome.showsTouchControls {
-                    TouchControls(input: session.input)
+                    TouchControls(input: session.input, availableWidth: playerWidth > 0 ? playerWidth : 375)
                         .containerRelativeFrame(.horizontal)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -108,6 +111,15 @@ struct PlayerView: View {
             }
         }
         #if os(iOS)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            playerWidth = width
+            let requiredWidth = TouchControlSizing.requiredPortraitWidth(system: session.input.layout.system)
+            let isCompactPortrait = horizontalSizeClass == .compact && verticalSizeClass != .compact
+            let scale = isCompactPortrait
+                ? TouchControlSizing.portraitScale(availableWidth: width, requiredWidth: requiredWidth)
+                : 1
+            session.recordEvent("touch-controls width=\(Int(width)) scale=\(String(format: "%.2f", scale))")
+        }
         .defersSystemGestures(on: .all)
         .persistentSystemOverlays(.hidden)
         .statusBarHidden(chrome.isFullScreen)
