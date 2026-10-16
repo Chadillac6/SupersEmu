@@ -173,6 +173,7 @@ const SECoreAPI *coreNamed(NSString *identifier) {
 HostState g;
 
 void logCallback(enum retro_log_level level, const char *fmt, ...) {
+    void (^handler)(NSInteger, NSString *) = SELibretroHost.logHandler;
     va_list args;
     va_start(args, fmt);
     if (level >= RETRO_LOG_WARN) {
@@ -182,24 +183,25 @@ void logCallback(enum retro_log_level level, const char *fmt, ...) {
         va_end(printArgs);
     }
 
-    va_list countArgs;
-    va_copy(countArgs, args);
-    int length = vsnprintf(nullptr, 0, fmt, countArgs);
-    va_end(countArgs);
-    if (length >= 0) {
-        std::vector<char> buffer(size_t(length) + 1);
-        va_list formatArgs;
-        va_copy(formatArgs, args);
-        vsnprintf(buffer.data(), buffer.size(), fmt, formatArgs);
-        va_end(formatArgs);
-        NSString *message = [[NSString alloc] initWithBytes:buffer.data()
-                                                     length:size_t(length)
-                                                   encoding:NSUTF8StringEncoding];
-        if (message.length && [message hasSuffix:@"\n"]) {
-            message = [message substringToIndex:message.length - 1];
+    if (handler) {
+        va_list countArgs;
+        va_copy(countArgs, args);
+        int length = vsnprintf(nullptr, 0, fmt, countArgs);
+        va_end(countArgs);
+        if (length >= 0) {
+            std::vector<char> buffer(size_t(length) + 1);
+            va_list formatArgs;
+            va_copy(formatArgs, args);
+            vsnprintf(buffer.data(), buffer.size(), fmt, formatArgs);
+            va_end(formatArgs);
+            NSString *message = [[NSString alloc] initWithBytes:buffer.data()
+                                                         length:size_t(length)
+                                                       encoding:NSUTF8StringEncoding];
+            if (message.length && [message hasSuffix:@"\n"]) {
+                message = [message substringToIndex:message.length - 1];
+            }
+            if (message) handler(level, message);
         }
-        void (^handler)(NSInteger, NSString *) = SELibretroHost.logHandler;
-        if (handler && message) handler(level, message);
     }
     va_end(args);
 }

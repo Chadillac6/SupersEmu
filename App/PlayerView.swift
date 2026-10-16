@@ -33,6 +33,20 @@ struct PlayerView: View {
                     .accessibilityIdentifier("emulator-screen")
                     #if os(iOS)
                     .ignoresSafeArea(edges: chrome.isFullScreen ? .all : [])
+                    .overlay(alignment: .topLeading) {
+                        if showPerformanceOverlay {
+                            Text(performanceOverlayText)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .background(.black.opacity(0.58), in: Capsule())
+                                .accessibilityIdentifier("performance-overlay")
+                                .padding(.top, 8)
+                                .padding(.leading, 8)
+                                .allowsHitTesting(false)
+                        }
+                    }
                     .contentShape(Rectangle())
                     .onTapGesture { if chrome.isFullScreen { topBarAutoHide.toggle() } }
                     #endif
@@ -80,21 +94,6 @@ struct PlayerView: View {
                 .padding(24)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
             }
-            #if os(iOS)
-            if showPerformanceOverlay {
-                Text(performanceOverlayText)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(.black.opacity(0.58), in: Capsule())
-                    .accessibilityIdentifier("performance-overlay")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(.top, 6)
-                    .padding(.leading, 8)
-                    .allowsHitTesting(false)
-            }
-            #endif
         }
         .foregroundStyle(.white)
         .background {

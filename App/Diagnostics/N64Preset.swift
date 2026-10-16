@@ -32,7 +32,6 @@ enum N64Preset: String, CaseIterable, Identifiable {
                 "mupen64plus-43screensize": "320x240",
                 "mupen64plus-EnableCopyDepthToRDRAM": "Off",
                 "mupen64plus-EnableCopyColorToRDRAM": "Off",
-                "mupen64plus-EnableFBEmulation": "False",
                 "mupen64plus-EnableLODEmulation": "False",
                 "mupen64plus-CountPerOp": "3",
             ]
