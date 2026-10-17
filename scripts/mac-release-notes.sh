@@ -6,9 +6,7 @@ mac_release_notes_html() {
   while IFS= read -r subject || [ -n "$subject" ]; do
     [ -n "$subject" ] || continue
     subject="${subject//$'\r'/}"
-    subject="${subject//&/\&amp;}"
-    subject="${subject//</\&lt;}"
-    subject="${subject//>/\&gt;}"
+    subject="$(printf '%s' "$subject" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')"
     printf '  <li>%s</li>\n' "$subject"
   done
   printf '</ul>\n'
