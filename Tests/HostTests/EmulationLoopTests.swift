@@ -100,7 +100,7 @@ final class EmulationLoopTests: XCTestCase {
 
         XCTAssertEqual(frames.read(), 30, accuracy: 6)
         XCTAssertEqual(activity.maximumActive(), 1)
-        XCTAssertGreaterThan(loop.pacingMetrics().catchUpFrames, 0)
+        XCTAssertGreaterThan(loop.pacingMetrics()?.catchUpFrames ?? 0, 0)
     }
 
     func testTakingFrameImageDoesNotWaitForSlowFrame() {
@@ -131,5 +131,46 @@ final class EmulationLoopTests: XCTestCase {
 
         backoff.reset()
         XCTAssertEqual(backoff.attempt(at: 200), 1)
+    }
+
+    func testPerformAfterStopFailsPromptly() throws {
+        let loop = EmulationLoop()
+        loop.stop()
+
+        let nonthrowingStart = ProcessInfo.processInfo.systemUptime
+        let value: Int? = loop.perform { _ in 1 }
+        XCTAssertNil(value)
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - nonthrowingStart, 0.1)
+
+        let operation: (SELibretroHost?) throws -> Int = { _ in 1 }
+        let throwingStart = ProcessInfo.processInfo.systemUptime
+        XCTAssertThrowsError(try loop.perform(operation)) {
+            XCTAssertEqual($0 as? EmulationLoopError, .stopped)
+        }
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - throwingStart, 0.1)
+    }
+
+    func testPerformAsyncAfterStopFailsPromptly() async {
+        let loop = EmulationLoop()
+        loop.stop()
+
+        let start = ProcessInfo.processInfo.systemUptime
+        do {
+            _ = try await loop.performAsync { _ in 1 }
+            XCTFail("Expected a stopped-loop error")
+        } catch {
+            XCTAssertEqual(error as? EmulationLoopError, .stopped)
+        }
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 0.1)
+    }
+
+    func testControlCallsAfterStopReturnPromptly() {
+        let loop = EmulationLoop()
+        loop.stop()
+
+        let start = ProcessInfo.processInfo.systemUptime
+        loop.setRunning(true)
+        loop.setFramesPerSecond(60)
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 0.1)
     }
 }

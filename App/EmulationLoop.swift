@@ -22,6 +22,10 @@ struct AudioStallBackoff {
     }
 }
 
+enum EmulationLoopError: Error, Equatable {
+    case stopped
+}
+
 final class EmulationLoop: @unchecked Sendable {
     typealias FrameRunner = (SELibretroHost?) -> Void
 
@@ -90,11 +94,11 @@ final class EmulationLoop: @unchecked Sendable {
 
     func setFramesPerSecond(_ framesPerSecond: Double) {
         let semaphore = DispatchSemaphore(value: 0)
-        enqueue { [self] in
+        guard enqueue({ [self] in
             pacer = FramePacer(framesPerSecond: framesPerSecond, maxCatchUpFrames: maxCatchUpFrames)
             pacer.reset(now: ProcessInfo.processInfo.systemUptime)
             semaphore.signal()
-        }
+        }) else { return }
         semaphore.wait()
     }
 
@@ -102,32 +106,35 @@ final class EmulationLoop: @unchecked Sendable {
         if Thread.current === thread { return try work(host) }
         let box = Box<T>()
         let semaphore = DispatchSemaphore(value: 0)
-        enqueue { [self] in
+        guard enqueue({ [self] in
             do { box.result = .success(try work(host)) }
             catch { box.result = .failure(error) }
             semaphore.signal()
-        }
+        }) else { throw EmulationLoopError.stopped }
         semaphore.wait()
         return try box.result!.get()
     }
 
-    func perform<T>(_ work: @escaping (SELibretroHost?) -> T) -> T {
+    func perform<T>(_ work: @escaping (SELibretroHost?) -> T) -> T? {
         if Thread.current === thread { return work(host) }
         let box = Box<T>()
         let semaphore = DispatchSemaphore(value: 0)
-        enqueue { [self] in
+        guard enqueue({ [self] in
             box.result = .success(work(host))
             semaphore.signal()
-        }
+        }) else { return nil }
         semaphore.wait()
         return try! box.result!.get()
     }
 
     func performAsync<T>(_ work: @escaping (SELibretroHost?) throws -> T) async throws -> T {
         let result: Result<T, Error> = await withCheckedContinuation { continuation in
-            enqueue { [self] in
+            guard enqueue({ [self] in
                 do { continuation.resume(returning: .success(try work(host))) }
                 catch { continuation.resume(returning: .failure(error)) }
+            }) else {
+                continuation.resume(returning: .failure(EmulationLoopError.stopped))
+                return
             }
         }
         return try result.get()
@@ -138,25 +145,27 @@ final class EmulationLoop: @unchecked Sendable {
     func setRunning(_ running: Bool) {
         if Thread.current === thread {
             self.running = running
-            if running { pacer.reset(now: ProcessInfo.processInfo.systemUptime) }
+            if running {
+                pacer.reset(now: ProcessInfo.processInfo.systemUptime)
+                lastSummaryAt = nil
+            }
             return
         }
         let semaphore = DispatchSemaphore(value: 0)
-        condition.lock()
-        guard !stopped else { condition.unlock(); return }
-        commands.append { [self] in
+        guard enqueue({ [self] in
             self.running = running
-            if running { pacer.reset(now: ProcessInfo.processInfo.systemUptime) }
+            if running {
+                pacer.reset(now: ProcessInfo.processInfo.systemUptime)
+                lastSummaryAt = nil
+            }
             semaphore.signal()
-        }
-        condition.signal()
-        condition.unlock()
+        }) else { return }
         semaphore.wait()
     }
 
     func takeFrameImage() -> CGImage? { imageSlot.take() }
 
-    func pacingMetrics() -> (catchUpFrames: Int, droppedFrames: Int) {
+    func pacingMetrics() -> (catchUpFrames: Int, droppedFrames: Int)? {
         perform { [self] _ in (pacer.catchUpFrames, pacer.droppedFrames) }
     }
 
@@ -179,12 +188,14 @@ final class EmulationLoop: @unchecked Sendable {
         semaphore.wait()
     }
 
-    private func enqueue(_ command: @escaping () -> Void) {
+    @discardableResult
+    private func enqueue(_ command: @escaping () -> Void) -> Bool {
         condition.lock()
-        guard !stopped else { condition.unlock(); return }
+        guard !stopped else { condition.unlock(); return false }
         commands.append(command)
         condition.signal()
         condition.unlock()
+        return true
     }
 
     private func threadMain() {

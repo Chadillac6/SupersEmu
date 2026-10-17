@@ -635,9 +635,8 @@ static __weak SELibretroHost *gActiveHost;
     AVAudioSourceNode *_sourceNode;
     NSArray<id> *_audioObservers;
     void (^_audioEventHandler)(NSString *);
+    std::atomic<bool> _audioEnabled;
 }
-
-@synthesize audioEnabled = _audioEnabled;
 
 + (SELibretroHost *)activeHost { return gActiveHost; }
 
@@ -687,6 +686,7 @@ static __weak SELibretroHost *gActiveHost;
     }
     self = [super init];
     if (!self) return nil;
+    _audioEnabled.store(false);
 
     // Disc cores (need_fullpath) open the image themselves: don't read or map a multi-GB disc.
     retro_system_info preflight = {};
@@ -1027,8 +1027,8 @@ static __weak SELibretroHost *gActiveHost;
 
 - (void)setAudioEnabled:(BOOL)audioEnabled {
     if (!_loaded) return;
-    if (audioEnabled == _audioEnabled) return;
-    _audioEnabled = audioEnabled;
+    if (audioEnabled == _audioEnabled.load()) return;
+    _audioEnabled.store(audioEnabled);
     g.audioEnabled = audioEnabled;
     if (audioEnabled) {
         [self startAudio];
@@ -1037,7 +1037,7 @@ static __weak SELibretroHost *gActiveHost;
     }
 }
 
-- (BOOL)audioEnabled { return g.audioEnabled.load(); }
+- (BOOL)audioEnabled { return _audioEnabled.load(); }
 
 - (void)activateAudioSession {
 #if TARGET_OS_IOS
@@ -1049,7 +1049,7 @@ static __weak SELibretroHost *gActiveHost;
 }
 
 - (void)startAudioEngineIfNeeded {
-    if (!_audioEnabled || !_loaded || !g.audioEnabled.load() || !_engine) return;
+    if (!_audioEnabled.load() || !_loaded || !g.audioEnabled.load() || !_engine) return;
 #if TARGET_OS_IOS
     [self activateAudioSession];
 #endif
@@ -1068,7 +1068,7 @@ static __weak SELibretroHost *gActiveHost;
 }
 
 - (void)recoverStalledAudio {
-    if (!_audioEnabled || !_loaded || !g.audioEnabled.load() || !_engine) return;
+    if (!_audioEnabled.load() || !_loaded || !g.audioEnabled.load() || !_engine) return;
     [_engine stop];
     g.audioEngineRunning = false;
     [self startAudioEngineIfNeeded];
@@ -1090,7 +1090,7 @@ static __weak SELibretroHost *gActiveHost;
                                                     queue:[NSOperationQueue mainQueue]
                                                usingBlock:^(NSNotification *notification) {
         SELibretroHost *host = weakSelf;
-        if (!host || !host->_audioEnabled || !host->_loaded || !g.audioEnabled.load()) return;
+        if (!host || !host->_audioEnabled.load() || !host->_loaded || !g.audioEnabled.load()) return;
         AVAudioSessionInterruptionType type = (AVAudioSessionInterruptionType)[notification.userInfo[AVAudioSessionInterruptionTypeKey] integerValue];
         if (host->_audioEventHandler) host->_audioEventHandler(type == AVAudioSessionInterruptionTypeEnded ? @"audio interruption ended" : @"audio interruption began");
         if (type == AVAudioSessionInterruptionTypeEnded) [host startAudioEngineIfNeeded];
@@ -1103,7 +1103,7 @@ static __weak SELibretroHost *gActiveHost;
                                                       queue:[NSOperationQueue mainQueue]
                                                  usingBlock:^(NSNotification *notification) {
         SELibretroHost *host = weakSelf;
-        if (!host || !host->_audioEnabled || !host->_loaded || !g.audioEnabled.load() || notification.object != host->_engine) return;
+        if (!host || !host->_audioEnabled.load() || !host->_loaded || !g.audioEnabled.load() || notification.object != host->_engine) return;
         if (host->_audioEventHandler) host->_audioEventHandler(@"audio engine configuration changed");
         [host recoverStalledAudio];
     }];
@@ -1115,10 +1115,10 @@ static __weak SELibretroHost *gActiveHost;
                                              queue:[NSOperationQueue mainQueue]
                                         usingBlock:^(NSNotification *notification) {
         SELibretroHost *host = weakSelf;
-        if (!host || !host->_audioEnabled || !host->_loaded || !g.audioEnabled.load()) return;
+        if (!host || !host->_audioEnabled.load() || !host->_loaded || !g.audioEnabled.load()) return;
         if (host->_audioEventHandler) host->_audioEventHandler(@"audio media services reset");
         [host stopAudioDeactivatingSession:NO];
-        if (host->_audioEnabled && host->_loaded && g.audioEnabled.load()) [host startAudio];
+        if (host->_audioEnabled.load() && host->_loaded && g.audioEnabled.load()) [host startAudio];
     }];
     [observers addObject:resetObserver];
 #endif
@@ -1146,7 +1146,7 @@ static __weak SELibretroHost *gActiveHost;
 
 - (void)startAudio {
 #if TARGET_OS_IOS
-    if (!_audioEnabled || !_loaded || !g.audioEnabled.load()) return;
+    if (!_audioEnabled.load() || !_loaded || !g.audioEnabled.load()) return;
     NSError *sessionError = nil;
     AVAudioSession *session = AVAudioSession.sharedInstance;
     if (![session setCategory:AVAudioSessionCategoryPlayback
@@ -1189,7 +1189,7 @@ static __weak SELibretroHost *gActiveHost;
 - (void)shutdown {
 #if TARGET_OS_IOS
     if (!_loaded) {
-        _audioEnabled = NO;
+        _audioEnabled.store(false);
         g.audioEnabled = false;
         return;
     }

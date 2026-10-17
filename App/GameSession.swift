@@ -201,7 +201,7 @@ final class GameSession {
                 host.sampleRate,
                 host.framesPerSecond,
                 host.coreOptions)
-        }
+        } ?? nil
         guard let hostInfo else {
             loop.stop()
             emulationLoop = nil
@@ -308,7 +308,7 @@ final class GameSession {
             normalized.code = code
             sent.append(normalized)
         }
-        let outcomes = emulationLoop?.perform { $0?.applyCheats(sent.map(\.code)) } ?? []
+        let outcomes = emulationLoop?.perform { $0?.applyCheats(sent.map(\.code)) ?? [] } ?? []
         for (cheat, outcome) in zip(sent, outcomes) {
             switch CheatOutcome(rawValue: outcome.intValue) {
             case .applied: states[cheat.id] = .applied
@@ -627,6 +627,8 @@ final class GameSession {
             }
             diagnosticsLog?.appendEvent("save-state save auto")
             if !preservingStatus { status = "Auto-saved on this device" }
+        } catch EmulationLoopError.stopped {
+            return
         } catch {
             status = "Auto-save failed"
             upload([SaveSync.nativeFile(for: game.id)], saved: "Auto-save failed")
@@ -666,13 +668,13 @@ final class GameSession {
         #if os(macOS)
         input.releaseAll()
         #endif
-        loop.perform { $0?.reset() }
+        _ = loop.perform { $0?.reset() }
         applyCheats()
         status = "Restarted"
     }
 
     func discLabel(_ index: Int) -> String? {
-        emulationLoop?.perform { $0?.label(forDisk: index) ?? nil }
+        emulationLoop?.perform { $0?.label(forDisk: index) ?? nil } ?? nil
     }
 
     private func clearHostInput() {
@@ -807,7 +809,7 @@ final class GameSession {
             }
             do {
                 guard let loop = emulationLoop else { throw CocoaError(.fileNoSuchFile) }
-                let screenshot = loop.perform { $0?.copyFrameImage() }.flatMap(SaveSlotStore.pngData(from:))
+                let screenshot = (loop.perform { $0?.copyFrameImage() } ?? nil).flatMap(SaveSlotStore.pngData(from:))
                 let writeState: (URL) throws -> Void = { url in
                     try loop.perform { host in
                         guard let host else { throw CocoaError(.fileNoSuchFile) }
@@ -820,7 +822,7 @@ final class GameSession {
                     try slotStore.overwrite(slot, savedAt: Date(), screenshotPNG: screenshot, writeState: writeState)
                 }
                 diagnosticsLog?.appendEvent("save-state save slot=\(slot)")
-                loop.perform { $0?.flushSaveRAM() }
+                _ = loop.perform { $0?.flushSaveRAM() }
                 refreshSaveSlots()
                 let saved = "Saved to Slot \(slot)"
                 status = saved
@@ -1052,7 +1054,7 @@ final class GameSession {
         } catch {
             status = error.localizedDescription
         }
-        currentDisk = loop.perform { $0?.currentDisk ?? 0 }
+        currentDisk = loop.perform { $0?.currentDisk ?? 0 } ?? 0
     }
 
     #if DEBUG
