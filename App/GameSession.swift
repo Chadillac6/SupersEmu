@@ -76,6 +76,8 @@ final class GameSession {
     @ObservationIgnored private var pendingDiagnosticsEvents: [String] = []
     @ObservationIgnored private var pickerTimer: Timer?
     @ObservationIgnored private var pickerButtons: SEJoypadButtons = []
+
+    var timeSinceLastAutosave: Duration { .now - lastAutosave }
     /// The chord opens the picker only after it has been released since it last fired.
     @ObservationIgnored private var chordArmed = true
     @ObservationIgnored private var hotkeyHeldSince: ContinuousClock.Instant?
@@ -692,6 +694,7 @@ final class GameSession {
         case resume = "Resume", restart = "Restart Game", save = "Save State", load = "Load State", swapDisc = "Swap Disc"
         case cheats = "Cheats", controls = "Controls", exit = "Exit to Library"
         var id: String { rawValue }
+        var displayTitle: String { self == .exit ? "Save & Quit" : rawValue }
     }
 
     var menuItems: [MenuItem] {

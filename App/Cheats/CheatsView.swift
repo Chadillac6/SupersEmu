@@ -44,7 +44,7 @@ struct CheatsView: View {
                         }
                         .swipeActions {
                             Button("Delete", role: .destructive) { delete(cheat) }
-                            Button("Edit") { editing = cheat }.tint(.blue)
+                            Button("Edit") { editing = cheat }
                         }
                     }
                 } footer: {
@@ -367,7 +367,7 @@ struct CheatPicker: View {
         }
         .padding(22)
         .frame(width: 360)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .brandPanel()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("cheat-picker")
     }
@@ -390,7 +390,8 @@ struct CheatPicker: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+            .foregroundStyle(isSelected ? .white : Brand.Colors.ink)
+            .background(isSelected ? Brand.Colors.red : Brand.Colors.card, in: RoundedRectangle(cornerRadius: 10))
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)

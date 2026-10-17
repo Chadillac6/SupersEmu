@@ -19,12 +19,18 @@ struct SystemSelectorBar: View {
     let theme: SystemTheme
     let systems: [SystemID]
     @Binding var selection: SystemID?
+    let statusLine: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             ThemeLogo(theme: theme, height: 38)
                 .padding(.horizontal, 20)
                 .accessibilityIdentifier("home-logo")
+            Text(statusLine)
+                .font(Brand.eyebrow)
+                .tracking(1.2)
+                .foregroundStyle(Brand.Colors.ink3)
+                .padding(.horizontal, 20)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     chip(SystemTheme.all)
@@ -48,10 +54,11 @@ struct SystemSelectorBar: View {
             Text(chip.chip)
                 .font(.subheadline.bold())
                 .padding(.horizontal, 14).padding(.vertical, 7)
-                .foregroundStyle(isSelected ? .white : .primary)
+                .foregroundStyle(isSelected ? Brand.Colors.paper : Brand.Colors.ink)
                 .background {
-                    if isSelected { Capsule().fill(chip.accent) } else { Capsule().fill(.white.opacity(0.1)) }
+                    Capsule().fill(isSelected ? Brand.Colors.ink : Brand.Colors.surface)
                 }
+                .overlay { Capsule().stroke(isSelected ? .clear : Brand.Colors.line, lineWidth: 1) }
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -60,7 +67,7 @@ struct SystemSelectorBar: View {
     }
 }
 
-/// The featured game: wide art, logo or title, and Resume.
+/// The featured game: wide art above the title, status and primary actions.
 struct HomeHero: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -72,49 +79,51 @@ struct HomeHero: View {
     let details: () -> Void
 
     var body: some View {
-        WideArt(item: item)
-            // Scaled artwork can extend beyond its clipped frame and intercept selector clicks.
-            .allowsHitTesting(false)
-            .frame(height: height)
-            .overlay {
-                LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .center, endPoint: .bottom)
-                    .allowsHitTesting(false)
-                LinearGradient(colors: [.black.opacity(0.55), .clear], startPoint: .leading, endPoint: .trailing)
-                    .allowsHitTesting(false)
-            }
-            .overlay(alignment: .bottomLeading) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(item.lastPlayed != nil ? "CONTINUE PLAYING" : "IN YOUR LIBRARY")
-                        .font(.caption.bold()).tracking(1.5).foregroundStyle(theme.accent)
-                    let title = Text(item.title).font(.system(size: compact ? 26 : 32, weight: .heavy)).lineLimit(2)
+        VStack(alignment: .leading, spacing: 0) {
+            WideArt(item: item)
+                .frame(height: height)
+                .overlay(alignment: .topLeading) {
                     if let logo = item.logoPath {
-                        RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit) { title }
-                            .frame(maxWidth: 320, maxHeight: compact ? 64 : 90, alignment: .leading)
-                            .accessibilityLabel(item.title)
-                    } else {
-                        title
-                    }
-                    Text(subtitle).font(.callout).foregroundStyle(.white.opacity(0.8))
-                    HStack(spacing: 10) {
-                        Button(action: primary) { Label(primaryTitle, systemImage: "play.fill").padding(.horizontal, 6) }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(compact ? .regular : .large)
-                            .accessibilityIdentifier("hero-primary")
-                        Button(action: details) { Label("Details", systemImage: "info.circle") }
-                            .buttonStyle(.bordered)
-                            .controlSize(compact ? .regular : .large)
-                            .accessibilityIdentifier("hero-details")
+                        RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit) { EmptyView() }
+                            .frame(maxWidth: 240, maxHeight: 68, alignment: .leading)
+                            .padding(16)
+                            .accessibilityHidden(true)
                     }
                 }
-                .foregroundStyle(.white)
-                .padding(compact ? 16 : 24)
+                .clipped()
+            VStack(alignment: .leading, spacing: 10) {
+                Text(item.lastPlayed != nil ? "CONTINUE PLAYING" : "IN YOUR LIBRARY")
+                    .font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.redText)
+                Text(item.title)
+                    .font(.system(size: compact ? 25 : 30, weight: .bold))
+                    .foregroundStyle(Brand.Colors.ink)
+                    .lineLimit(2)
+                Text(subtitle)
+                    .font(.callout)
+                    .foregroundStyle(Brand.Colors.ink2)
+                HStack(spacing: 10) {
+                    Button(action: primary) { Label(primaryTitle, systemImage: "play.fill") }
+                        .buttonStyle(BrandPrimaryButtonStyle())
+                        .controlSize(compact ? .regular : .large)
+                        .accessibilityIdentifier("hero-primary")
+                    Button(action: details) { Label("Details", systemImage: "info.circle") }
+                        .buttonStyle(BrandSecondaryButtonStyle())
+                        .controlSize(compact ? .regular : .large)
+                        .accessibilityIdentifier("hero-details")
+                }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 22))
-            .contentShape(RoundedRectangle(cornerRadius: 22))
-            .padding(.leading, 20)
-            .padding(.trailing, JumpRail.inset)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("home-hero")
+            .padding(compact ? 16 : 22)
+        }
+        .background(Brand.Colors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Brand.Radii.card))
+        .overlay {
+            RoundedRectangle(cornerRadius: Brand.Radii.card)
+                .stroke(Brand.Colors.line, lineWidth: 1)
+        }
+        .padding(.leading, 20)
+        .padding(.trailing, JumpRail.inset)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("home-hero")
     }
 
     private var height: CGFloat {
@@ -151,7 +160,7 @@ struct CurrentlyPlayingRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Currently Playing").font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier("shelf-continue")
+            shelfHeader(title: "Continue playing", count: items.count, id: "shelf-continue")
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 16) {
                     ForEach(items) { item in
@@ -167,6 +176,18 @@ struct CurrentlyPlayingRow: View {
         }
     }
 
+    private func shelfHeader(title: String, count: Int, id: String) -> some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text(title).font(.title3.weight(.semibold)).foregroundStyle(Brand.Colors.ink).accessibilityIdentifier(id)
+                Spacer()
+                Text("\(count)").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
+            }
+            Rectangle().fill(Brand.Colors.line).frame(height: 1)
+        }
+        .padding(.horizontal, 20)
+    }
+
     private var compact: Bool {
         #if os(iOS)
         sizeClass == .compact
@@ -179,19 +200,11 @@ struct CurrentlyPlayingRow: View {
         VStack(alignment: .leading, spacing: 6) {
             WideArt(item: item)
                 .aspectRatio(16 / 9, contentMode: .fit)
-                .overlay(alignment: .bottomLeading) {
-                    if item.playable?.hasResumePoint == true {
-                        Label("Resume", systemImage: "play.fill").font(.caption.bold())
-                            .padding(.horizontal, 8).padding(.vertical, 5)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .padding(8)
-                    }
-                }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-            Text(item.title).font(.subheadline.bold()).lineLimit(1)
+            Text(item.title).font(.subheadline.bold()).foregroundStyle(Brand.Colors.ink).lineLimit(1)
             if let lastPlayed = item.lastPlayed {
-                Text("\(item.console) · Played \(lastPlayed.formatted(.relative(presentation: .named)))")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text("\(item.console) · \(lastPlayed.formatted(.relative(presentation: .named)) )".uppercased())
+                    .font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3).lineLimit(1)
             }
         }
     }
@@ -209,7 +222,15 @@ struct AlphabetGrid: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("All Games A–Z").font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier("shelf-all")
+            VStack(spacing: 10) {
+                HStack {
+                    Text("All games A–Z").font(.title3.weight(.semibold)).foregroundStyle(Brand.Colors.ink).accessibilityIdentifier("shelf-all")
+                    Spacer()
+                    Text("\(games.count)").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
+                }
+                Rectangle().fill(Brand.Colors.line).frame(height: 1)
+            }
+            .padding(.horizontal, 20)
             LazyVGrid(columns: GameGridLayout.columns(compact: compact),
                       spacing: GameGridLayout.rowSpacing(compact: compact)) {
                 ForEach(games) { item in
@@ -264,7 +285,8 @@ struct JumpRail: View {
             }
             .padding(.vertical, 6)
             .frame(width: 22)
-            .background(.ultraThinMaterial, in: Capsule())
+            .background(Brand.Colors.surface, in: Capsule())
+            .overlay { Capsule().stroke(Brand.Colors.line, lineWidth: 1) }
             #if os(iOS)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .local)
                 .onChanged { value in
@@ -280,8 +302,9 @@ struct JumpRail: View {
                 })
             .overlay(alignment: .topLeading) {
                 if let scrubbing, let index = LibraryShelves.alphabet.firstIndex(of: scrubbing) {
-                    Text(scrubbing).font(.title.bold()).frame(width: 56, height: 56)
-                        .background(.regularMaterial, in: Circle())
+                    Text(scrubbing).font(.title.bold()).foregroundStyle(Brand.Colors.ink).frame(width: 56, height: 56)
+                        .background(Brand.Colors.surface, in: Circle())
+                        .overlay { Circle().stroke(Brand.Colors.line, lineWidth: 1) }
                         .offset(x: -70, y: 6 + CGFloat(index) * row - 28 + row / 2)
                         .allowsHitTesting(false)
                 }
@@ -299,7 +322,7 @@ struct JumpRail: View {
     @ViewBuilder private func letterView(_ letter: String, row: CGFloat) -> some View {
         let label = Text(letter)
             .font(.system(size: min(11, row * 0.72), weight: .bold, design: .rounded))
-            .foregroundStyle(available.contains(letter) ? Color.primary : Color.secondary.opacity(0.35))
+            .foregroundStyle(available.contains(letter) ? Brand.Colors.ink : Brand.Colors.ink3.opacity(0.4))
             .frame(width: 22, height: row)
         #if os(macOS)
         Button { if let target = target(for: letter) { jump(target, true) } } label: { label.contentShape(Rectangle()) }

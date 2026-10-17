@@ -25,7 +25,7 @@ struct SystemTheme: Identifiable, Equatable {
 
     static let all = SystemTheme(id: "all", system: nil, chip: "All", logo: nil, logoStyle: .original, accent: Color(hex: 0x8B5CF6),
                                  background: [Color(hex: 0x1E1240), Color(hex: 0x0B0A1A)],
-                                 stripe: [Color(hex: 0x8B5CF6), Color(hex: 0x22D3EE)])
+                                 stripe: [Brand.Colors.red])
 
     static let systems: [SystemID: SystemTheme] = [
         .snes: make(.snes, "SNES", .original, accent: 0x8C7FD6, background: [0x2A2350, 0x0E0C1A],
@@ -66,9 +66,8 @@ struct ThemeLogo: View {
                 .frame(height: height)
                 .accessibilityLabel(theme.system?.displayName ?? theme.chip)
         } else {
-            Text("SupersEmu")
-                .font(.system(size: height * 0.8, weight: .black, design: .rounded))
-                .foregroundStyle(LinearGradient(colors: theme.stripe, startPoint: .leading, endPoint: .trailing))
+            BrandLockup()
+                .scaleEffect(height / 40)
                 .frame(height: height)
         }
     }
@@ -80,11 +79,15 @@ extension ThemeLogo {
         case .original:
             Image(name).resizable().scaledToFit()
         case .light:
-            Image(name).renderingMode(.template).resizable().scaledToFit().foregroundStyle(.white)
+            Image(name).renderingMode(.template).resizable().scaledToFit().foregroundStyle(Brand.Colors.ink)
         case .plate:
             Image(name).resizable().scaledToFit()
                 .padding(.horizontal, height * 0.3).padding(.vertical, height * 0.15)
                 .background(.white, in: RoundedRectangle(cornerRadius: height * 0.22))
+                .overlay {
+                    RoundedRectangle(cornerRadius: height * 0.22)
+                        .stroke(Brand.Colors.line, lineWidth: 1)
+                }
         }
     }
 }

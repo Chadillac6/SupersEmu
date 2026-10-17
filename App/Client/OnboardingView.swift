@@ -49,7 +49,7 @@ struct OnboardingView: View {
                 #else
                 if localServer.health != nil {
                     Button("Use This Mac's Server") { Task { await pairWithThisMac() } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(BrandPrimaryButtonStyle())
                         .disabled(isPairing)
                         .frame(maxWidth: .infinity)
                         .accessibilityIdentifier("pair-local-server")
@@ -60,7 +60,7 @@ struct OnboardingView: View {
                 #endif
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Brand.Colors.red)
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("pairing-error")
                 }
@@ -130,12 +130,13 @@ struct OnboardingView: View {
         } message: {
             Text(fingerprintConfirmationMessage)
         }
+        .background(Brand.Colors.paper.ignoresSafeArea())
     }
 
     private var header: some View {
         VStack(spacing: 10) {
-            Image(systemName: "server.rack").font(.system(size: 52)).foregroundStyle(.tint)
-            Text("Connect to your SupersEmu Server").font(.title2.bold()).multilineTextAlignment(.center)
+            BrandMark().scaleEffect(56 / 24).frame(width: 56, height: 56)
+            Text("Connect to your SupersEmu Server").font(Brand.serifTitle).foregroundStyle(Brand.Colors.ink).multilineTextAlignment(.center)
             Text(instructions).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         .padding(.top, 24)
@@ -152,10 +153,13 @@ struct OnboardingView: View {
     #if os(macOS)
     private var linkForm: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Pairing link").font(.headline)
+            Text("01 Pairing link").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
             HStack {
                 TextField("supersemu://pair?d=…", text: $link)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
+                    .padding(10)
+                    .background(Brand.Colors.surface, in: RoundedRectangle(cornerRadius: Brand.Radii.row))
+                    .overlay(RoundedRectangle(cornerRadius: Brand.Radii.row).stroke(Brand.Colors.line, lineWidth: 1))
                     .disabled(isPairing)
                     .accessibilityIdentifier("pairing-link")
                     .onSubmit { Task { await pair(link: link) } }
@@ -166,7 +170,7 @@ struct OnboardingView: View {
                 .accessibilityIdentifier("paste-link")
             }
             Button("Connect with Link") { Task { await pair(link: link) } }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(BrandPrimaryButtonStyle())
                 .disabled(link.isEmpty || isPairing)
                 .accessibilityIdentifier("connect-link")
         }
@@ -176,7 +180,7 @@ struct OnboardingView: View {
     private var codeForm: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !discoveredServers.isEmpty {
-                Text("Servers on your network").font(.headline)
+                Text("02 Servers on your network").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
                 ForEach(discoveredServers) { server in
                     Button {
                         Task { await select(server) }
@@ -192,14 +196,17 @@ struct OnboardingView: View {
                             }
                         }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(BrandSecondaryButtonStyle())
                     .disabled(resolvingServerID != nil || isPairing)
                     .accessibilityIdentifier("discovered-server-\(server.id)")
                 }
             }
-            Text("Server address").font(.headline)
+            Text("03 Server address").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
             TextField("mac-mini.local", text: $address)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .padding(10)
+                .background(Brand.Colors.surface, in: RoundedRectangle(cornerRadius: Brand.Radii.row))
+                .overlay(RoundedRectangle(cornerRadius: Brand.Radii.row).stroke(Brand.Colors.line, lineWidth: 1))
                 .autocorrectionDisabled()
                 .disabled(isPairing)
                 #if os(iOS)
@@ -208,7 +215,7 @@ struct OnboardingView: View {
                 #endif
                 .accessibilityIdentifier("server-address")
             Button("Request to Connect") { beginRequestToConnect() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(BrandPrimaryButtonStyle())
                 .disabled(address.isEmpty || isPairing || resolvingServerID != nil)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityIdentifier("request-to-connect")
@@ -218,9 +225,12 @@ struct OnboardingView: View {
             .buttonStyle(.borderless)
             .disabled(isPairing)
             if showCodeForm {
-            Text("Pairing code").font(.headline).padding(.top, 6)
+            Text("04 Pairing code").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3).padding(.top, 6)
             TextField("123456", text: $code)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .padding(10)
+                .background(Brand.Colors.surface, in: RoundedRectangle(cornerRadius: Brand.Radii.row))
+                .overlay(RoundedRectangle(cornerRadius: Brand.Radii.row).stroke(Brand.Colors.line, lineWidth: 1))
                 .font(.title3.monospacedDigit())
                 .disabled(isPairing)
                 #if os(iOS)
@@ -229,7 +239,7 @@ struct OnboardingView: View {
                 .onChange(of: code) { _, new in code = String(new.filter(\.isNumber).prefix(6)) }
                 .accessibilityIdentifier("pairing-code")
             Button("Connect") { Task { await pairWithCode() } }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(BrandPrimaryButtonStyle())
                 .disabled(address.isEmpty || code.count != 6 || isPairing)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityIdentifier("connect-code")

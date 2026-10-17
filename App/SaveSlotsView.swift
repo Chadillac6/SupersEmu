@@ -58,7 +58,7 @@ struct SaveSlotsView: View {
         }
         .padding(compact ? 16 : 22)
         .frame(maxWidth: .infinity)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .brandPanel()
         .accessibilityElement(children: .contain)
     }
 
@@ -195,7 +195,7 @@ struct SaveSlotsView: View {
                         .buttonStyle(.bordered)
                         .keyboardShortcut(.cancelAction)
                         .padding(4)
-                        .background(!confirmation.confirmFocused ? Color.accentColor.opacity(0.35) : .clear,
+                        .background(!confirmation.confirmFocused ? Brand.Colors.red : .clear,
                                     in: RoundedRectangle(cornerRadius: 8))
                         .accessibilityIdentifier("save-slot-cancel")
                     Spacer()
@@ -206,14 +206,14 @@ struct SaveSlotsView: View {
                     }
                     .buttonStyle(.bordered)
                     .padding(4)
-                    .background(confirmation.confirmFocused ? Color.accentColor.opacity(0.35) : .clear,
+                    .background(confirmation.confirmFocused ? Brand.Colors.red : .clear,
                                 in: RoundedRectangle(cornerRadius: 8))
                     .accessibilityIdentifier("save-slot-confirm")
                 }
             }
             .padding(compact ? 16 : 20)
             .frame(maxWidth: compact ? 310 : 360)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .brandPanel()
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("save-slot-confirmation")
         }
@@ -221,7 +221,7 @@ struct SaveSlotsView: View {
     }
 
     private func rowBackground(_ focused: Bool) -> Color {
-        focused ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.06)
+        focused ? Brand.Colors.red : Brand.Colors.card
     }
 }
 
