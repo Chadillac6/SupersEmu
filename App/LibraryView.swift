@@ -2,7 +2,7 @@ import SupersEmuKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Netflix/Plex-style Home: console selector and theme, featured game, Currently Playing, then every game A-Z.
+/// Home: console selector and theme, hero, Now Playing, Downloaded, then Not Downloaded.
 struct LibraryView: View {
     @Environment(GameLibrary.self) private var library
     @Environment(ServerSession.self) private var server
@@ -59,12 +59,20 @@ struct LibraryView: View {
                             if !home.currentlyPlaying.isEmpty {
                                 CurrentlyPlayingRow(items: home.currentlyPlaying, select: open)
                             }
-                            AlphabetGrid(games: home.allGames, letterAnchors: home.letterAnchors, select: open)
+                            if !home.downloaded.isEmpty {
+                                GameGridSection(title: "Downloaded", identifier: "shelf-downloaded",
+                                                games: home.downloaded, letterAnchors: home.letterAnchors, select: open)
+                            }
+                            if !home.notDownloaded.isEmpty {
+                                GameGridSection(title: "Not Downloaded", identifier: "shelf-not-downloaded",
+                                                games: home.notDownloaded, letterAnchors: home.letterAnchors, select: open)
+                            }
                         }
                     }
                     .padding(.vertical, 16)
                 }
                 .overlay(alignment: .trailing) {
+                    #if os(macOS)
                     if query.isEmpty, !home.allGames.isEmpty {
                         JumpRail(available: Set(home.letterAnchors.keys)) { letter, animated in
                             if animated {
@@ -74,6 +82,7 @@ struct LibraryView: View {
                             }
                         }
                     }
+                    #endif
                 }
             }
             .background {

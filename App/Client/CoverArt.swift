@@ -60,6 +60,9 @@ struct CoverArt: View {
 struct WideArt: View {
     @Environment(ServerSession.self) private var server
     let item: LibraryItem
+    var preferCover = false
+    /// Widest the sharp cover gets in a hero, leaving the rest of the card for its text.
+    static let heroCoverFraction: CGFloat = 0.42
     @State private var hero: Image?
     @State private var cover: Image?
 
@@ -70,17 +73,29 @@ struct WideArt: View {
                 if let hero {
                     hero.resizable().scaledToFill()
                 } else if let cover {
-                    ZStack(alignment: .trailing) {
-                        cover.resizable().scaledToFill().blur(radius: 28).opacity(0.75)
-                        cover.resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 10)).shadow(radius: 12).padding(18)
+                    cover.resizable().scaledToFill().blur(radius: 28).opacity(0.75)
+                }
+            }
+            // A separate overlay so the oversized blurred fill can't stretch the sharp cover past the card.
+            .overlay(alignment: .trailing) {
+                if hero == nil, let cover {
+                    GeometryReader { proxy in
+                        cover.resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 10)).shadow(radius: 12)
+                            .padding(18)
+                            .frame(maxWidth: proxy.size.width * (preferCover ? Self.heroCoverFraction : 1), maxHeight: proxy.size.height, alignment: .trailing)
+                            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .trailing)
                     }
                 }
             }
             .clipped()
             // Clipping the pixels alone does not clip SwiftUI mouse hit testing.
             .contentShape(Rectangle())
-            .task(id: ArtworkCache.taskID(item.heroPath ?? item.coverPath, server)) {
-                await ArtworkCache.load(item.heroPath, key: ArtworkCache.key(item.id, item.heroPath), server: server) { hero = $0 }
+            .task(id: ArtworkCache.taskID(preferCover ? item.coverPath : item.heroPath ?? item.coverPath, server)) {
+                hero = nil
+                cover = nil
+                if !preferCover {
+                    await ArtworkCache.load(item.heroPath, key: ArtworkCache.key(item.id, item.heroPath), server: server) { hero = $0 }
+                }
                 if hero == nil { await ArtworkCache.load(item.coverPath, key: item.id, server: server) { cover = $0 } }
             }
     }
