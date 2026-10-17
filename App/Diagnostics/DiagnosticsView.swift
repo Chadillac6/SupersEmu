@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 struct DiagnosticsView: View {
@@ -7,14 +6,14 @@ struct DiagnosticsView: View {
     @AppStorage("diagnostics.showPerformanceOverlay") private var showPerformanceOverlay = false
     @AppStorage("diagnostics.recordLogs") private var recordSessionLogs = true
     @AppStorage("diagnostics.detailedCoreLogs") private var detailedCoreLogging = false
-    @AppStorage("n64DefaultPreset") private var defaultPresetRawValue = N64Preset.standard.rawValue
+    @AppStorage("n64DefaultPreset") private var defaultPresetRawValue = N64Preset.balanced.rawValue
     @State private var gamePresetRawValue = "use-default"
     @State private var logs: [DiagnosticsLog.LogFile] = []
     @State private var isConfirmingDelete = false
 
     private var defaultPresetBinding: Binding<String> {
         Binding(
-            get: { N64Preset(rawValue: defaultPresetRawValue)?.rawValue ?? N64Preset.standard.rawValue },
+            get: { N64Preset(rawValue: defaultPresetRawValue)?.rawValue ?? N64Preset.balanced.rawValue },
             set: { defaultPresetRawValue = $0 })
     }
 
@@ -114,4 +113,3 @@ struct DiagnosticsView: View {
         logs = DiagnosticsLog.files()
     }
 }
-#endif

@@ -36,7 +36,9 @@ struct SupersEmuApp: App {
         ServerModeScene()
         ServerMenuBar()
         Settings {
-            ControlsView()
+            NavigationStack {
+                ControlsView()
+            }
         }
         #endif
     }

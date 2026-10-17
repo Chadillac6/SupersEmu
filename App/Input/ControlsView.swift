@@ -89,7 +89,6 @@ struct ControlsView: View {
                 }
                 .accessibilityIdentifier("controls-reset")
             }
-            #if os(iOS)
             Section("Diagnostics") {
                 NavigationLink {
                     DiagnosticsView(game: game)
@@ -98,7 +97,6 @@ struct ControlsView: View {
                 }
                 .accessibilityIdentifier("controls-diagnostics")
             }
-            #endif
         }
         .formStyle(.grouped)
         .navigationTitle("Controls")

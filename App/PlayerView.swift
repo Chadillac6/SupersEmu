@@ -10,11 +10,11 @@ struct PlayerView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @AppStorage(PlayerChrome.hideTouchControlsKey) private var hideTouchControls = true
-    @AppStorage("diagnostics.showPerformanceOverlay") private var showPerformanceOverlay = false
     @State private var hub = ControllerHub.shared
-    @State private var performanceOverlayText = ""
     @State private var playerWidth: CGFloat = 0
     #endif
+    @AppStorage("diagnostics.showPerformanceOverlay") private var showPerformanceOverlay = false
+    @State private var performanceOverlayText = ""
     @State private var topBarAutoHide = TopBarAutoHide()
 
     private var chrome: PlayerChrome {
@@ -36,6 +36,7 @@ struct PlayerView: View {
                     .accessibilityIdentifier("emulator-screen")
                     #if os(iOS)
                     .ignoresSafeArea(edges: chrome.isFullScreen ? .all : [])
+                    #endif
                     .overlay(alignment: .topLeading) {
                         if showPerformanceOverlay {
                             Text(performanceOverlayText)
@@ -50,6 +51,7 @@ struct PlayerView: View {
                                 .allowsHitTesting(false)
                         }
                     }
+                    #if os(iOS)
                     .contentShape(Rectangle())
                     .onTapGesture { if chrome.isFullScreen { topBarAutoHide.toggle() } }
                     #endif
@@ -143,6 +145,7 @@ struct PlayerView: View {
             let event = newCount > oldCount ? "controller connected" : "controller disconnected"
             session.recordEvent("\(event) count=\(newCount)")
         }
+        #endif
         .task(id: showPerformanceOverlay) {
             guard showPerformanceOverlay else {
                 performanceOverlayText = ""
@@ -157,7 +160,6 @@ struct PlayerView: View {
                 }
             }
         }
-        #endif
         .onChange(of: chrome.showsTouchControls) { _, shows in
             if !shows { session.input.touchState = PadState() }
         }

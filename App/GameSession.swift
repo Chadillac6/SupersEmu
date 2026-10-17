@@ -4,14 +4,16 @@ import QuartzCore
 import Darwin
 import SupersEmuKit
 
-#if os(iOS)
+#if os(macOS)
+import AppKit
+#endif
+
 @MainActor
 private final class DisplayLinkProxy: NSObject {
     let action: () -> Void
     init(action: @escaping () -> Void) { self.action = action }
     @objc func tick() { action() }
 }
-#endif
 
 @MainActor
 @Observable
@@ -57,10 +59,8 @@ final class GameSession {
     @ObservationIgnored private var host: SELibretroHost?
     @ObservationIgnored private var emulationLoop: EmulationLoop?
     @ObservationIgnored private var timer: Timer?
-#if os(iOS)
     @ObservationIgnored private var displayLink: CADisplayLink?
     @ObservationIgnored private var displayLinkProxy: DisplayLinkProxy?
-#endif
     @ObservationIgnored private var lastAutosave = ContinuousClock.now
     @ObservationIgnored private var lastSuccessfulAutosave: ContinuousClock.Instant?
     @ObservationIgnored private let sync: SaveSync
@@ -98,11 +98,7 @@ final class GameSession {
     }
 
     private var isPresentationRunning: Bool {
-#if os(iOS)
-        displayLink != nil
-#else
-        timer != nil
-#endif
+        displayLink != nil || timer != nil
     }
 
     init(game: Game, startFresh: Bool = false, sync: SaveSync? = nil) {
@@ -429,32 +425,36 @@ final class GameSession {
         emulationLoop?.setRunning(true)
         host.startAudioEngineIfNeeded()
         diagnosticsLog?.appendEvent("resume")
-#if os(iOS)
         let proxy = DisplayLinkProxy { [weak self] in self?.tick() }
-        let link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
-        link.add(to: .main, forMode: .common)
-        displayLinkProxy = proxy
-        displayLink = link
-#else
-        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+        let newDisplayLink: CADisplayLink?
+        #if os(macOS)
+        newDisplayLink = NSScreen.main?.displayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick))
+        #else
+        newDisplayLink = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick))
+        #endif
+        if let newDisplayLink {
+            newDisplayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+            newDisplayLink.add(to: .main, forMode: .common)
+            displayLinkProxy = proxy
+            displayLink = newDisplayLink
+            diagnosticsLog?.appendEvent("presentation=displaylink")
+        } else {
+            let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            self.timer = timer
+            diagnosticsLog?.appendEvent("presentation=timer")
         }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
-#endif
     }
 
     func pause() {
-        var wasRunning = timer != nil
+        let wasRunning = isPresentationRunning
         timer?.invalidate()
         timer = nil
-#if os(iOS)
-        wasRunning = displayLink != nil
         displayLink?.invalidate()
         displayLink = nil
         displayLinkProxy = nil
-#endif
         emulationLoop?.setRunning(false)
         if wasRunning { diagnosticsLog?.appendEvent("pause") }
         #if os(macOS)
