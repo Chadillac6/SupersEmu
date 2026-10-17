@@ -61,6 +61,9 @@ final class GameSession {
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var displayLink: CADisplayLink?
     @ObservationIgnored private var displayLinkProxy: DisplayLinkProxy?
+    #if os(macOS)
+    @ObservationIgnored private weak var presentationScreen: NSScreen?
+    #endif
     @ObservationIgnored private var lastAutosave = ContinuousClock.now
     @ObservationIgnored private var lastSuccessfulAutosave: ContinuousClock.Instant?
     @ObservationIgnored private let sync: SaveSync
@@ -418,6 +421,55 @@ final class GameSession {
         conflictChoice = nil
     }
 
+    private func startPresentation() {
+        let proxy = DisplayLinkProxy { [weak self] in self?.tick() }
+        let newDisplayLink: CADisplayLink?
+        #if os(macOS)
+        let screen = presentationScreen ?? NSScreen.main
+        newDisplayLink = screen?.displayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick))
+        #else
+        newDisplayLink = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick))
+        #endif
+        var presentation = "timer"
+        if let newDisplayLink {
+            newDisplayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+            newDisplayLink.add(to: .main, forMode: .common)
+            displayLinkProxy = proxy
+            displayLink = newDisplayLink
+            presentation = "displaylink"
+        } else {
+            let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            self.timer = timer
+        }
+        #if os(macOS)
+        let screenDescription = screen.map { " screen=\($0.localizedName)" } ?? ""
+        diagnosticsLog?.appendEvent("presentation=\(presentation)\(screenDescription)")
+        #else
+        diagnosticsLog?.appendEvent("presentation=\(presentation)")
+        #endif
+    }
+
+    private func stopPresentation() {
+        timer?.invalidate()
+        timer = nil
+        displayLink?.invalidate()
+        displayLink = nil
+        displayLinkProxy = nil
+    }
+
+    #if os(macOS)
+    func setPresentationScreen(_ screen: NSScreen?) {
+        guard screen != presentationScreen else { return }
+        presentationScreen = screen
+        guard isPresentationRunning else { return }
+        stopPresentation()
+        startPresentation()
+    }
+    #endif
+
     func resume() {
         // Never run frames while saves are still syncing or a conflict is waiting for an answer.
         guard let host, hasStarted, !isPresentationRunning, !isChoosingDisc, !isChoosingCheat, !isShowingSaveSlots, !isMenuOpen, disconnectedController == nil else { return }
@@ -425,36 +477,12 @@ final class GameSession {
         emulationLoop?.setRunning(true)
         host.startAudioEngineIfNeeded()
         diagnosticsLog?.appendEvent("resume")
-        let proxy = DisplayLinkProxy { [weak self] in self?.tick() }
-        let newDisplayLink: CADisplayLink?
-        #if os(macOS)
-        newDisplayLink = NSScreen.main?.displayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick))
-        #else
-        newDisplayLink = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick))
-        #endif
-        if let newDisplayLink {
-            newDisplayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
-            newDisplayLink.add(to: .main, forMode: .common)
-            displayLinkProxy = proxy
-            displayLink = newDisplayLink
-            diagnosticsLog?.appendEvent("presentation=displaylink")
-        } else {
-            let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.tick() }
-            }
-            RunLoop.main.add(timer, forMode: .common)
-            self.timer = timer
-            diagnosticsLog?.appendEvent("presentation=timer")
-        }
+        startPresentation()
     }
 
     func pause() {
         let wasRunning = isPresentationRunning
-        timer?.invalidate()
-        timer = nil
-        displayLink?.invalidate()
-        displayLink = nil
-        displayLinkProxy = nil
+        stopPresentation()
         emulationLoop?.setRunning(false)
         if wasRunning { diagnosticsLog?.appendEvent("pause") }
         #if os(macOS)
