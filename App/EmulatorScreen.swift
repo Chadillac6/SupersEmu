@@ -31,10 +31,12 @@ import AppKit
 
 final class EmulatorScreenView: NSView {
     var onWindowChange: ((NSWindow?) -> Void)?
+    private var screenObserver: NSObjectProtocol?
+    private var observedWindowID: ObjectIdentifier?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        onWindowChange?(window)
+        updateWindowObservation()
     }
 
     override init(frame: NSRect) {
@@ -48,6 +50,38 @@ final class EmulatorScreenView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private func updateWindowObservation() {
+        let currentWindow = window
+        let currentWindowID = currentWindow.map { ObjectIdentifier($0) }
+        guard currentWindowID != observedWindowID else { return }
+        removeScreenObserver()
+        observedWindowID = currentWindowID
+        onWindowChange?(currentWindow)
+        guard let currentWindow else { return }
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeScreenNotification,
+            object: currentWindow,
+            queue: .main
+        ) { [weak self, weak currentWindow] _ in
+            MainActor.assumeIsolated {
+                self?.onWindowChange?(currentWindow)
+            }
+        }
+    }
+
+    private func removeScreenObserver() {
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+        }
+        screenObserver = nil
+    }
+
+    deinit {
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+        }
+    }
 }
 
 struct EmulatorScreen: NSViewRepresentable {
@@ -57,7 +91,10 @@ struct EmulatorScreen: NSViewRepresentable {
         let view = EmulatorScreenView()
         session.displayLayer = view.layer
         let input = session.input
-        view.onWindowChange = { input.window = $0 }
+        view.onWindowChange = { window in
+            input.window = window
+            session.setPresentationScreen(window?.screen)
+        }
         return view
     }
 

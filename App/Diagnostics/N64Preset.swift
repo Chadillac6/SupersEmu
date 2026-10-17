@@ -49,7 +49,7 @@ enum N64Preset: String, CaseIterable, Identifiable {
     }
 
     static func defaultPreset(from defaults: UserDefaults = .standard) -> N64Preset {
-        defaults.string(forKey: defaultKey).flatMap(N64Preset.init(rawValue:)) ?? .standard
+        defaults.string(forKey: defaultKey).flatMap(N64Preset.init(rawValue:)) ?? .balanced
     }
 
     static func preset(forGameID gameID: String, from defaults: UserDefaults = .standard) -> N64Preset? {
