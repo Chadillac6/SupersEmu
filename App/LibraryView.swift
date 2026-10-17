@@ -8,6 +8,9 @@ struct LibraryView: View {
     @Environment(ServerSession.self) private var server
     @Environment(DownloadCenter.self) private var downloads
     @Environment(BIOSCenter.self) private var bios
+    #if os(macOS)
+    @ObservedObject private var updater = AppUpdater.shared
+    #endif
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -41,53 +44,38 @@ struct LibraryView: View {
         let home = system == nil ? all : LibraryShelves.home(items, system: system, online: online)
         let theme = SystemTheme.theme(for: system)
         NavigationStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 26) {
-                        ConnectionBanner()
-                        if !query.isEmpty {
-                            searchResults
-                        } else if all.allGames.isEmpty {
-                            emptyState
-                        } else {
-                            SystemSelectorBar(theme: theme, systems: all.systems, selection: Binding(
-                                get: { system }, set: { selectedSystem = $0?.rawValue ?? "" }),
-                                             statusLine: homeStatusLine(all.allGames.count))
-                            if let featured = home.featured {
-                                HomeHero(item: featured, theme: theme, primaryTitle: heroTitle(featured),
-                                         primary: { heroAction(featured) }, details: { open(featured) })
-                            }
-                            if !home.currentlyPlaying.isEmpty {
-                                CurrentlyPlayingRow(items: home.currentlyPlaying, select: open)
-                            }
-                            VStack(alignment: .leading, spacing: 26) {
-                                if !home.downloaded.isEmpty {
-                                    GameGridSection(title: "Downloaded", identifier: "shelf-downloaded",
-                                                    games: home.downloaded, letterAnchors: home.letterAnchors, select: open)
-                                }
-                                if !home.notDownloaded.isEmpty {
-                                    GameGridSection(title: "Not Downloaded", identifier: "shelf-not-downloaded",
-                                                    games: home.notDownloaded, letterAnchors: home.letterAnchors, select: open)
-                                }
-                            }
-                            .accessibilityIdentifier("shelf-all")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    ConnectionBanner()
+                    if !query.isEmpty {
+                        searchResults
+                    } else if all.allGames.isEmpty {
+                        emptyState
+                    } else {
+                        SystemSelectorBar(theme: theme, systems: all.systems, selection: Binding(
+                            get: { system }, set: { selectedSystem = $0?.rawValue ?? "" }),
+                                         statusLine: homeStatusLine(all.allGames.count))
+                        if let featured = home.featured {
+                            HomeHero(item: featured, theme: theme, primaryTitle: heroTitle(featured),
+                                     primary: { heroAction(featured) }, details: { open(featured) })
                         }
-                    }
-                    .padding(.vertical, 16)
-                }
-                .overlay(alignment: .trailing) {
-                    #if os(macOS)
-                    if query.isEmpty, !home.allGames.isEmpty {
-                        JumpRail(available: Set(home.letterAnchors.keys)) { letter, animated in
-                            if animated {
-                                withAnimation(.snappy) { proxy.scrollTo("letter-\(letter)", anchor: .top) }
-                            } else {
-                                proxy.scrollTo("letter-\(letter)", anchor: .top)
+                        if !home.currentlyPlaying.isEmpty {
+                            CurrentlyPlayingRow(items: home.currentlyPlaying, select: open)
+                        }
+                        VStack(alignment: .leading, spacing: 26) {
+                            if !home.downloaded.isEmpty {
+                                GameGridSection(title: "Downloaded", identifier: "shelf-downloaded",
+                                                games: home.downloaded, select: open)
+                            }
+                            if !home.notDownloaded.isEmpty {
+                                GameGridSection(title: "Not Downloaded", identifier: "shelf-not-downloaded",
+                                                games: home.notDownloaded, select: open)
                             }
                         }
+                        .accessibilityIdentifier("shelf-all")
                     }
-                    #endif
                 }
+                .padding(.vertical, 16)
             }
             .background {
                 Brand.Colors.paper.ignoresSafeArea()
@@ -105,6 +93,19 @@ struct LibraryView: View {
                 ToolbarItem(placement: .primaryAction) {
                     profileMenu
                 }
+                #if os(macOS)
+                if case .readyToInstall(let version) = updater.status {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Update \(version) ready, Restart", systemImage: "arrow.clockwise") {
+                            updater.installNow()
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .buttonStyle(.borderedProminent)
+                        .tint(Brand.Colors.red)
+                        .accessibilityIdentifier("update-ready")
+                    }
+                }
+                #endif
             }
             .sheet(isPresented: $isShowingControls) {
                 NavigationStack {

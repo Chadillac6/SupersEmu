@@ -223,43 +223,9 @@ print(".".join(str(part) for part in result))
 ' "$floor"
 }
 
-release_marketing_version() {
-  if [ "${SUPERSEMU_MARKETING_VERSION+x}" = x ]; then
-    if [ -z "$SUPERSEMU_MARKETING_VERSION" ]; then
-      echo "error: SUPERSEMU_MARKETING_VERSION is set but empty" >&2
-      return 2
-    fi
-    echo "Using SUPERSEMU_MARKETING_VERSION override: $SUPERSEMU_MARKETING_VERSION" >&2
-    printf '%s\n' "$SUPERSEMU_MARKETING_VERSION"
-    return 0
-  fi
-
-  if [ -z "${ASC_KEY_FILE:-}" ] || [ -z "${ASC_KEY_ID:-}" ] ||
-     [ -z "${ASC_ISSUER_ID:-}" ] || [ -z "${RELEASE_TMP:-}" ]; then
-    echo "error: release_prepare_key must run before release_marketing_version" >&2
-    return 2
-  fi
-
-  local script_dir project_file floor auth_header versions_file marketing_version
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  project_file="$script_dir/../project.yml"
-  floor="$(awk '
-    /^settings:[[:space:]]*$/ { in_settings=1; next }
-    in_settings && /^[^[:space:]]/ { in_settings=0; in_base=0 }
-    in_settings && /^  base:[[:space:]]*$/ { in_base=1; next }
-    in_base && /^    MARKETING_VERSION:[[:space:]]*/ {
-      value=$2
-      gsub(/"/, "", value)
-      print value
-      exit
-    }
-  ' "$project_file")"
-  if [ -z "$floor" ]; then
-    echo "error: could not read settings.base.MARKETING_VERSION from $project_file" >&2
-    return 2
-  fi
-
-  auth_header="$RELEASE_TMP/asc-marketing-auth-header"
+release_asc_marketing_versions() {
+  local auth_header="$RELEASE_TMP/asc-marketing-auth-header"
+  local versions_file="$RELEASE_TMP/ios-prerelease-versions.txt"
   if ! python3 - "$ASC_KEY_FILE" "$auth_header" <<'PY'
 import base64
 import json
@@ -372,12 +338,98 @@ except Exception as error:
     sys.exit(1)
 PY
   then
+    return 1
+  fi
+  cat "$versions_file"
+}
+
+release_mac_marketing_version_from_appcast() {
+  python3 -c '
+import sys
+import xml.etree.ElementTree as ET
+
+namespace = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
+root = ET.fromstring(sys.stdin.read())
+for item in root.iter("item"):
+    version = item.findtext(namespace + "shortVersionString") or item.get(namespace + "shortVersionString")
+    if version:
+        print(version.strip())
+        break
+'
+}
+
+release_mac_marketing_version() {
+  local appcast version
+  if ! appcast="$(curl -fsSL https://github.com/Chadillac6/SupersEmu/releases/latest/download/appcast.xml)"; then
+    echo "error: latest Mac marketing version lookup failed" >&2
+    return 1
+  fi
+  if ! version="$(printf '%s' "$appcast" | release_mac_marketing_version_from_appcast)"; then
+    echo "error: latest Mac appcast does not contain a valid release item" >&2
+    return 1
+  fi
+  if [ -z "$version" ]; then
+    echo "error: latest Mac appcast does not contain sparkle:shortVersionString" >&2
+    return 1
+  fi
+  printf '%s\n' "$version"
+}
+
+release_calculate_marketing_version() {
+  local floor="$1" ios_versions mac_version
+  if ! ios_versions="$(release_asc_marketing_versions)"; then
     echo "error: could not retrieve iOS pre-release versions from App Store Connect" >&2
     return 1
   fi
+  if ! mac_version="$(release_mac_marketing_version)"; then
+    echo "error: could not retrieve the latest Mac marketing version" >&2
+    return 1
+  fi
+  if [ -z "$mac_version" ]; then
+    echo "error: latest Mac appcast returned no release version" >&2
+    return 1
+  fi
+  printf '%s\n%s\n' "$ios_versions" "$mac_version" | release_next_marketing_version "$floor"
+}
 
-  if ! marketing_version="$(release_next_marketing_version "$floor" < "$versions_file")"; then
-    echo "error: could not calculate the next iOS marketing version" >&2
+release_marketing_version() {
+  if [ "${SUPERSEMU_MARKETING_VERSION+x}" = x ]; then
+    if [ -z "$SUPERSEMU_MARKETING_VERSION" ]; then
+      echo "error: SUPERSEMU_MARKETING_VERSION is set but empty" >&2
+      return 2
+    fi
+    echo "Using SUPERSEMU_MARKETING_VERSION override: $SUPERSEMU_MARKETING_VERSION" >&2
+    printf '%s\n' "$SUPERSEMU_MARKETING_VERSION"
+    return 0
+  fi
+
+  if [ -z "${ASC_KEY_FILE:-}" ] || [ -z "${ASC_KEY_ID:-}" ] ||
+     [ -z "${ASC_ISSUER_ID:-}" ] || [ -z "${RELEASE_TMP:-}" ]; then
+    echo "error: release_prepare_key must run before release_marketing_version" >&2
+    return 2
+  fi
+
+  local script_dir project_file floor marketing_version
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  project_file="$script_dir/../project.yml"
+  floor="$(awk '
+    /^settings:[[:space:]]*$/ { in_settings=1; next }
+    in_settings && /^[^[:space:]]/ { in_settings=0; in_base=0 }
+    in_settings && /^  base:[[:space:]]*$/ { in_base=1; next }
+    in_base && /^    MARKETING_VERSION:[[:space:]]*/ {
+      value=$2
+      gsub(/"/, "", value)
+      print value
+      exit
+    }
+  ' "$project_file")"
+  if [ -z "$floor" ]; then
+    echo "error: could not read settings.base.MARKETING_VERSION from $project_file" >&2
+    return 2
+  fi
+
+  if ! marketing_version="$(release_calculate_marketing_version "$floor")"; then
+    echo "error: could not calculate the next shared marketing version" >&2
     return 1
   fi
   echo "Using project.yml marketing version floor $floor; selected $marketing_version" >&2

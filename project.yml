@@ -873,6 +873,7 @@ targets:
     sources:
       - Tests/HostTests
       - App/ServerMode/ServerMenuStatus.swift
+      - App/ServerMode/UpdateStatus.swift
       - App/Diagnostics/PerformanceStats.swift
       - App/FramePacer.swift
       - App/AudioRateControl.swift

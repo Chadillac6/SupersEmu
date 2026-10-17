@@ -10,10 +10,12 @@ ref="${3:?Pass the tested commit or branch}"
 if gh release view "$tag" --repo Chadillac6/SupersEmu >/dev/null 2>&1; then
   echo 'Release already exists. Build a new version rather than replacing it.' >&2; exit 2
 fi
-scripts/prepare-mac-appcast.sh "$out" "$tag"
+scripts/prepare-mac-appcast.sh "$out" "$tag" "$ref"
 shopt -s nullglob
 zips=("$out"/updates/SupersEmu-*.zip)
+notes_files=("$out"/updates/SupersEmu-*.html)
+[ "${#notes_files[@]}" = 1 ] || { echo 'Expected exactly one generated release-notes HTML file.' >&2; exit 2; }
 gh release create "$tag" "${zips[@]}" "$out/updates/appcast.xml" "$out"/SupersEmu-*.dmg \
-  --repo Chadillac6/SupersEmu --target "$ref" --title "SupersEmu $tag" --generate-notes --draft
+  --repo Chadillac6/SupersEmu --target "$ref" --title "SupersEmu $tag" --notes-file "${notes_files[0]}" --draft
 # Latest is explicit because Sparkle follows /releases/latest/download/appcast.xml.
 gh release edit "$tag" --repo Chadillac6/SupersEmu --draft=false --latest

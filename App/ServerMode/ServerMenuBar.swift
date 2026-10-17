@@ -11,7 +11,7 @@ struct ServerMenuBar: Scene {
 
     var body: some Scene {
         MenuBarExtra(isInserted: insertionBinding) {
-            ServerMenuBarContent(monitor: monitor, showIcon: $showIcon)
+            ServerMenuBarContent(monitor: monitor, showIcon: $showIcon, updater: AppUpdater.shared)
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: monitor.status.symbolName)
@@ -164,10 +164,13 @@ private struct ServerMenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
     let monitor: ServerStatusMonitor
     @Binding var showIcon: Bool
+    @ObservedObject var updater: AppUpdater
 
     @ViewBuilder
     var body: some View {
         let status = monitor.status
+        Text(updater.versionLabel).disabled(true)
+        Text(UpdateStatusPresentation.menuText(for: updater.status)).disabled(true)
         Text(status.title).disabled(true)
         Text(status.detail).disabled(true)
         Text("Remote: \(RemoteAccessModel.shared.isOn ? "On · \(RemoteAccessModel.shared.host)" : RemoteAccessModel.shared.summary)").disabled(true)
@@ -203,6 +206,7 @@ private struct ServerMenuBarContent: View {
         } else if status.state == .needsApproval {
             Button("Open Login Items Settings…") { monitor.model.openLoginItems() }
         }
+        Button("Check for Updates…") { updater.checkForUpdates() }
         Toggle("Open SupersEmu at Login", isOn: loginItemBinding)
         Button("Hide Menu Bar Icon") { showIcon = false }
     }

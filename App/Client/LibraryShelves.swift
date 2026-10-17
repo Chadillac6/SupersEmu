@@ -41,7 +41,6 @@ struct HomeSections: Equatable {
     var allGames: [LibraryItem]
     var downloaded: [LibraryItem]
     var notDownloaded: [LibraryItem]
-    var letterAnchors: [String: String]
 }
 
 enum LibraryShelves {
@@ -71,8 +70,6 @@ enum LibraryShelves {
         return serverItems + localItems
     }
 
-    static let alphabet = ["#"] + (UnicodeScalar("A").value...UnicodeScalar("Z").value).map { String(UnicodeScalar($0)!) }
-
     /// Offline, only games that can launch without the server are shown.
     static func home(_ items: [LibraryItem], system: SystemID?, online: Bool) -> HomeSections {
         let visible = online ? items : items.filter { $0.playable != nil }
@@ -89,20 +86,8 @@ enum LibraryShelves {
         let newest = sorted.filter { $0.addedAt != nil }.max { $0.addedAt! < $1.addedAt! }
         let downloaded = sorted.filter { !$0.isCloudOnly }
         let notDownloaded = sorted.filter(\.isCloudOnly)
-        var letterAnchors: [String: String] = [:]
-        for item in downloaded + notDownloaded {
-            let letter = letter(for: item.title)
-            if letterAnchors[letter] == nil { letterAnchors[letter] = item.id }
-        }
         return HomeSections(systems: systems, featured: playing.first ?? newest ?? sorted.first, currentlyPlaying: playing,
-                            allGames: sorted, downloaded: downloaded, notDownloaded: notDownloaded,
-                            letterAnchors: letterAnchors)
-    }
-
-    /// "A"-"Z" by the first letter (accents folded), "#" for everything else.
-    static func letter(for title: String) -> String {
-        let first = title.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).uppercased().first.map(String.init) ?? "#"
-        return alphabet.contains(first) ? first : "#"
+                            allGames: sorted, downloaded: downloaded, notDownloaded: notDownloaded)
     }
 
     static func search(_ items: [LibraryItem], query: String, online: Bool) -> [LibraryItem] {

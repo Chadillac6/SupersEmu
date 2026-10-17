@@ -18,6 +18,7 @@ if [ -z "$identity" ]; then
   exit 2
 fi
 release_prepare_key
+marketing_version="$(release_marketing_version)"
 notary_auth=(--key "$ASC_KEY_FILE" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
 build_number="$(release_build_number)"
 out="build/release-mac/$build_number"
@@ -43,11 +44,13 @@ git submodule update --init --depth 1
 git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
 xcodegen generate
 
+echo "Version $marketing_version (build $build_number)"
 echo "Archiving SupersEmu-macOS build $build_number (Developer ID, team $SUPERSEMU_TEAM_ID)"
 xcodebuild archive -project SupersEmu.xcodeproj -scheme SupersEmu-macOS -configuration Release \
   -destination 'generic/platform=macOS' -archivePath "$archive" -derivedDataPath build/release-mac/DerivedData \
   SUPERSEMU_TEAM_ID="$SUPERSEMU_TEAM_ID" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" \
-  ENABLE_HARDENED_RUNTIME=YES OTHER_CODE_SIGN_FLAGS=--timestamp CURRENT_PROJECT_VERSION="$build_number"
+  ENABLE_HARDENED_RUNTIME=YES OTHER_CODE_SIGN_FLAGS=--timestamp CURRENT_PROJECT_VERSION="$build_number" \
+  MARKETING_VERSION="$marketing_version"
 
 cat > "$RELEASE_TMP/ExportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -94,4 +97,4 @@ notarize "$out/$name.dmg"
 xcrun stapler staple "$out/$name.dmg"
 spctl --assess --type open --context context:primary-signature -v "$out/$name.dmg"
 
-echo "Done: $out/$name.dmg and $out/$name.zip (both notarized and stapled)"
+echo "Done: $out/$name.dmg and $out/$name.zip (both notarized and stapled); Version $marketing_version (build $build_number)"

@@ -44,7 +44,7 @@ struct SystemSelectorBar: View {
             .frame(height: 4)
             .clipShape(Capsule())
             .padding(.leading, 20)
-            .padding(.trailing, JumpRail.inset)
+            .padding(.trailing, 20)
         }
     }
 
@@ -152,7 +152,7 @@ struct HomeHero: View {
         .contentShape(RoundedRectangle(cornerRadius: Brand.Radii.card))
         .onTapGesture { details() }
         .padding(.leading, 20)
-        .padding(.trailing, JumpRail.inset)
+        .padding(.trailing, 20)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home-hero")
         .accessibilityAddTraits(.isButton)
@@ -244,7 +244,7 @@ struct CurrentlyPlayingRow: View {
     }
 }
 
-/// A sorted cover grid with letter anchors for the jump rail.
+/// A sorted cover grid.
 struct GameGridSection: View {
     @Environment(DownloadCenter.self) private var downloads
     #if os(iOS)
@@ -253,7 +253,6 @@ struct GameGridSection: View {
     let title: String
     let identifier: String
     let games: [LibraryItem]
-    let letterAnchors: [String: String]
     let select: (LibraryItem) -> Void
 
     var body: some View {
@@ -276,26 +275,15 @@ struct GameGridSection: View {
             LazyVGrid(columns: GameGridLayout.columns(compact: compact),
                       spacing: GameGridLayout.rowSpacing(compact: compact)) {
                 ForEach(games) { item in
-                    let letter = LibraryShelves.letter(for: item.title)
                     Button { select(item) } label: { GameCard(item: item, state: downloads.states[item.id]) }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("game-card")
                         .accessibilityLabel(item.title)
-                        // A letter anchor must not replace the game's identity: changing filters
-                        // otherwise reuses a lazy-grid tile for a different game.
                         .id(item.id)
-                        .background(alignment: .top) {
-                            if letterAnchors[letter] == item.id {
-                                Color.clear.frame(width: 1, height: 1)
-                                    .id("letter-\(letter)")
-                                    .allowsHitTesting(false)
-                                    .accessibilityHidden(true)
-                            }
-                        }
                 }
             }
             .padding(.leading, 20)
-            .padding(.trailing, JumpRail.inset)
+            .padding(.trailing, 20)
         }
     }
 
@@ -305,88 +293,6 @@ struct GameGridSection: View {
         #else
         false
         #endif
-    }
-}
-
-/// A-Z down the right edge on Mac; drag along it to scrub, with a bubble showing the letter.
-struct JumpRail: View {
-    /// Trailing space Home sections leave for the rail.
-    static var inset: CGFloat {
-        #if os(macOS)
-        40
-        #else
-        20
-        #endif
-    }
-    let available: Set<String>
-    /// Scrubbing jumps without animation: queued animated scrolls can stop short of the final letter.
-    let jump: (_ letter: String, _ animated: Bool) -> Void
-    @State private var scrubbing: String?
-
-    var body: some View {
-        GeometryReader { geometry in
-            let row = max(10, (geometry.size.height - 12) / CGFloat(LibraryShelves.alphabet.count))
-            VStack(spacing: 0) {
-                ForEach(LibraryShelves.alphabet, id: \.self) { letter in
-                    letterView(letter, row: row)
-                }
-            }
-            .padding(.vertical, 6)
-            .frame(width: 22)
-            .background(Brand.Colors.surface, in: Capsule())
-            .overlay { Capsule().stroke(Brand.Colors.line, lineWidth: 1) }
-            #if os(iOS)
-            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                .onChanged { value in
-                    let index = Int((value.location.y - 6) / row)
-                    let letter = LibraryShelves.alphabet[min(max(index, 0), LibraryShelves.alphabet.count - 1)]
-                    guard letter != scrubbing else { return }
-                    scrubbing = letter
-                    if let target = target(for: letter) { jump(target, false) }
-                }
-                .onEnded { _ in
-                    if let scrubbing, let target = target(for: scrubbing) { jump(target, false) }
-                    scrubbing = nil
-                })
-            .overlay(alignment: .topLeading) {
-                if let scrubbing, let index = LibraryShelves.alphabet.firstIndex(of: scrubbing) {
-                    Text(scrubbing).font(.title.bold()).foregroundStyle(Brand.Colors.ink).frame(width: 56, height: 56)
-                        .background(Brand.Colors.surface, in: Circle())
-                        .overlay { Circle().stroke(Brand.Colors.line, lineWidth: 1) }
-                        .offset(x: -70, y: 6 + CGFloat(index) * row - 28 + row / 2)
-                        .allowsHitTesting(false)
-                }
-            }
-            .sensoryFeedback(.selection, trigger: scrubbing)
-            #endif
-            .frame(maxHeight: .infinity, alignment: .center)
-        }
-        .frame(width: 22)
-        .frame(maxHeight: 480)
-        .padding(.trailing, 8)
-        .accessibilityIdentifier("jump-rail")
-    }
-
-    @ViewBuilder private func letterView(_ letter: String, row: CGFloat) -> some View {
-        let label = Text(letter)
-            .font(.system(size: min(11, row * 0.72), weight: .bold, design: .rounded))
-            .foregroundStyle(available.contains(letter) ? Brand.Colors.ink : Brand.Colors.ink3.opacity(0.4))
-            .frame(width: 22, height: row)
-        #if os(macOS)
-        Button { if let target = target(for: letter) { jump(target, true) } } label: { label.contentShape(Rectangle()) }
-            .buttonStyle(.plain)
-            .disabled(target(for: letter) == nil)
-            .accessibilityIdentifier("jump-\(letter)")
-        #else
-        label.accessibilityIdentifier("jump-\(letter)")
-        #endif
-    }
-
-    /// The letter itself, else the next one that has games, else the last one that does.
-    private func target(for letter: String) -> String? {
-        let letters = LibraryShelves.alphabet
-        guard let index = letters.firstIndex(of: letter) else { return nil }
-        return letters[index...].first(where: available.contains) ?? letters[..<index].last(where: available.contains)
     }
 }
 

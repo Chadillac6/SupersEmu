@@ -23,7 +23,6 @@ struct SupersEmuApp: App {
                 .environment(bios)
                 #if os(macOS)
                 .serverModeLaunchHook()
-                .task { AppUpdater.shared.finishServerUpdateIfNeeded() }
                 #endif
         }
         #if os(macOS)
@@ -51,6 +50,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
+    @State private var pendingUpdateNotice: PendingUpdateNotice?
     #endif
     @AppStorage("onboardingSkipped") private var onboardingSkipped = false
     @State private var playing: LaunchRequest?
@@ -79,6 +79,22 @@ struct RootView: View {
             }
         }
         .task {
+            #if os(macOS)
+            AppUpdater.shared.finishServerUpdateIfNeeded()
+            #if DEBUG
+            if UpdateStatus.previewName(arguments: ProcessInfo.processInfo.arguments) == "whatsNew" {
+                pendingUpdateNotice = PendingUpdateNotice(
+                    version: "0.0.6",
+                    build: "preview",
+                    notes: "• Improved frame pacing\n• Clearer update status\n• Bug fixes and performance improvements"
+                )
+            } else {
+                pendingUpdateNotice = AppUpdater.shared.consumePendingUpdateNotice()
+            }
+            #else
+            pendingUpdateNotice = AppUpdater.shared.consumePendingUpdateNotice()
+            #endif
+            #endif
             SaveSync.shared.provider.use({ [server] in server.client() }, reachable: { [server] in server.isReachable })
             await server.refresh()
         }
@@ -101,6 +117,9 @@ struct RootView: View {
             ServerModeNavigation.shared.requested = .server
             openWindow(id: ServerModeScene.windowID)
         }
+        .sheet(item: $pendingUpdateNotice) { notice in
+            UpdateWhatsNewSheet(notice: notice)
+        }
         #endif
     }
 
@@ -118,3 +137,26 @@ struct RootView: View {
         let startFresh: Bool
     }
 }
+
+#if os(macOS)
+private struct UpdateWhatsNewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let notice: PendingUpdateNotice
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Updated to \(notice.version)")
+                .font(.title2.bold())
+            ScrollView {
+                Text(notice.notes)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Button("Done") { dismiss() }
+                .keyboardShortcut(.defaultAction)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(24)
+        .frame(minWidth: 420, minHeight: 280)
+    }
+}
+#endif
