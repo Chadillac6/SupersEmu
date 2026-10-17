@@ -63,6 +63,52 @@ private struct PartialArtworkProvider: MetadataProvider {
     }
 }
 
+private actor SuspendedLookupGate {
+    private var calls = 0
+    private var firstLookup: CheckedContinuation<Void, Never>?
+    private var startedWaiter: CheckedContinuation<Void, Never>?
+
+    func nextLookup() async -> Int {
+        calls += 1
+        let call = calls
+        if call == 1 {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                firstLookup = continuation
+                startedWaiter?.resume()
+                startedWaiter = nil
+            }
+        }
+        return call
+    }
+
+    func waitForFirstLookup() async {
+        if firstLookup != nil { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            startedWaiter = continuation
+        }
+    }
+
+    func resumeFirstLookup() {
+        firstLookup?.resume()
+        firstLookup = nil
+    }
+
+    func callCount() -> Int { calls }
+}
+
+private struct RematchRaceProvider: MetadataProvider {
+    let gate: SuspendedLookupGate
+    var id: String { "rematch-race" }
+    var version: String { "1" }
+
+    func lookup(_ game: MetadataLookup) async throws -> MetadataLookupResult {
+        let call = await gate.nextLookup()
+        return .matched(MetadataRecord(provider: id, providerRef: "lookup-\(call)", title: "Lookup \(call)"))
+    }
+
+    func artwork(for record: MetadataRecord, system: SystemID) -> [ArtworkCandidate] { [] }
+}
+
 final class MetadataTests: XCTestCase {
     var store: ServerStore!
     var adminToken: String!
@@ -91,7 +137,7 @@ final class MetadataTests: XCTestCase {
     }
 
     func app() -> some ApplicationProtocol { buildApplication(store: store, configuration: .init()) }
-    func auth() -> HTTPFields { [.authorization: "Bearer \(adminToken!)"] }
+    func auth(_ token: String? = nil) -> HTTPFields { [.authorization: "Bearer \(token ?? adminToken!)"] }
     func decode<T: Decodable>(_ type: T.Type, _ response: TestResponse) throws -> T {
         try SupersEmuJSON.decoder().decode(T.self, from: Data(buffer: response.body))
     }
@@ -376,6 +422,294 @@ let pass5 = await service(catalog).enrichPending()
         let gbStatus = try await store.db.read { try String.fetchOne($0, sql: "SELECT match_status FROM metadata_jobs WHERE game_id = ?", arguments: [gbID]) }
         XCTAssertNil(gbStatus)
         XCTAssertFalse(FileManager.default.fileExists(atPath: self.store.paths.metadata.path + "/libretro-database/test-commit/no-intro/Nintendo - Game Boy.dat"))
+    }
+
+    func testRelocatedLibraryMatchesSNESAndStoresCover() async throws {
+        let rom = ROMFixtures.snes(seed: 89)
+        let name = "Super Metroid (USA)"
+        let catalog = catalog([.snes: ("Nintendo - Super Nintendo Entertainment System", "no-intro", [
+            "source": DatFixtures.entry(name, rom: rom, romName: "\(name).sfc"),
+        ])])
+        let external = sources.appendingPathComponent("external-library", isDirectory: true)
+        try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+        try store.paths.storage.switchTo(external, config: store.paths.storageConfig, dataRoot: store.paths.root)
+        let id = try await importROM(rom, "super-metroid.sfc")
+        let cover = DatFixtures.png + Data([5])
+        fetcher.set(catalog.thumbnailURL(catalog.systems[.snes]!, kind: "Named_Boxarts", name: name), cover)
+
+        XCTAssertNotEqual(store.paths.libraryRoot, store.paths.root)
+        let pass = await service(catalog).enrichPending()
+        XCTAssertEqual(pass, 1)
+        let summary = try XCTUnwrap(LibraryQueries.visibleGames(
+            for: try XCTUnwrap(store.authenticate(token: adminToken)), store: store
+        ).first)
+        XCTAssertEqual(summary.id, id)
+        XCTAssertEqual(summary.title, "Super Metroid")
+        XCTAssertEqual(summary.coverPath, "/v1/games/\(id)/artwork/cover")
+        let coverPath = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND kind = 'cover'", arguments: [id])
+        }
+        XCTAssertNotNil(coverPath)
+        let coverURL = store.paths.libraryFile(try XCTUnwrap(coverPath))
+        XCTAssertEqual(try Data(contentsOf: coverURL), cover)
+        try ArtworkStore(store: store).removeProviderArtwork(provider: "libretro", gameID: id, kind: .cover)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: coverURL.path))
+    }
+
+    func testRelocatedMultiDiscUsesFirstDiscTrack() async throws {
+        let firstTrack = DiscFixtures.psxTrack(seed: 91)
+        let secondTrack = DiscFixtures.psxTrack(seed: 92)
+        let name = "Final Fantasy VII (USA) (Disc 1)"
+        let catalog = catalog([.psx: ("Sony - PlayStation", "redump", [
+            "source": DatFixtures.entry(name, rom: firstTrack, romName: "\(name) (Track 1).bin", serial: "SCUS-94163"),
+        ])])
+        let external = sources.appendingPathComponent("external-disc-library", isDirectory: true)
+        try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+        try store.paths.storage.switchTo(external, config: store.paths.storageConfig, dataRoot: store.paths.root)
+        let input = sources.appendingPathComponent("multi-disc", isDirectory: true)
+        try FileManager.default.createDirectory(at: input, withIntermediateDirectories: true)
+        for (number, track) in [(1, firstTrack), (2, secondTrack)] {
+            let folder = "FF7/Disc \(number)"
+            let directory = input.appendingPathComponent(folder, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try track.write(to: directory.appendingPathComponent("Track 01.bin"))
+            try DiscFixtures.cue(["Track 01.bin"]).write(
+                to: directory.appendingPathComponent("Final Fantasy VII (USA) (Disc \(number)).cue")
+            )
+        }
+        let report = try await LibraryImporter(store: store).importPaths([input.path], auth: nil)
+        let id = try XCTUnwrap(report.imported.first, "\(report)").id
+        let pass = await service(catalog).enrichPending()
+        XCTAssertEqual(pass, 1)
+        let ref = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT provider_ref FROM game_metadata WHERE game_id = ? AND provider = 'libretro'", arguments: [id])
+        }
+        XCTAssertEqual(ref, "Final Fantasy VII (USA) (Disc 1)")
+        let status = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT match_status FROM metadata_jobs WHERE game_id = ? AND provider = 'libretro'", arguments: [id])
+        }
+        XCTAssertEqual(status, "matched")
+    }
+
+    func testEscapingAndSymlinkROMPathsAreNotMatched() async throws {
+        let first = ROMFixtures.snes(seed: 93)
+        let second = ROMFixtures.snes(seed: 94)
+        let catalog = catalog([.snes: ("Nintendo - Super Nintendo Entertainment System", "no-intro", [
+            "source": DatFixtures.entry("First Game (USA)", rom: first, romName: "First.sfc")
+                + DatFixtures.entry("Second Game (USA)", rom: second, romName: "Second.sfc"),
+        ])])
+        let firstID = try await importROM(first, "first.sfc")
+        let secondID = try await importROM(second, "second.sfc")
+        let outsideFirst = sources.appendingPathComponent("outside-first-\(UUID().uuidString).sfc")
+        let outsideSecond = sources.appendingPathComponent("outside-second-\(UUID().uuidString).sfc")
+        try first.write(to: outsideFirst)
+        try second.write(to: outsideSecond)
+        let symlink = store.paths.games.appendingPathComponent(secondID).appendingPathComponent("escape.sfc")
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: outsideSecond)
+        try await store.db.write { db in
+            try db.execute(sql: "UPDATE game_files SET stored_path = ? WHERE game_id = ?",
+                           arguments: ["../" + outsideFirst.lastPathComponent, firstID])
+            try db.execute(sql: "UPDATE game_files SET stored_path = ? WHERE game_id = ?",
+                           arguments: ["games/\(secondID)/escape.sfc", secondID])
+        }
+
+        let pass = await service(catalog).enrichPending()
+        XCTAssertEqual(pass, 0)
+        let jobs = try await store.db.read {
+            try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM metadata_jobs WHERE provider = 'libretro'") ?? 0
+        }
+        XCTAssertEqual(jobs, 0)
+    }
+
+    func testUnreadableROMIsRetriedAfterItReturns() async throws {
+        let rom = ROMFixtures.snes(seed: 95)
+        let catalog = catalog([.snes: ("Nintendo - Super Nintendo Entertainment System", "no-intro", [
+            "source": DatFixtures.entry("Restored Game (USA)", rom: rom, romName: "Restored.sfc"),
+        ])])
+        let id = try await importROM(rom, "restored.sfc")
+        let storedPath = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT stored_path FROM game_files WHERE game_id = ?", arguments: [id])
+        }
+        let storedURL = store.paths.libraryFile(try XCTUnwrap(storedPath))
+        try FileManager.default.removeItem(at: storedURL)
+
+        let missingPass = await service(catalog).enrichPending()
+        XCTAssertEqual(missingPass, 0)
+        let absentJob = try await store.db.read {
+            try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM metadata_jobs WHERE game_id = ? AND provider = 'libretro'", arguments: [id]) ?? 0
+        }
+        XCTAssertEqual(absentJob, 0)
+
+        try FileManager.default.createDirectory(at: storedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try rom.write(to: storedURL)
+        let restoredPass = await service(catalog).enrichPending()
+        XCTAssertEqual(restoredPass, 1)
+        let status = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT match_status FROM metadata_jobs WHERE game_id = ? AND provider = 'libretro'", arguments: [id])
+        }
+        XCTAssertEqual(status, "matched")
+    }
+
+    func testMetadataRematchRoutesResetJobsWithoutChangingManualCover() async throws {
+        let firstROM = ROMFixtures.snes(seed: 96)
+        let secondROM = ROMFixtures.snes(seed: 97)
+        let firstName = "First Game (USA)"
+        let secondName = "Second Game (USA)"
+        let catalog = catalog([.snes: ("Nintendo - Super Nintendo Entertainment System", "no-intro", [
+            "source": DatFixtures.entry(firstName, rom: firstROM, romName: "First.sfc")
+                + DatFixtures.entry(secondName, rom: secondROM, romName: "Second.sfc"),
+        ])])
+        let firstID = try await importROM(firstROM, "first-rematch.sfc")
+        let secondID = try await importROM(secondROM, "second-rematch.sfc")
+        let artwork = ArtworkStore(store: store)
+        let manualCover = DatFixtures.png + Data([31])
+        let manualCoverPath = try artwork.setCover(gameID: firstID, data: manualCover, fileExtension: "png")
+        try await store.db.write { db in
+            try MetadataRecord(provider: "wikipedia", title: "Preserved record").save(gameID: firstID, db: db)
+            for id in [firstID, secondID] {
+                for provider in ["libretro", "wikipedia"] {
+                    try db.execute(sql: """
+                        INSERT INTO metadata_jobs (game_id, provider, match_status, updated_at)
+                        VALUES (?, ?, 'matched', ?)
+                        """, arguments: [id, provider, Date()])
+                }
+            }
+        }
+        let player = try store.createUser(displayName: "Player", role: .player)
+        let playerToken = try store.createDeviceToken(userID: player.id, deviceName: "Player device").token
+        let route = "/v1/admin/metadata/rematch"
+
+        try await app().test(.router) { client in
+            let unknown = ByteBuffer(data: try SupersEmuJSON.encoder().encode(MetadataRematchRequest(gameIDs: ["missing"])))
+            try await client.execute(uri: route, method: .post, headers: self.auth(), body: unknown) {
+                XCTAssertEqual($0.status, .notFound)
+            }
+            let unchanged = try await self.store.db.read {
+                try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM metadata_jobs") ?? 0
+            }
+            XCTAssertEqual(unchanged, 4)
+
+            let selected = ByteBuffer(data: try SupersEmuJSON.encoder().encode(MetadataRematchRequest(gameIDs: [firstID])))
+            try await client.execute(uri: route, method: .post, headers: self.auth(playerToken), body: selected) {
+                XCTAssertEqual($0.status, .forbidden)
+            }
+            try await client.execute(uri: route, method: .post, headers: self.auth(), body: selected) {
+                XCTAssertEqual($0.status, .ok)
+                XCTAssertEqual(try self.decode(MetadataRematchResponse.self, $0).queued, 1)
+            }
+        }
+        let afterSelected = try await store.db.read { db in
+            (
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM metadata_jobs WHERE game_id = ?", arguments: [firstID]) ?? 0,
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM metadata_jobs WHERE game_id = ?", arguments: [secondID]) ?? 0
+            )
+        }
+        XCTAssertEqual(afterSelected.0, 0)
+        XCTAssertEqual(afterSelected.1, 2)
+        let storedManualCover = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT cover_artwork FROM games WHERE id = ?", arguments: [firstID])
+        }
+        XCTAssertEqual(storedManualCover, "artwork/\(firstID)/\(manualCoverPath.lastPathComponent)")
+        let preservedRecord = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT title FROM game_metadata WHERE game_id = ? AND provider = 'wikipedia'", arguments: [firstID])
+        }
+        XCTAssertEqual(preservedRecord, "Preserved record")
+
+        try await app().test(.router) { client in
+            let all = ByteBuffer(data: try SupersEmuJSON.encoder().encode(MetadataRematchRequest(gameIDs: nil)))
+            try await client.execute(uri: route, method: .post, headers: self.auth(), body: all) {
+                XCTAssertEqual($0.status, .ok)
+                XCTAssertEqual(try self.decode(MetadataRematchResponse.self, $0).queued, 2)
+            }
+        }
+        let afterAll = try await store.db.read {
+            try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM metadata_jobs") ?? 0
+        }
+        XCTAssertEqual(afterAll, 0)
+
+        let firstCoverURL = catalog.thumbnailURL(catalog.systems[.snes]!, kind: "Named_Boxarts", name: firstName)
+        let secondCoverURL = catalog.thumbnailURL(catalog.systems[.snes]!, kind: "Named_Boxarts", name: secondName)
+        fetcher.set(firstCoverURL, DatFixtures.png)
+        fetcher.set(secondCoverURL, DatFixtures.png)
+        let pass = await service(catalog).enrichPending()
+        XCTAssertEqual(pass, 2)
+        let jobsPerProvider = try await store.db.read { db in
+            try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM (
+                    SELECT game_id, provider FROM metadata_jobs GROUP BY game_id, provider HAVING COUNT(*) != 1
+                )
+                """) ?? 0
+        }
+        XCTAssertEqual(jobsPerProvider, 0)
+        let count = try await store.db.read {
+            try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM metadata_jobs") ?? 0
+        }
+        XCTAssertEqual(count, 2)
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/games/\(firstID)/artwork/cover", method: .get, headers: self.auth()) {
+                XCTAssertEqual($0.status, .ok)
+                XCTAssertEqual(Data(buffer: $0.body), manualCover)
+            }
+        }
+
+        let publicApp = Application(router: buildRouter(store: store, exposure: .publicInternet), configuration: .init())
+        try await publicApp.test(.router) { client in
+            let body = ByteBuffer(data: try SupersEmuJSON.encoder().encode(MetadataRematchRequest(gameIDs: [firstID])))
+            try await client.execute(uri: route, method: .post, body: body) {
+                XCTAssertEqual($0.status, .notFound)
+            }
+        }
+    }
+
+    func testRematchInvalidatesInflightLookupAndRunsAgain() async throws {
+        let id = try await importROM(ROMFixtures.snes(seed: 128), "rematch-race.sfc")
+        let gate = SuspendedLookupGate()
+        let provider = RematchRaceProvider(gate: gate)
+        let metadata = MetadataService(store: store, http: RateLimitedFetcher(fetcher, minimumInterval: .zero),
+                                       providers: [provider])
+        let pass = Task { await metadata.runUntilIdle() }
+        await gate.waitForFirstLookup()
+
+        let queued = try await metadata.rematch(gameIDs: [id])
+        XCTAssertEqual(queued, 1)
+        await metadata.runUntilIdle()
+        await gate.resumeFirstLookup()
+        await pass.value
+
+        let pendingAfterFirstPass = await metadata.pendingRematchCount
+        XCTAssertEqual(pendingAfterFirstPass, 0)
+        let calls = await gate.callCount()
+        XCTAssertEqual(calls, 2)
+        let final = try await store.db.read { db -> (String?, String?) in
+            let ref = try String.fetchOne(db, sql: "SELECT provider_ref FROM game_metadata WHERE game_id = ? AND provider = ?",
+                                          arguments: [id, provider.id])
+            let status = try String.fetchOne(db, sql: "SELECT match_status FROM metadata_jobs WHERE game_id = ? AND provider = ?",
+                                             arguments: [id, provider.id])
+            return (ref, status)
+        }
+        XCTAssertEqual(final.0, "lookup-2")
+        XCTAssertEqual(final.1, "matched")
+
+        let secondQueued = try await metadata.rematch(gameIDs: [id])
+        XCTAssertEqual(secondQueued, 1)
+        for _ in 0..<100 {
+            let ref = try await store.db.read {
+                try String.fetchOne($0, sql: "SELECT provider_ref FROM game_metadata WHERE game_id = ? AND provider = ?",
+                                    arguments: [id, provider.id])
+            }
+            let pendingCount = await metadata.pendingRematchCount
+            if ref == "lookup-3", pendingCount == 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let secondFinalRef = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT provider_ref FROM game_metadata WHERE game_id = ? AND provider = ?",
+                                arguments: [id, provider.id])
+        }
+        let secondPendingCount = await metadata.pendingRematchCount
+        let secondCallCount = await gate.callCount()
+        XCTAssertEqual(secondFinalRef, "lookup-3")
+        XCTAssertEqual(secondPendingCount, 0)
+        XCTAssertEqual(secondCallCount, 3)
     }
 
     func testRedumpDiscMatchesFirstDiscTrack() async throws {

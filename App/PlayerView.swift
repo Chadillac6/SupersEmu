@@ -88,17 +88,17 @@ struct PlayerView: View {
             } else if session.isSyncing {
                 ProgressView("Checking for newer saves…")
                     .padding(24)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .brandPanel()
                     .accessibilityIdentifier("save-sync-progress")
             }
             if let error = session.errorMessage {
                 VStack(spacing: 12) {
                     Text("Couldn't start this game").font(.title3.bold())
                     Text(error).foregroundStyle(.secondary)
-                    Button("Back to Library", action: onExit).buttonStyle(.borderedProminent)
+                    Button("Back to Library", action: onExit).buttonStyle(BrandPrimaryButtonStyle())
                 }
                 .padding(24)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .brandPanel()
             }
         }
         .foregroundStyle(.white)
@@ -113,6 +113,7 @@ struct PlayerView: View {
                     }
             }
         }
+        .preferredColorScheme(.dark)
         #if os(iOS)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
             playerWidth = width
@@ -329,7 +330,7 @@ struct DiscPicker: View {
         }
         .padding(22)
         .frame(width: 340)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .brandPanel()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Swap disc")
         .accessibilityIdentifier("swap-disc-picker")
@@ -348,7 +349,8 @@ struct DiscPicker: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.06),
+            .foregroundStyle(isSelected ? .white : Brand.Colors.ink)
+            .background(isSelected ? Brand.Colors.red : Brand.Colors.card,
                         in: RoundedRectangle(cornerRadius: 10))
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
@@ -364,18 +366,21 @@ struct DiscPicker: View {
 /// Select or Home closes.
 struct InGameMenu: View {
     @Bindable var session: GameSession
+    @State private var autosavedAgo = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(session.game.title).font(.title3.bold()).lineLimit(1)
+            Text(autosavedAgo).font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
             VStack(spacing: 6) {
                 ForEach(Array(session.menuItems.enumerated()), id: \.element) { index, item in
                     Button { session.choose(item) } label: {
-                        Text(item.rawValue)
+                        Text(item.displayTitle)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 9)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(index == session.menuSelection ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.06),
+                            .foregroundStyle(index == session.menuSelection ? .white : Brand.Colors.ink)
+                            .background(index == session.menuSelection ? Brand.Colors.red : Brand.Colors.card,
                                         in: RoundedRectangle(cornerRadius: 10))
                             .contentShape(RoundedRectangle(cornerRadius: 10))
                     }
@@ -396,7 +401,10 @@ struct InGameMenu: View {
         }
         .padding(22)
         .frame(width: 320)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .brandPanel()
+        .onAppear {
+            autosavedAgo = GameSession.autosaveLabel(session.timeSinceLastAutosave)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("in-game-menu")
         .confirmationDialog("Restart the game?", isPresented: $session.isConfirmingRestart, titleVisibility: .visible) {
@@ -426,13 +434,13 @@ struct DisconnectPrompt: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
             Button("Continue") { session.dismissDisconnect() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(BrandPrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)
                 .accessibilityIdentifier("disconnect-continue")
         }
         .padding(24)
         .frame(width: 320)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .brandPanel()
         .accessibilityIdentifier("disconnect-prompt")
     }
 

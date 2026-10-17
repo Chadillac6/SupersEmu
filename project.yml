@@ -833,6 +833,7 @@ targets:
         INFOPLIST_KEY_GCSupportsControllerUserInteraction: YES
         INFOPLIST_KEY_NSCameraUsageDescription: "SupersEmu uses the camera to scan the pairing QR code from your SupersEmu Server."
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: "SupersEmu finds and connects to your SupersEmu Server on your home network."
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         # iOS only uses Apple's TLS (URLSession) and hashing: exempt. See docs/specs/distribution.md.
         "INFOPLIST_KEY_ITSAppUsesNonExemptEncryption[sdk=iphone*]": NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

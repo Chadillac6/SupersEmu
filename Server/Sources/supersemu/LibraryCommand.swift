@@ -5,7 +5,7 @@ import SupersEmuKit
 struct Library: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "List, import and review games on the server.",
-        subcommands: [List.self, Import.self, Scan.self, Review.self])
+        subcommands: [List.self, Import.self, Scan.self, Review.self, Rematch.self])
 
     struct List: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Games you can see.")
@@ -63,6 +63,38 @@ struct Library: AsyncParsableCommand {
                 if connection.json { return try CLIOutput.json(items) }
                 if items.isEmpty { return CLIOutput.stdout("Review queue is empty.") }
                 CLIOutput.table(["ID", "FILE", "REASON"], items.map { [String($0.id.prefix(12)), $0.filename, $0.reason] })
+            }
+        }
+    }
+
+    struct Rematch: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Queue metadata matching again for selected games.")
+        @Argument(help: "Game IDs or unique ID prefixes.") var ids: [String] = []
+        @Flag(help: "Queue every game.") var all = false
+        @OptionGroup var connection: Connection
+
+        func run() async throws {
+            try await CLIOutput.run(json: connection.json) {
+                guard all != !ids.isEmpty else {
+                    throw CLIError.usage("Provide game IDs or --all, but not both.")
+                }
+                let gameIDs: [String]?
+                if all {
+                    gameIDs = nil
+                } else {
+                    let games = try await connection.client().library().games
+                    var resolved: [String] = []
+                    for input in ids {
+                        let matches = games.filter { $0.id.hasPrefix(input) }
+                        guard !matches.isEmpty else { throw CLIError.usage("No game matches ID prefix '\(input)'.") }
+                        guard matches.count == 1 else { throw CLIError.usage("ID prefix '\(input)' is ambiguous.") }
+                        resolved.append(matches[0].id)
+                    }
+                    gameIDs = Array(Set(resolved))
+                }
+                let response = try await connection.client().rematchMetadata(gameIDs: gameIDs)
+                if connection.json { return try CLIOutput.json(response) }
+                CLIOutput.stdout("Queued \(response.queued) game(s) for a metadata rematch.")
             }
         }
     }

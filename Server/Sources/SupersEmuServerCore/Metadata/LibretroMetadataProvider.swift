@@ -5,6 +5,7 @@ import SupersEmuKit
 /// No-Intro/Redump hash matching via libretro-database DATs, artwork from libretro-thumbnails. No API key.
 public actor LibretroMetadataProvider: MetadataProvider {
     public nonisolated let id = "libretro"
+    public nonisolated let matchesByFileHash = true
     public nonisolated let catalog: MetadataCatalog
     public nonisolated var version: String { catalog.databaseCommit }
     let cacheRoot: URL
@@ -33,7 +34,7 @@ public actor LibretroMetadataProvider: MetadataProvider {
             return .unavailable
         }
         for url in game.files {
-            for hashes in (try? ROMHasher.variants(of: url, system: game.system)) ?? [] {
+            for hashes in try ROMHasher.variants(of: url, system: game.system) {
                 guard let entry = index.match(hashes) else { continue }
                 func value(_ kind: String) -> String? { index.supplement(Self.supplements[kind]!, crc: entry.crc, serial: entry.serial) }
                 return .matched(MetadataRecord(

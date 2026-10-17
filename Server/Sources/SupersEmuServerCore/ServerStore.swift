@@ -170,9 +170,13 @@ public final class ServerStore: @unchecked Sendable {
 
     public func audit(_ auth: AuthContext?, action: String, detail: String? = nil) throws {
         try db.write { db in
-            try db.execute(sql: "INSERT INTO audit_log (at, actor_user_id, actor_credential, action, detail) VALUES (?, ?, ?, ?, ?)",
-                           arguments: [Date(), auth?.user.id, auth?.credentialID, action, detail])
+            try audit(auth, action: action, detail: detail, in: db)
         }
+    }
+
+    func audit(_ auth: AuthContext?, action: String, detail: String? = nil, in db: Database) throws {
+        try db.execute(sql: "INSERT INTO audit_log (at, actor_user_id, actor_credential, action, detail) VALUES (?, ?, ?, ?, ?)",
+                       arguments: [Date(), auth?.user.id, auth?.credentialID, action, detail])
     }
 
     static func user(from row: Row) -> UserInfo {

@@ -29,6 +29,7 @@ struct ConnectionBanner: View {
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             dismissedRecovery = recoveredAt
         }
+        .foregroundStyle(Brand.Colors.ink)
     }
 
     private var showsRecovery: Bool {
@@ -43,6 +44,7 @@ struct ConnectionBanner: View {
     private func problem(_ message: ConnectionState.Message) -> some View {
         HStack(spacing: 12) {
             Image(systemName: message.symbol).font(.title3)
+                .foregroundStyle(server.connection == .unreachable ? Brand.Colors.ink2 : Brand.Colors.red)
             VStack(alignment: .leading, spacing: 2) {
                 Text(message.title).font(.callout.bold())
                 Text(message.detail).font(.caption).foregroundStyle(.secondary)
@@ -69,7 +71,8 @@ struct ConnectionBanner: View {
             }
         }
         .padding(14)
-        .background((server.connection == .unreachable ? Color.orange : Color.red).opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
+        .background(Brand.Colors.surface, in: RoundedRectangle(cornerRadius: Brand.Radii.card))
+        .overlay(RoundedRectangle(cornerRadius: Brand.Radii.card).stroke(Brand.Colors.line, lineWidth: 1))
         .padding(.horizontal, 20)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(bannerID)
@@ -86,10 +89,11 @@ struct ConnectionBanner: View {
     private func pill(_ text: String, symbol: String, id: String) -> some View {
         Label(text, systemImage: symbol)
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Brand.Colors.ink2)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(.quaternary, in: Capsule())
+            .background(Brand.Colors.surface, in: Capsule())
+            .overlay(Capsule().stroke(Brand.Colors.line, lineWidth: 1))
             .padding(.horizontal, 20)
             .accessibilityIdentifier(id)
     }

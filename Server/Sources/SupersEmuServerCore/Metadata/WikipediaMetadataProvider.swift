@@ -5,7 +5,7 @@ import SupersEmuKit
 /// The text is CC BY-SA, so the app always shows it with a link back to the article.
 public actor WikipediaMetadataProvider: MetadataProvider {
     public nonisolated let id = "wikipedia"
-    public nonisolated let version = "1"
+    public nonisolated let version = "2"
     let http: RateLimitedFetcher
 
     static let api = URL(string: "https://en.wikipedia.org/w/api.php")!
@@ -19,10 +19,13 @@ public actor WikipediaMetadataProvider: MetadataProvider {
         let title = CanonicalName.title(game.title)
         guard let data = try await http.get(Self.searchURL(title: title, system: game.system)) else { return .unmatched }
         let results = try JSONDecoder().decode(SearchResponse.self, from: data).query?.search.map(\.title) ?? []
-        for page in Self.candidates(results, title: title).prefix(2) {
+        for page in Self.candidates(results, title: title, year: game.year).prefix(2) {
             guard let summaryURL = Self.summaryURL(page), let data = try await http.get(summaryURL) else { continue }
             let summary = try JSONDecoder().decode(Summary.self, from: data)
             guard summary.type == "standard", summary.description?.lowercased().contains("game") == true else { continue }
+            if let knownYear = game.year, let summaryYear = Self.year(summary.description), abs(summaryYear - knownYear) > 1 {
+                continue
+            }
             let pageURL = summary.content_urls?.desktop?.page ?? "https://en.wikipedia.org/wiki/" + Self.encodedTitle(page)
             var reception: ReceptionSummary?
             var complete = true
@@ -78,17 +81,23 @@ public actor WikipediaMetadataProvider: MetadataProvider {
     }
 
     /// Search results whose title (without a "(… video game)" qualifier) is the game's, video-game pages first.
-    static func candidates(_ pages: [String], title: String) -> [String] {
+    static func candidates(_ pages: [String], title: String, year: Int? = nil) -> [String] {
         func split(_ page: String) -> (base: String, qualifier: String?) {
             guard page.hasSuffix(")"), let open = page.range(of: " (", options: .backwards) else { return (page, nil) }
             return (String(page[..<open.lowerBound]), page[open.upperBound...].dropLast().lowercased())
+        }
+        func hasConflictingYear(_ qualifier: String?) -> Bool {
+            guard let year, let qualifier,
+                  let match = qualifier.firstMatch(of: #/\b(19\d{2}|20\d{2})\b/#),
+                  let pageYear = Int(match.1) else { return false }
+            return abs(pageYear - year) > 1
         }
         func rank(_ qualifier: String?) -> Int {
             guard let qualifier else { return 1 }
             if qualifier.contains("video game") { return 0 }
             return qualifier.contains("game") ? 2 : 3
         }
-        return pages.filter { TitleMatch.same(split($0).base, title) }
+        return pages.filter { TitleMatch.same(split($0).base, title) && !hasConflictingYear(split($0).qualifier) }
             .enumerated().sorted { (rank(split($0.element).qualifier), $0.offset) < (rank(split($1.element).qualifier), $1.offset) }
             .map(\.element)
     }

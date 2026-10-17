@@ -68,6 +68,7 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
             }
             runOptions.bonjour = !noBonjour
             runOptions.metadata = !noMetadata
+            runOptions.exitWhenExecutableReplaced = bootstrap
             try await ServerLauncher.run(store: store, options: runOptions)
         }
     }

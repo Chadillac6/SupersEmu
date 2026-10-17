@@ -1,5 +1,7 @@
 # UI direction (draft)
 
+Visual styling is now defined by `brand.md` (light and dark appearance with brick red); it supersedes the dark/cinematic default below.
+
 Status: **Draft, being shaped with Chad in a side chat.** Not final. Record his answers here before M1 UI work.
 
 - Feel: a premium game shelf, not an emulator frontend. Large cover art, dark and cinematic by

@@ -25,7 +25,11 @@ struct CoverArt: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: compact ? 10 : 14)
-            .fill(LinearGradient(colors: ArtworkCache.palette(item.id).map { $0.opacity(0.22) }, startPoint: .topLeading, endPoint: .bottomTrailing))
+            .fill(Brand.Colors.card)
+            .overlay {
+                LinearGradient(colors: ArtworkCache.palette(item.id).map { $0.opacity(0.22) },
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
             .aspectRatio(4 / 3, contentMode: .fit)
             .overlay {
                 if let image {
@@ -37,7 +41,7 @@ struct CoverArt: View {
                         Text(item.title).font(compact ? .caption2.bold() : .caption.bold())
                             .multilineTextAlignment(.center).lineLimit(3).padding(.horizontal, 8)
                     }
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(Brand.Colors.ink2)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: compact ? 10 : 14))
@@ -126,7 +130,7 @@ struct RemoteArtwork<Placeholder: View>: View {
 
 extension RemoteArtwork where Placeholder == Color {
     init(gameID: String, path: String, contentMode: ContentMode = .fill) {
-        self.init(gameID: gameID, path: path, contentMode: contentMode) { Color.white.opacity(0.06) }
+        self.init(gameID: gameID, path: path, contentMode: contentMode) { Brand.Colors.card }
     }
 }
 

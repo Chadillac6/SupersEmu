@@ -18,6 +18,8 @@ public struct ServerRunOptions: Sendable {
     public var bonjour = true
     /// Background libretro-database matching and thumbnail downloads after imports.
     public var metadata = true
+    /// The launch daemon uses KeepAlive and should exit when Sparkle replaces its executable.
+    public var exitWhenExecutableReplaced = false
     public var publicURL: URL?
     public var publicPort: Int?
     public var publicAccess: PublicAccessConfiguration?
@@ -121,12 +123,38 @@ public enum ServerLauncher {
             }
             let scheduler = Task { [backups = store.backups] in await BackupScheduler.run(backups, logger: logger) }
             defer { scheduler.cancel() }
+            let executableWatcher: Task<Void, Never>?
+            if options.exitWhenExecutableReplaced,
+               let executableURL = Bundle.main.executableURL,
+               let originalIdentity = Self.executableIdentity(at: executableURL) {
+                executableWatcher = Task {
+                    while !Task.isCancelled {
+                        do {
+                            try await Task.sleep(for: .seconds(60))
+                        } catch {
+                            return
+                        }
+                        guard !Task.isCancelled else { return }
+                        if Self.executableWasReplaced(original: originalIdentity,
+                                                      current: Self.executableIdentity(at: executableURL)) {
+                            logger.info("Server binary was replaced by an update; exiting so launchd starts the new version")
+                            await group.triggerGracefulShutdown()
+                            return
+                        }
+                    }
+                }
+            } else {
+                executableWatcher = nil
+            }
             do {
                 try await group.run()
             } catch {
+                executableWatcher?.cancel()
                 advertiser?.stop()
                 throw error
             }
+            executableWatcher?.cancel()
+            await executableWatcher?.value
             scheduler.cancel()
             await scheduler.value
             advertiser?.stop()
@@ -161,6 +189,25 @@ public enum ServerLauncher {
             }
         }
     }
+
+    static func executableIdentity(at url: URL) -> ExecutableIdentity? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let fileNumber = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
+              let modificationDate = attributes[.modificationDate] as? Date,
+              let size = (attributes[.size] as? NSNumber)?.uint64Value else { return nil }
+        return ExecutableIdentity(systemFileNumber: fileNumber, modificationDate: modificationDate, size: size)
+    }
+
+    static func executableWasReplaced(original: ExecutableIdentity, current: ExecutableIdentity?) -> Bool {
+        guard let current else { return false }
+        return current != original
+    }
+}
+
+struct ExecutableIdentity: Equatable, Sendable {
+    var systemFileNumber: UInt64
+    var modificationDate: Date
+    var size: UInt64
 }
 
 private final class PendingRestore: @unchecked Sendable {
