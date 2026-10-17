@@ -882,8 +882,8 @@ static __weak SELibretroHost *gActiveHost;
     unsigned index = 0;
     for (NSString *code in codes) {
         const char *text = code.UTF8String;
-        // Cores copy into 256-byte buffers and split on '+'; send exactly one bounded code per call.
-        if (!text || !*text || strlen(text) >= 64 || strchr(text, '+')) {
+        // Cores copy into 256-byte buffers; leave room for the terminator and send one code per call.
+        if (!text || !*text || strlen(text) > 240 || strchr(text, '+')) {
             [outcomes addObject:@(SECheatOutcomeRejected)];
             continue;
         }

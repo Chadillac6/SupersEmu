@@ -308,7 +308,8 @@ final class GameSession {
             normalized.code = code
             sent.append(normalized)
         }
-        let outcomes = emulationLoop?.perform { $0?.applyCheats(sent.map(\.code)) ?? [] } ?? []
+        let coreCodes = sent.map { CheatCodec.coreCode($0.code) }
+        let outcomes = emulationLoop?.perform { $0?.applyCheats(coreCodes) ?? [] } ?? []
         for (cheat, outcome) in zip(sent, outcomes) {
             switch CheatOutcome(rawValue: outcome.intValue) {
             case .applied: states[cheat.id] = .applied
