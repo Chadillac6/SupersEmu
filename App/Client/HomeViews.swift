@@ -104,17 +104,21 @@ struct HomeHero: View {
                     .font(.callout)
                     .foregroundStyle(Brand.Colors.ink2)
                 HStack(spacing: 10) {
-                    Button(action: primary) { Label(primaryTitle, systemImage: "play.fill") }
+                    Button(action: primary) {
+                        Label(primaryTitle, systemImage: "play.fill")
+                            .frame(minWidth: compact ? nil : 140)
+                    }
                         .buttonStyle(BrandPrimaryButtonStyle())
                         .controlSize(compact ? .regular : .large)
                         .fixedSize(horizontal: !compact, vertical: false)
-                        .frame(minWidth: compact ? 0 : 160, alignment: .leading)
                         .accessibilityIdentifier("hero-primary")
-                    Button(action: details) { Label("Details", systemImage: "info.circle") }
+                    Button(action: details) {
+                        Label("Details", systemImage: "info.circle")
+                            .frame(minWidth: compact ? nil : 140)
+                    }
                         .buttonStyle(BrandSecondaryButtonStyle())
                         .controlSize(compact ? .regular : .large)
                         .fixedSize(horizontal: !compact, vertical: false)
-                        .frame(minWidth: compact ? 0 : 160, alignment: .leading)
                         .accessibilityIdentifier("hero-details")
                 }
             }
