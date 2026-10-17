@@ -2,7 +2,7 @@ import SupersEmuKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Home: console selector and theme, hero, Now Playing, Downloaded, then Not Downloaded.
+/// Home: console selector, hero, Now Playing, Downloaded, then Not Downloaded.
 struct LibraryView: View {
     @Environment(GameLibrary.self) private var library
     @Environment(ServerSession.self) private var server
@@ -51,7 +51,8 @@ struct LibraryView: View {
                             emptyState
                         } else {
                             SystemSelectorBar(theme: theme, systems: all.systems, selection: Binding(
-                                get: { system }, set: { selectedSystem = $0?.rawValue ?? "" }))
+                                get: { system }, set: { selectedSystem = $0?.rawValue ?? "" }),
+                                             statusLine: homeStatusLine(all.allGames.count))
                             if let featured = home.featured {
                                 HomeHero(item: featured, theme: theme, primaryTitle: heroTitle(featured),
                                          primary: { heroAction(featured) }, details: { open(featured) })
@@ -59,14 +60,17 @@ struct LibraryView: View {
                             if !home.currentlyPlaying.isEmpty {
                                 CurrentlyPlayingRow(items: home.currentlyPlaying, select: open)
                             }
-                            if !home.downloaded.isEmpty {
-                                GameGridSection(title: "Downloaded", identifier: "shelf-downloaded",
-                                                games: home.downloaded, letterAnchors: home.letterAnchors, select: open)
+                            VStack(alignment: .leading, spacing: 26) {
+                                if !home.downloaded.isEmpty {
+                                    GameGridSection(title: "Downloaded", identifier: "shelf-downloaded",
+                                                    games: home.downloaded, letterAnchors: home.letterAnchors, select: open)
+                                }
+                                if !home.notDownloaded.isEmpty {
+                                    GameGridSection(title: "Not Downloaded", identifier: "shelf-not-downloaded",
+                                                    games: home.notDownloaded, letterAnchors: home.letterAnchors, select: open)
+                                }
                             }
-                            if !home.notDownloaded.isEmpty {
-                                GameGridSection(title: "Not Downloaded", identifier: "shelf-not-downloaded",
-                                                games: home.notDownloaded, letterAnchors: home.letterAnchors, select: open)
-                            }
+                            .accessibilityIdentifier("shelf-all")
                         }
                     }
                     .padding(.vertical, 16)
@@ -86,14 +90,8 @@ struct LibraryView: View {
                 }
             }
             .background {
-                ZStack {
-                    LinearGradient(colors: theme.background, startPoint: .top, endPoint: .bottom)
-                    RadialGradient(colors: [theme.accent.opacity(0.35), .clear], center: .topLeading, startRadius: 0, endRadius: 700)
-                }
-                .ignoresSafeArea()
+                Brand.Colors.paper.ignoresSafeArea()
             }
-            .animation(.easeInOut(duration: 0.35), value: theme.id)
-            .tint(theme.accent)
             .navigationTitle(system?.displayName ?? "SupersEmu")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -105,18 +103,9 @@ struct LibraryView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Import Games", systemImage: "plus") { isImporting = true }
-                        .accessibilityIdentifier("import-games")
+                    profileMenu
                 }
-                ToolbarItem(placement: .primaryAction) { serverMenu }
-                #if os(iOS)
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Controls", systemImage: "gamecontroller") { isShowingControls = true }
-                        .accessibilityIdentifier("library-controls")
-                }
-                #endif
             }
-            #if os(iOS)
             .sheet(isPresented: $isShowingControls) {
                 NavigationStack {
                     ControlsView()
@@ -125,7 +114,6 @@ struct LibraryView: View {
                         }
                 }
             }
-            #endif
             .fileImporter(isPresented: $isImporting, allowedContentTypes: [.data], allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result { library.importFiles(urls) }
             }
@@ -134,7 +122,6 @@ struct LibraryView: View {
                     .environment(server)
                     .environment(downloads)
                     .environment(bios)
-                    .preferredColorScheme(.dark)
             }
             .sheet(isPresented: $isConnecting) {
                 NavigationStack {
@@ -147,13 +134,14 @@ struct LibraryView: View {
                 .frame(minWidth: 420, minHeight: 520)
             }
             .onChange(of: server.isPaired) { _, paired in if paired { isConnecting = false } }
-            .preferredColorScheme(.dark)
             .safeAreaInset(edge: .bottom) {
                 if let message = library.importMessage {
                     Text(message)
                         .font(.callout)
                         .padding(.horizontal, 16).padding(.vertical, 10)
-                        .background(.thinMaterial, in: Capsule())
+                        .foregroundStyle(Brand.Colors.ink)
+                        .background(Brand.Colors.surface, in: Capsule())
+                        .overlay { Capsule().stroke(Brand.Colors.line, lineWidth: 1) }
                         .padding(.bottom, 12)
                         .accessibilityIdentifier("import-message")
                 }
@@ -185,15 +173,21 @@ struct LibraryView: View {
         items.first { $0.id == item.id && $0.source == item.source } ?? item
     }
 
-    private var serverMenu: some View {
+    private var profileMenu: some View {
         Menu {
+            Button(statusText) {}
+                .disabled(true)
             if server.isPaired {
-                Section(statusText) {
-                    Button("Refresh Library", systemImage: "arrow.clockwise") { Task { await server.refresh() } }
-                    Button("Disconnect & Remove Downloads", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                        server.signOut()
-                        downloads.removeAll()
-                    }
+                Button("Refresh Library", systemImage: "arrow.clockwise") { Task { await server.refresh() } }
+            }
+            Button("Import Games…", systemImage: "square.and.arrow.down.on.square") { isImporting = true }
+                .accessibilityIdentifier("import-games")
+            Button("Controls…", systemImage: "gamecontroller") { isShowingControls = true }
+                .accessibilityIdentifier("library-controls")
+            if server.isPaired {
+                Button("Disconnect & Remove Downloads", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                    server.signOut()
+                    downloads.removeAll()
                 }
             } else {
                 Button("Connect to Server…", systemImage: "server.rack") { isConnecting = true }
@@ -203,27 +197,41 @@ struct LibraryView: View {
             if server.status == .connecting {
                 ProgressView()
                     .controlSize(.regular)
-                    .frame(width: 28, height: 28)
-                    .tint(.white)
+                    .frame(width: 32, height: 32)
                     .accessibilityLabel("Server, connecting")
             } else {
-                Image(systemName: server.isOnline ? "server.rack" : "exclamationmark.icloud")
-                    .frame(width: 28, height: 28)
-                    .foregroundStyle(.white)
-                    .accessibilityLabel("Server")
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Brand.Colors.ink)
+                    .overlay(alignment: .bottomTrailing) {
+                        if server.isPaired {
+                            Circle()
+                                .fill(server.isOnline ? Color.green : Color.gray)
+                                .frame(width: 8, height: 8)
+                                .overlay(Circle().stroke(Brand.Colors.paper, lineWidth: 1))
+                                .offset(x: 1, y: 1)
+                        }
+                    }
+                    .frame(width: 32, height: 32)
+                    .accessibilityLabel("Profile")
+                    .accessibilityIdentifier("server-menu")
             }
         }
-        .accessibilityIdentifier("server-menu")
+        .accessibilityIdentifier("profile-menu")
         .accessibilityValue(server.status == .connecting ? "Connecting" : "")
     }
 
-    private var statusText: String {
-        switch server.status {
-        case .online: return "\(server.serverName) · Connected"
-        case .connecting: return "\(server.serverName) · Connecting"
-        case .offline: return "\(server.serverName) · Offline"
-        case .notPaired: return "Not connected"
+    private func homeStatusLine(_ count: Int) -> String {
+        if server.status == .connecting {
+            return "\(count) GAMES · \(server.serverName.uppercased()) · CONNECTING"
         }
+        guard server.isPaired else { return "\(count) GAMES · ON THIS DEVICE" }
+        return "\(count) GAMES · \(server.serverName.uppercased()) · \(server.isOnline ? "CONNECTED" : "OFFLINE")"
+    }
+
+    private var statusText: String {
+        if server.status == .connecting { return "\(server.serverName) · Connecting" }
+        return server.isPaired ? "\(server.serverName) · \(server.isOnline ? "Connected" : "Offline")" : "Not connected"
     }
 
     private var searchResults: some View {
@@ -248,14 +256,16 @@ struct LibraryView: View {
 
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: "gamecontroller").font(.system(size: 56)).foregroundStyle(.secondary)
-            Text("Your library is empty").font(.title2.bold())
-            Text(emptyText).multilineTextAlignment(.center).foregroundStyle(.secondary)
+            Image(systemName: "gamecontroller").font(.system(size: 56)).foregroundStyle(Brand.Colors.ink3)
+            Text("Your library is empty").font(.title2.bold()).foregroundStyle(Brand.Colors.ink)
+            Text(emptyText).multilineTextAlignment(.center).foregroundStyle(Brand.Colors.ink2)
             Button("Import Games") { isImporting = true }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(BrandPrimaryButtonStyle())
                 .accessibilityIdentifier("import-games-empty")
             if !server.isPaired {
-                Button("Connect to Server") { isConnecting = true }.accessibilityIdentifier("connect-server-empty")
+                Button("Connect to Server") { isConnecting = true }
+                    .buttonStyle(BrandSecondaryButtonStyle())
+                    .accessibilityIdentifier("connect-server-empty")
             }
         }
         .frame(maxWidth: 360)
@@ -264,9 +274,9 @@ struct LibraryView: View {
     }
 
     private var emptyText: String {
-        if server.isPaired, server.isOnline { return "Add games on your server, or import games you own (SNES, Game Boy, GBA, Genesis) onto this device." }
+        if server.isPaired, server.isOnline { return "Add games on your server, or import games you own (SNES, Game Boy, Game Boy Color, GBA, Genesis, Sega CD, 32X, PlayStation, N64) onto this device." }
         if server.isPaired { return "Nothing is downloaded yet. Connect to your server to download games." }
-        return "Import games you own (SNES, Game Boy, GBA, Genesis), or connect to your SupersEmu Server."
+        return "Import games you own (SNES, Game Boy, Game Boy Color, GBA, Genesis, Sega CD, 32X, PlayStation, N64), or connect to your SupersEmu Server."
     }
 }
 
@@ -279,25 +289,33 @@ struct GameCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 4 : 6) {
-            ZStack(alignment: .bottomLeading) {
+            ZStack(alignment: .topTrailing) {
                 CoverArt(item: item)
                     .opacity(item.isCloudOnly ? 0.85 : 1)
-                HStack {
-                    if item.playable?.hasResumePoint == true {
-                        Label("Continue", systemImage: "play.fill").labelStyle(.iconOnly)
-                            .font(compact ? .caption2.bold() : .caption.bold())
-                            .padding(compact ? 4 : 6).background(.ultraThinMaterial, in: Circle())
-                    }
-                    Spacer()
-                    badge
+                if item.isCloudOnly {
+                    Text("CLOUD")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .tracking(1)
+                        .foregroundStyle(Brand.Colors.ink)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(Brand.Colors.surface, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay { RoundedRectangle(cornerRadius: 6).stroke(Brand.Colors.line, lineWidth: 1) }
+                        .padding(7)
+                        .accessibilityIdentifier("badge-cloud")
                 }
-                .padding(compact ? 5 : 8)
             }
             if case .downloading(let progress) = state {
-                ProgressView(value: progress.fraction).tint(.accentColor)
+                ProgressView(value: progress.fraction).tint(Brand.Colors.red)
             }
-            Text(item.title).font(compact ? .caption.bold() : .subheadline.bold()).lineLimit(2)
-            Text(item.console).font(compact ? .caption2 : .caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(item.title).font(compact ? .caption.bold() : .subheadline.bold()).foregroundStyle(Brand.Colors.ink).lineLimit(2)
+            Text(item.console).font(compact ? .caption2 : .caption).foregroundStyle(Brand.Colors.ink2).lineLimit(1)
+            if !item.isCloudOnly {
+                Color.clear.frame(width: 1, height: 1)
+                    .accessibilityElement()
+                    .accessibilityLabel(item.isLocalCopy ? "On this device" : "Downloaded")
+                    .accessibilityIdentifier("badge-downloaded")
+            }
         }
     }
 
@@ -307,19 +325,5 @@ struct GameCard: View {
         #else
         false
         #endif
-    }
-
-    @ViewBuilder private var badge: some View {
-        let symbol: String = {
-            if case .downloading = state { return "arrow.down.circle.fill" }
-            if item.isLocalCopy { return "internaldrive.fill" }
-            return item.isDownloaded ? "checkmark.circle.fill" : "icloud.fill"
-        }()
-        Image(systemName: symbol)
-            .font(compact ? .caption2.bold() : .caption.bold())
-            .padding(compact ? 4 : 6)
-            .background(.ultraThinMaterial, in: Circle())
-            .accessibilityLabel(item.isCloudOnly ? "In the cloud" : item.isLocalCopy ? "On this device" : "Downloaded")
-            .accessibilityIdentifier(item.isCloudOnly ? "badge-cloud" : "badge-downloaded")
     }
 }

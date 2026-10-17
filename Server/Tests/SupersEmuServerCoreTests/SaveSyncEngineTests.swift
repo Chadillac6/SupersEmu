@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Hummingbird
 import HummingbirdTesting
 import SupersEmuKit
@@ -426,10 +427,24 @@ final class SaveSyncEngineTests: XCTestCase {
             try phone.write(self.auto, "level-5")
             await phone.engine.enqueueUpload(phone.file(self.auto))
             await phone.engine.flush()
+            let client = await phone.provider.currentClient()!
+            let uploadedRevisions = try await client.saves(gameID: self.game).revisions
+            let uploadedRevision = try XCTUnwrap(uploadedRevisions.first)
+            let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+            try await self.store.db.write { db in
+                try db.execute(sql: "UPDATE save_revisions SET created_at = ? WHERE id = ?",
+                               arguments: [createdAt, uploadedRevision.id])
+            }
+            let revisions = try await client.saves(gameID: self.game).revisions
+            let revision = try XCTUnwrap(revisions.first { $0.id == uploadedRevision.id })
+            XCTAssertEqual(revision.createdAt.timeIntervalSince(createdAt), 0, accuracy: 1)
             try FileManager.default.removeItem(at: phone.file(self.auto).url)
             let outcomes = await phone.engine.prepare([phone.file(self.auto)])
             guard case .downloaded = outcomes[self.auto.key] else { return XCTFail("\(outcomes)") }
             XCTAssertEqual(phone.read(self.auto), "level-5")
+            let attributes = try FileManager.default.attributesOfItem(atPath: phone.file(self.auto).url.path)
+            let modified = try XCTUnwrap(attributes[.modificationDate] as? Date)
+            XCTAssertEqual(modified.timeIntervalSince(revision.createdAt), 0, accuracy: 1)
         }
     }
 

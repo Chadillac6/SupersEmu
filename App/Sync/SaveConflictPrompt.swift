@@ -23,17 +23,17 @@ struct SaveConflictPrompt: View {
         }
         .padding(24)
         .frame(maxWidth: 420)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .brandPanel()
         .padding(24)
     }
 
     /// Side by side only when both labels fit unwrapped; stacked, full-width buttons may wrap at large text sizes.
     @ViewBuilder private func buttons(fill: Bool) -> some View {
         Button { choose(.keepLocal) } label: { label("Keep This Device's", fill: fill) }
-            .buttonStyle(.bordered)
+            .buttonStyle(BrandSecondaryButtonStyle())
             .accessibilityIdentifier("save-conflict-keep-local")
         Button { choose(.useRemote) } label: { label("Use Newer Save", fill: fill) }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(BrandPrimaryButtonStyle())
             .accessibilityIdentifier("save-conflict-use-remote")
     }
 

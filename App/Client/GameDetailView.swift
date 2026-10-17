@@ -6,9 +6,6 @@ struct GameDetailView: View {
     @Environment(DownloadCenter.self) private var downloads
     @Environment(BIOSCenter.self) private var bios
     @Environment(\.dismiss) private var dismiss
-    #if os(iOS)
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    #endif
     let item: LibraryItem
     let onPlay: (Game) -> Void
     let onStartFresh: (Game) -> Void
@@ -17,10 +14,9 @@ struct GameDetailView: View {
     @State private var isShowingCheats = false
 
     var body: some View {
-        let theme = SystemTheme.theme(for: item.system)
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                header(theme)
+                header
                 VStack(alignment: .leading, spacing: 18) {
                     tags
                     if let system = item.system, bios.isMissing(system) {
@@ -64,8 +60,7 @@ struct GameDetailView: View {
                 .padding(24)
             }
         }
-        .background(LinearGradient(colors: theme.background, startPoint: .top, endPoint: .bottom).ignoresSafeArea())
-        .tint(theme.accent)
+        .background(Brand.Colors.paper.ignoresSafeArea())
         .frame(minWidth: 360, idealWidth: 680, minHeight: 360, idealHeight: 760)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() }.accessibilityIdentifier("detail-done") }
@@ -77,11 +72,11 @@ struct GameDetailView: View {
         }
     }
 
-    private func header(_ theme: SystemTheme) -> some View {
+    private var header: some View {
         WideArt(item: item)
             .frame(height: 260)
             .overlay {
-                LinearGradient(colors: [.clear, theme.background[0].opacity(0.95)], startPoint: .center, endPoint: .bottom)
+                LinearGradient(colors: [.clear, Brand.Colors.paper], startPoint: .center, endPoint: .bottom)
             }
             .overlay(alignment: .topLeading) {
                 if let logo = item.logoPath ?? gameDetail?.logoPath {
@@ -95,8 +90,9 @@ struct GameDetailView: View {
                 HStack(alignment: .bottom, spacing: 18) {
                     CoverArt(item: item).frame(width: 110).shadow(radius: 10)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(item.title).font(.title.bold()).lineLimit(3).accessibilityIdentifier("detail-title")
-                        Text(metadata).foregroundStyle(.secondary)
+                        Text(item.title).font(Brand.serifTitle).foregroundStyle(Brand.Colors.ink).lineLimit(3)
+                            .accessibilityIdentifier("detail-title")
+                        Text(metadata).font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink2)
                         AvailabilityBadge(item: item, state: downloads.states[item.id])
                     }
                 }
@@ -108,29 +104,39 @@ struct GameDetailView: View {
             .accessibilityIdentifier("detail-hero")
     }
 
-    @ViewBuilder private var tags: some View {
-        let values = tagValues
-        if !values.isEmpty {
-            FlowLayout {
-                ForEach(values, id: \.self) { tag in
-                    Text(tag).font(.caption.bold())
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(.white.opacity(0.1), in: Capsule())
+    private var tags: some View {
+        let values = facts
+        return VStack(spacing: 0) {
+            ForEach(Array(values.enumerated()), id: \.offset) { index, fact in
+                HStack(alignment: .firstTextBaseline) {
+                    Text(fact.label.uppercased())
+                        .font(Brand.eyebrow)
+                        .tracking(1.2)
+                        .foregroundStyle(Brand.Colors.ink3)
+                    Spacer(minLength: 20)
+                    Text(fact.value)
+                        .foregroundStyle(Brand.Colors.ink)
+                        .multilineTextAlignment(.trailing)
+                }
+                .padding(.vertical, 10)
+                if index < values.count - 1 {
+                    Rectangle().fill(Brand.Colors.line).frame(height: 1)
                 }
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("detail-tags")
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("detail-tags")
     }
 
-    private var tagValues: [String] {
-        var tags: [String] = []
-        if let year = item.year { tags.append(String(year)) }
-        tags += item.genres ?? item.genre.map { [$0] } ?? []
-        if let players = item.players { tags.append(players > 1 ? "1–\(players) players" : "1 player") }
-        if let publisher = gameDetail?.game.publisher { tags.append(publisher) }
-        if let region = gameDetail?.game.region { tags.append(region) }
-        return tags
+    private var facts: [(label: String, value: String)] {
+        var rows: [(String, String)] = [("System", item.console)]
+        if let year = item.year { rows.append(("Year", String(year))) }
+        let genres = item.genres ?? item.genre.map { [$0] } ?? []
+        if !genres.isEmpty { rows.append(("Genre", genres.joined(separator: ", "))) }
+        if let players = item.players { rows.append(("Players", players > 1 ? "1–\(players)" : "1")) }
+        if let publisher = gameDetail?.game.publisher, !publisher.isEmpty { rows.append(("Publisher", publisher)) }
+        if let region = gameDetail?.game.region, !region.isEmpty { rows.append(("Region", region)) }
+        return rows.map { (label: $0.0, value: $0.1) }
     }
 
     /// Critic score (IGDB, only when the server has a key), the Wikipedia reception summary and an IGN link.
@@ -146,7 +152,8 @@ struct GameDetailView: View {
                         Text("\(score.score)")
                             .font(.title2.bold().monospacedDigit())
                             .frame(width: 54, height: 54)
-                            .background(Self.scoreColor(score.score).opacity(0.85), in: RoundedRectangle(cornerRadius: 12))
+                            .foregroundStyle(.white)
+                            .background(Self.scoreColor(score.score), in: RoundedRectangle(cornerRadius: 12))
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Critic score").font(.subheadline.bold())
                             Text(score.source).font(.caption).foregroundStyle(.secondary)
@@ -171,7 +178,8 @@ struct GameDetailView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+            .background(Brand.Colors.card, in: RoundedRectangle(cornerRadius: Brand.Radii.card))
+            .overlay(RoundedRectangle(cornerRadius: Brand.Radii.card).stroke(Brand.Colors.line, lineWidth: 1))
         }
     }
 
@@ -195,7 +203,8 @@ struct GameDetailView: View {
     }
 
     static func scoreColor(_ score: Int) -> Color {
-        score >= 75 ? .green : score >= 50 ? .yellow : .red
+        score >= 75 ? Color(red: 79 / 255, green: 122 / 255, blue: 82 / 255)
+            : score >= 50 ? Color(red: 176 / 255, green: 138 / 255, blue: 46 / 255) : Brand.Colors.red
     }
 
     private var metadata: String {
@@ -203,7 +212,7 @@ struct GameDetailView: View {
         if let year = item.year { parts.append(String(year)) }
         if let genre = item.genre { parts.append(genre) }
         if item.size > 0 { parts.append(Self.size(item.size)) }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: " · ").uppercased()
     }
 
     private var cheatsTitle: String {
@@ -211,36 +220,29 @@ struct GameDetailView: View {
         return count == 0 ? "Cheats" : "Cheats (\(count))"
     }
 
-    /// iPhone: Play spans the width with the other actions sharing a row below, however many there are.
-    private var stacksActions: Bool {
-        #if os(iOS)
-        horizontalSizeClass == .compact
-        #else
-        false
-        #endif
-    }
-
     private func stackedActions(_ game: Game) -> some View {
         VStack(spacing: 10) {
-            playButton(game, fill: true)
+            playButton(game)
             HStack(spacing: 10) { secondaryActions(game, fill: true) }
         }
+        .frame(maxWidth: 560)
+        .frame(maxWidth: .infinity)
     }
 
     private var playIsDisabled: Bool {
         bios.isMissing(item.system) || bios.isSyncing && item.system?.requiresBIOS == true
     }
 
-    private func playButton(_ game: Game, fill: Bool) -> some View {
+    private func playButton(_ game: Game) -> some View {
         Button {
             dismiss()
             onPlay(game)
         } label: {
             Label(game.hasResumePoint ? "Resume" : "Play", systemImage: "play.fill")
                 .lineLimit(1)
-                .frame(minWidth: fill ? nil : 140, maxWidth: fill ? .infinity : nil)
+                .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(BrandPrimaryButtonStyle())
         .controlSize(.large)
         .disabled(playIsDisabled)
         .accessibilityIdentifier("detail-play")
@@ -251,11 +253,11 @@ struct GameDetailView: View {
             Button {
                 isConfirmingStartOver = true
             } label: {
-                Label("Start Over", systemImage: "arrow.counterclockwise")
+                Label("Start over", systemImage: "arrow.counterclockwise")
                     .lineLimit(1)
                     .frame(minWidth: fill ? nil : 140, maxWidth: fill ? .infinity : nil)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(BrandSecondaryButtonStyle())
             .controlSize(.large)
             .disabled(playIsDisabled)
             .accessibilityIdentifier("detail-start-over")
@@ -269,7 +271,7 @@ struct GameDetailView: View {
                     .lineLimit(1)
                     .frame(minWidth: fill ? nil : 110, maxWidth: fill ? .infinity : nil)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(BrandSecondaryButtonStyle())
             .controlSize(.large)
             .keyboardShortcut("c", modifiers: [.command, .shift])
             .help("Cheats (Shift-Command-C)")
@@ -280,19 +282,7 @@ struct GameDetailView: View {
     @ViewBuilder private var actions: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let game = playableGame {
-                Group {
-                    if stacksActions {
-                        stackedActions(game)
-                    } else {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 10) {
-                                playButton(game, fill: false)
-                                secondaryActions(game, fill: false)
-                            }
-                            stackedActions(game)
-                        }
-                    }
-                }
+                stackedActions(game)
                 .sheet(isPresented: $isShowingCheats) {
                     if let system = item.system {
                         CheatsView(gameID: item.id, title: item.title, system: system)
@@ -302,7 +292,7 @@ struct GameDetailView: View {
                     if let system = item.system, CheatCodec.supportsCheats(system) { await CheatLibrary.shared.load(item.id) }
                 }
                 .confirmationDialog("Start over from the beginning?", isPresented: $isConfirmingStartOver, titleVisibility: .visible) {
-                    Button("Start Over", role: .destructive) {
+                    Button("Start over", role: .destructive) {
                         dismiss()
                         onStartFresh(game)
                     }
@@ -360,9 +350,9 @@ struct GameDetailView: View {
 
     private func downloadButton(title: String) -> some View {
         Button { downloads.start(item.id, session: server) } label: {
-            Label(title, systemImage: "arrow.down.circle.fill").frame(minWidth: 140)
+            Label(title, systemImage: "arrow.down.circle.fill").frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(BrandPrimaryButtonStyle())
         .controlSize(.large)
         .disabled(!server.isOnline)
         .accessibilityIdentifier("download-game")
@@ -382,7 +372,8 @@ struct AvailabilityBadge: View {
         Label(text, systemImage: symbol)
             .font(.caption.bold())
             .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(.ultraThinMaterial, in: Capsule())
+            .background(Brand.Colors.surface, in: Capsule())
+            .overlay(Capsule().stroke(Brand.Colors.line, lineWidth: 1))
             .accessibilityIdentifier("availability-badge")
     }
 

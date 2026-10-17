@@ -21,7 +21,6 @@ struct SupersEmuApp: App {
                 .environment(server)
                 .environment(downloads)
                 .environment(bios)
-                .preferredColorScheme(.dark)
                 #if os(macOS)
                 .serverModeLaunchHook()
                 .task { AppUpdater.shared.finishServerUpdateIfNeeded() }
@@ -39,7 +38,6 @@ struct SupersEmuApp: App {
         ServerMenuBar()
         Settings {
             ControlsView()
-                .preferredColorScheme(.dark)
         }
         #endif
     }

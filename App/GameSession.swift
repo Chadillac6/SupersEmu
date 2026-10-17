@@ -62,6 +62,7 @@ final class GameSession {
     @ObservationIgnored private var displayLinkProxy: DisplayLinkProxy?
 #endif
     @ObservationIgnored private var lastAutosave = ContinuousClock.now
+    @ObservationIgnored private var lastSuccessfulAutosave: ContinuousClock.Instant?
     @ObservationIgnored private let sync: SaveSync
     @ObservationIgnored private var conflictChoice: CheckedContinuation<SaveConflictChoice?, Never>?
     @ObservationIgnored private var pendingDiscard: Task<Void, Never>?
@@ -76,6 +77,8 @@ final class GameSession {
     @ObservationIgnored private var pendingDiagnosticsEvents: [String] = []
     @ObservationIgnored private var pickerTimer: Timer?
     @ObservationIgnored private var pickerButtons: SEJoypadButtons = []
+
+    var timeSinceLastAutosave: Duration? { lastSuccessfulAutosave.map { .now - $0 } }
     /// The chord opens the picker only after it has been released since it last fired.
     @ObservationIgnored private var chordArmed = true
     @ObservationIgnored private var hotkeyHeldSince: ContinuousClock.Instant?
@@ -266,8 +269,11 @@ final class GameSession {
             let autoState = AppPaths.autoState(for: game.id)
             if FileManager.default.fileExists(atPath: autoState.path) {
                 do {
-                try loop.perform { try $0?.loadState(from: autoState) }
+                    try loop.perform { try $0?.loadState(from: autoState) }
                     diagnosticsLog?.appendEvent("save-state load auto")
+                    if let modified = try? autoState.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate {
+                        lastSuccessfulAutosave = .now - .seconds(max(0, Date().timeIntervalSince(modified)))
+                    }
                     status = pulled ?? "Resumed where you left off"
                 } catch {
                     preserveIncompatibleState(at: autoState)
@@ -598,6 +604,7 @@ final class GameSession {
                 host.flushSaveRAM()
                 try host.saveState(to: stateURL)
             }
+            lastSuccessfulAutosave = .now
             diagnosticsLog?.appendEvent("save-state save auto")
             if !preservingStatus { status = "Auto-saved on this device" }
         } catch {
@@ -626,6 +633,7 @@ final class GameSession {
                 host.flushSaveRAM()
                 try host.saveState(to: stateURL)
             }
+            lastSuccessfulAutosave = .now
             diagnosticsLog?.appendEvent("save-state save auto")
             if !preservingStatus { status = "Auto-saved on this device" }
         } catch EmulationLoopError.stopped {
@@ -693,6 +701,13 @@ final class GameSession {
         case resume = "Resume", restart = "Restart Game", save = "Save State", load = "Load State", swapDisc = "Swap Disc"
         case cheats = "Cheats", controls = "Controls", exit = "Exit to Library"
         var id: String { rawValue }
+        var displayTitle: String { self == .exit ? "Save & Quit" : rawValue }
+    }
+
+    static func autosaveLabel(_ age: Duration?) -> String {
+        guard let age else { return "NOT AUTOSAVED YET" }
+        let seconds = max(0, age.components.seconds)
+        return seconds < 60 ? "AUTOSAVED \(seconds)S AGO" : "AUTOSAVED \(seconds / 60)M AGO"
     }
 
     var menuItems: [MenuItem] {
