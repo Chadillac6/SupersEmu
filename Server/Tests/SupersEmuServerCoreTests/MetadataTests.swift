@@ -63,6 +63,52 @@ private struct PartialArtworkProvider: MetadataProvider {
     }
 }
 
+private actor SuspendedLookupGate {
+    private var calls = 0
+    private var firstLookup: CheckedContinuation<Void, Never>?
+    private var startedWaiter: CheckedContinuation<Void, Never>?
+
+    func nextLookup() async -> Int {
+        calls += 1
+        let call = calls
+        if call == 1 {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                firstLookup = continuation
+                startedWaiter?.resume()
+                startedWaiter = nil
+            }
+        }
+        return call
+    }
+
+    func waitForFirstLookup() async {
+        if firstLookup != nil { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            startedWaiter = continuation
+        }
+    }
+
+    func resumeFirstLookup() {
+        firstLookup?.resume()
+        firstLookup = nil
+    }
+
+    func callCount() -> Int { calls }
+}
+
+private struct RematchRaceProvider: MetadataProvider {
+    let gate: SuspendedLookupGate
+    var id: String { "rematch-race" }
+    var version: String { "1" }
+
+    func lookup(_ game: MetadataLookup) async throws -> MetadataLookupResult {
+        let call = await gate.nextLookup()
+        return .matched(MetadataRecord(provider: id, providerRef: "lookup-\(call)", title: "Lookup \(call)"))
+    }
+
+    func artwork(for record: MetadataRecord, system: SystemID) -> [ArtworkCandidate] { [] }
+}
+
 final class MetadataTests: XCTestCase {
     var store: ServerStore!
     var adminToken: String!
@@ -613,6 +659,34 @@ let pass5 = await service(catalog).enrichPending()
                 XCTAssertEqual($0.status, .notFound)
             }
         }
+    }
+
+    func testRematchInvalidatesInflightLookupAndRunsAgain() async throws {
+        let id = try await importROM(ROMFixtures.snes(seed: 128), "rematch-race.sfc")
+        let gate = SuspendedLookupGate()
+        let provider = RematchRaceProvider(gate: gate)
+        let metadata = MetadataService(store: store, http: RateLimitedFetcher(fetcher, minimumInterval: .zero),
+                                       providers: [provider])
+        let pass = Task { await metadata.runUntilIdle() }
+        await gate.waitForFirstLookup()
+
+        let queued = try await metadata.rematch(gameIDs: [id])
+        XCTAssertEqual(queued, 1)
+        await metadata.runUntilIdle()
+        await gate.resumeFirstLookup()
+        await pass.value
+
+        let calls = await gate.callCount()
+        XCTAssertEqual(calls, 2)
+        let final = try await store.db.read { db -> (String?, String?) in
+            let ref = try String.fetchOne(db, sql: "SELECT provider_ref FROM game_metadata WHERE game_id = ? AND provider = ?",
+                                          arguments: [id, provider.id])
+            let status = try String.fetchOne(db, sql: "SELECT match_status FROM metadata_jobs WHERE game_id = ? AND provider = ?",
+                                             arguments: [id, provider.id])
+            return (ref, status)
+        }
+        XCTAssertEqual(final.0, "lookup-2")
+        XCTAssertEqual(final.1, "matched")
     }
 
     func testRedumpDiscMatchesFirstDiscTrack() async throws {

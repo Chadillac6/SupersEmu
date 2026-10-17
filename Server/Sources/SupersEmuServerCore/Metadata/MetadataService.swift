@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import GRDB
+import Hummingbird
 import Logging
 import SupersEmuKit
 
@@ -14,6 +15,7 @@ private struct PendingMetadataJob: Sendable {
     var artworkStatus: String?
     var artworkVersion: String?
     var searchTitle: String?
+    var searchYear: Int?
     var providerRef: String?
 
     init(row: Row) {
@@ -25,8 +27,14 @@ private struct PendingMetadataJob: Sendable {
         artworkStatus = row["artwork_status"]
         artworkVersion = row["artwork_version"]
         searchTitle = row["search_title"]
+        searchYear = row["search_year"]
         providerRef = row["provider_ref"]
     }
+}
+
+private struct ProviderArtworkSlot: Hashable, Sendable {
+    var kind: ArtworkKind
+    var position: Int
 }
 
 private struct MetadataRecordFingerprint: Encodable {
@@ -76,6 +84,9 @@ public actor MetadataService {
     private let artwork: ArtworkStore
     private var running = false
     private var rerun = false
+    private var rematchGeneration = 0
+    private var rematchedAt: [String: Int] = [:]
+    private var rematchAllAt = 0
     private let logger = Logger(label: "supersemu-metadata")
 
     public init(store: ServerStore, http: RateLimitedFetcher, providers: [any MetadataProvider]) {
@@ -147,6 +158,49 @@ public actor MetadataService {
         return changed
     }
 
+    public func rematch(gameIDs: [String]?) async throws -> Int {
+        try performRematch(gameIDs: gameIDs, audit: nil)
+    }
+
+    func rematch(gameIDs: [String]?, audit: @escaping @Sendable (Database) throws -> Void) async throws -> Int {
+        try performRematch(gameIDs: gameIDs, audit: audit)
+    }
+
+    private func performRematch(gameIDs: [String]?, audit: (@Sendable (Database) throws -> Void)?) throws -> Int {
+        let uniqueIDs = gameIDs.map { Array(Set($0)) }
+        let queued = try store.db.read { db -> Int in
+            guard let uniqueIDs else { return try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM games") ?? 0 }
+            let existing = uniqueIDs.isEmpty ? 0 : try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM games WHERE id IN (\(Array(repeating: "?", count: uniqueIDs.count).joined(separator: ",")))
+                """, arguments: StatementArguments(uniqueIDs)) ?? 0
+            guard existing == uniqueIDs.count else { throw HTTPError(.notFound, message: "Game not found") }
+            return uniqueIDs.count
+        }
+
+        rematchGeneration += 1
+        let generation = rematchGeneration
+        if let uniqueIDs {
+            for id in uniqueIDs { rematchedAt[id] = generation }
+        } else {
+            rematchAllAt = generation
+        }
+
+        try store.db.write { db in
+            if let uniqueIDs {
+                if !uniqueIDs.isEmpty {
+                    try db.execute(sql: """
+                        DELETE FROM metadata_jobs WHERE game_id IN (\(Array(repeating: "?", count: uniqueIDs.count).joined(separator: ",")))
+                        """, arguments: StatementArguments(uniqueIDs))
+                }
+            } else {
+                try db.execute(sql: "DELETE FROM metadata_jobs")
+            }
+            try audit?(db)
+        }
+        enqueue()
+        return queued
+    }
+
     private func enrich(with provider: any MetadataProvider) async throws -> Int {
         if provider.matchesByFileHash, !store.paths.storage.isAvailable {
             logger.warning("\(provider.id) skipped: library storage is unavailable")
@@ -155,7 +209,7 @@ public actor MetadataService {
         let pending: [PendingMetadataJob] = try await store.db.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT g.id, g.system, g.title, j.match_status, j.dataset_version, j.artwork_status, j.artwork_version,
-                    j.search_title, m.provider_ref FROM games g
+                    j.search_title, j.search_year, m.provider_ref FROM games g
                 LEFT JOIN metadata_jobs j ON j.game_id = g.id AND j.provider = ?
                 LEFT JOIN game_metadata m ON m.game_id = g.id AND m.provider = j.provider
                 WHERE g.needs_review = 0 AND (j.game_id IS NULL OR j.match_status IS NULL OR j.dataset_version IS NOT ?
@@ -175,7 +229,9 @@ public actor MetadataService {
             let titleChanged = row.searchTitle != title
             let betterTitle = status == "unmatched" && titleChanged
             let changedSearchTitle = !provider.matchesByFileHash && status == "matched" && titleChanged
-            if status == nil || status == "partial" || row.datasetVersion != provider.version || betterTitle || changedSearchTitle {
+            let changedSearchYear = !provider.matchesByFileHash && row.searchYear != knownMetadata.year
+            if status == nil || status == "partial" || row.datasetVersion != provider.version || betterTitle || changedSearchTitle
+                || changedSearchYear {
                 let files = try candidateFiles(gameID: id)
                 if provider.matchesByFileHash {
                     guard !files.isEmpty else {
@@ -188,6 +244,7 @@ public actor MetadataService {
                     }
                 }
                 let game = MetadataLookup(gameID: id, system: system, title: title, year: knownMetadata.year, files: files)
+                let lookupGeneration = rematchGeneration
                 let result: MetadataLookupResult
                 do {
                     result = try await provider.lookup(game)
@@ -198,13 +255,15 @@ public actor MetadataService {
                     }
                     result = .unavailable
                 }
+                if (rematchedAt[id] ?? 0) > lookupGeneration || rematchAllAt > lookupGeneration { continue }
                 switch result {
                 case .unavailable:
                     unavailable.insert(system)
                     continue
                 case .unmatched:
                     try artwork.removeProviderArtwork(provider: provider.id, gameID: id)
-                    try await recordJob(id, provider, match: "unmatched", searchTitle: title, clearingRecord: true)
+                    try await recordJob(id, provider, match: "unmatched", searchTitle: title, searchYear: knownMetadata.year,
+                                        clearingRecord: true)
                     changed += 1
                     continue
                 case .matched(let record), .partial(let record):
@@ -216,6 +275,7 @@ public actor MetadataService {
                     try await store.db.write { db in try record.save(gameID: id, db: db) }
                     let recordHash = try Self.recordHash(record, system: system, provider: provider)
                     try await recordJob(id, provider, match: complete ? "matched" : "partial", searchTitle: title,
+                                        searchYear: knownMetadata.year,
                                         recordHash: recordHash, clearingRecord: false)
                     logger.info("\(provider.id) matched \(id.prefix(12)) to \"\(record.providerRef ?? record.title ?? "?")\"")
                     changed += 1
@@ -246,7 +306,7 @@ public actor MetadataService {
         }
     }
 
-    private func recordJob(_ gameID: String, _ provider: any MetadataProvider, match: String, searchTitle: String,
+    private func recordJob(_ gameID: String, _ provider: any MetadataProvider, match: String, searchTitle: String, searchYear: Int?,
                            recordHash: String? = nil, clearingRecord: Bool) async throws {
         try await store.db.write { db in
             if clearingRecord {
@@ -254,21 +314,23 @@ public actor MetadataService {
             }
             try db.execute(sql: """
                 INSERT INTO metadata_jobs (game_id, provider, match_status, artwork_status, dataset_version,
-                    artwork_version, search_title, record_hash, updated_at)
-                VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)
+                    artwork_version, search_title, search_year, record_hash, updated_at)
+                VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (game_id, provider) DO UPDATE SET
                     match_status = excluded.match_status,
                     artwork_status = NULL,
                     dataset_version = excluded.dataset_version,
                     artwork_version = NULL,
                     search_title = excluded.search_title,
+                    search_year = excluded.search_year,
                     record_hash = excluded.record_hash,
                     updated_at = excluded.updated_at
                 WHERE metadata_jobs.match_status IS NOT excluded.match_status
                     OR metadata_jobs.dataset_version IS NOT excluded.dataset_version
                     OR metadata_jobs.search_title IS NOT excluded.search_title
+                    OR metadata_jobs.search_year IS NOT excluded.search_year
                     OR metadata_jobs.record_hash IS NOT excluded.record_hash
-                """, arguments: [gameID, provider.id, match, provider.version, nil as String?, searchTitle, recordHash, Date()])
+                """, arguments: [gameID, provider.id, match, provider.version, nil as String?, searchTitle, searchYear, recordHash, Date()])
         }
     }
 
@@ -289,8 +351,21 @@ public actor MetadataService {
                 .map(MetadataRecord.init(row:))
         }
         guard let record else { return }
+        let candidates = provider.artwork(for: record, system: system)
+        let candidateSlots = Set(candidates.map { ProviderArtworkSlot(kind: $0.kind, position: $0.position) })
+        let staleSlots = try await store.db.read { db in
+            try Row.fetchAll(db, sql: "SELECT kind, position FROM game_artwork WHERE game_id = ? AND provider = ?",
+                             arguments: [gameID, provider.id]).compactMap { row -> ProviderArtworkSlot? in
+                guard let kind = ArtworkKind(rawValue: row["kind"]) else { return nil }
+                let slot = ProviderArtworkSlot(kind: kind, position: row["position"])
+                return candidateSlots.contains(slot) ? nil : slot
+            }
+        }
+        for slot in staleSlots {
+            try artwork.removeProviderArtwork(provider: provider.id, gameID: gameID, kind: slot.kind, position: slot.position)
+        }
         var deferred = false
-        for candidate in provider.artwork(for: record, system: system) {
+        for candidate in candidates {
             var found = false, invalid = false
             for url in candidate.urls {
                 let data: Data?

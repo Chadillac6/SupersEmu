@@ -28,6 +28,40 @@ final class FailureSwitch: @unchecked Sendable {
     var failing = true
 }
 
+private struct ChangingArtworkProvider: MetadataProvider {
+    let version: String
+    let coverURL: URL
+    let backdropURL: URL
+    var id: String { "changing-artwork" }
+
+    func lookup(_ game: MetadataLookup) async throws -> MetadataLookupResult {
+        .matched(MetadataRecord(provider: id, providerRef: "same-game", title: "Artwork Game"))
+    }
+
+    func artwork(for record: MetadataRecord, system: SystemID) -> [ArtworkCandidate] {
+        var candidates = [ArtworkCandidate(kind: .cover, position: 0, urls: [coverURL])]
+        if version == "1" {
+            candidates.append(ArtworkCandidate(kind: .backdrop, position: 0, urls: [backdropURL]))
+        }
+        return candidates
+    }
+}
+
+private final class SearchYearProvider: MetadataProvider, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _searchedYears: [Int?] = []
+    var searchedYears: [Int?] { lock.withLock { _searchedYears } }
+    var id: String { "title-search" }
+    var version: String { "1" }
+
+    func lookup(_ game: MetadataLookup) async throws -> MetadataLookupResult {
+        lock.withLock { _searchedYears.append(game.year) }
+        return .matched(MetadataRecord(provider: id, providerRef: "same-game", title: game.title))
+    }
+
+    func artwork(for record: MetadataRecord, system: SystemID) -> [ArtworkCandidate] { [] }
+}
+
 final class MetadataProviderTests: XCTestCase {
     var store: ServerStore!
     var adminToken: String!
@@ -209,6 +243,81 @@ final class MetadataProviderTests: XCTestCase {
             try String.fetchOne($0, sql: "SELECT provider_ref FROM game_metadata WHERE game_id = ? AND provider = 'wikipedia'", arguments: [id])
         }
         XCTAssertEqual(ref, "Super Metroid Zero Mission")
+    }
+
+    func testTitleSearchProviderRetriesWhenKnownYearChanges() async throws {
+        let id = try await importROM("Year Search Game.sfc")
+        let provider = SearchYearProvider()
+        let metadata = service(RequestStub { _ in nil }) { _ in [provider] }
+
+        _ = await metadata.enrichPending()
+        XCTAssertEqual(provider.searchedYears, [nil])
+        let initialYear = try await store.db.read {
+            try Int.fetchOne($0, sql: "SELECT search_year FROM metadata_jobs WHERE game_id = ? AND provider = ?",
+                             arguments: [id, provider.id])
+        }
+        XCTAssertNil(initialYear)
+
+        try await store.db.write { db in
+            try MetadataRecord(provider: "libretro", year: 1998).save(gameID: id, db: db)
+        }
+        _ = await metadata.enrichPending()
+        XCTAssertEqual(provider.searchedYears, [nil, 1998])
+        let updatedYear = try await store.db.read {
+            try Int.fetchOne($0, sql: "SELECT search_year FROM metadata_jobs WHERE game_id = ? AND provider = ?",
+                             arguments: [id, provider.id])
+        }
+        XCTAssertEqual(updatedYear, 1998)
+
+        _ = await metadata.enrichPending()
+        XCTAssertEqual(provider.searchedYears, [nil, 1998])
+    }
+
+    func testArtworkSlotsAreRemovedWhenProviderCandidatesShrink() async throws {
+        let id = try await importROM("Artwork Game.sfc")
+        let coverURL = URL(string: "https://artwork.example/cover.png")!
+        let backdropURL = URL(string: "https://artwork.example/backdrop.png")!
+        let fetcher = RequestStub { request in
+            [coverURL, backdropURL].contains(request.url!) ? DatFixtures.png : nil
+        }
+        let artwork = ArtworkStore(store: store)
+        let manualCover = DatFixtures.png + Data([31])
+        let manualCoverURL = try artwork.setCover(gameID: id, data: manualCover, fileExtension: "png")
+
+        let first = service(fetcher) { _ in
+            [ChangingArtworkProvider(version: "1", coverURL: coverURL, backdropURL: backdropURL)]
+        }
+        let firstPassCount = await first.enrichPending()
+        XCTAssertEqual(firstPassCount, 1)
+        let originalSlots = try await store.db.read { db -> (String?, String?) in
+            let cover = try String.fetchOne(db, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND provider = ? AND kind = 'cover'",
+                                            arguments: [id, "changing-artwork"])
+            let backdrop = try String.fetchOne(db, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND provider = ? AND kind = 'backdrop'",
+                                               arguments: [id, "changing-artwork"])
+            return (cover, backdrop)
+        }
+        let backdropPath = try XCTUnwrap(originalSlots.1)
+        let backdropFile = store.paths.libraryFile(backdropPath)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backdropFile.path))
+
+        let second = service(fetcher) { _ in
+            [ChangingArtworkProvider(version: "2", coverURL: coverURL, backdropURL: backdropURL)]
+        }
+        let secondPassCount = await second.enrichPending()
+        XCTAssertEqual(secondPassCount, 1)
+        let currentSlots = try await store.db.read { db -> (String?, String?, String?) in
+            let cover = try String.fetchOne(db, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND provider = ? AND kind = 'cover'",
+                                            arguments: [id, "changing-artwork"])
+            let backdrop = try String.fetchOne(db, sql: "SELECT path FROM game_artwork WHERE game_id = ? AND provider = ? AND kind = 'backdrop'",
+                                               arguments: [id, "changing-artwork"])
+            let manual = try String.fetchOne(db, sql: "SELECT cover_artwork FROM games WHERE id = ?", arguments: [id])
+            return (cover, backdrop, manual)
+        }
+        XCTAssertNotNil(currentSlots.0)
+        XCTAssertNil(currentSlots.1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backdropFile.path))
+        XCTAssertEqual(currentSlots.2, "artwork/\(id)/\(manualCoverURL.lastPathComponent)")
+        XCTAssertEqual(FileManager.default.contents(atPath: manualCoverURL.path), manualCover)
     }
 
     func testWikipediaRejectsSummaryWithConflictingKnownYear() async throws {

@@ -109,5 +109,6 @@ public enum ServerMigrations {
         UserHiddenGamesMigrations.register(&migrator)
         CheatMigrations.register(&migrator)
         MetadataMigrations.registerLibretroUnmatchedRecovery(&migrator)
+        MetadataMigrations.registerSearchYear(&migrator)
     }
 }

@@ -29,27 +29,34 @@ func registerAdminLibraryRoutes(_ group: RouterGroup<SERequestContext>, store: S
     group.post("admin/metadata/rematch") { request, context -> Response in
         let auth = try requireLibraryAdmin(context)
         let body = try await request.decode(as: MetadataRematchRequest.self, context: context)
-        let queued = try await store.db.write { db -> Int in
-            let count: Int
-            if let gameIDs = body.gameIDs {
-                let uniqueIDs = Array(Set(gameIDs))
-                let existing = try Int.fetchOne(db, sql: """
-                    SELECT COUNT(*) FROM games WHERE id IN (\(Array(repeating: "?", count: uniqueIDs.count).joined(separator: ",")))
-                    """, arguments: StatementArguments(uniqueIDs)) ?? 0
-                guard existing == uniqueIDs.count else { throw HTTPError(.notFound, message: "Game not found") }
-                count = uniqueIDs.count
-                if !uniqueIDs.isEmpty {
-                    try db.execute(sql: "DELETE FROM metadata_jobs WHERE game_id IN (\(Array(repeating: "?", count: uniqueIDs.count).joined(separator: ",")))",
-                                   arguments: StatementArguments(uniqueIDs))
+        let detail = body.gameIDs?.joined(separator: ",") ?? "all"
+        let queued: Int
+        if let metadata {
+            queued = try await metadata.rematch(gameIDs: body.gameIDs, audit: { db in
+                try store.audit(auth, action: "metadata.rematch", detail: detail, in: db)
+            })
+        } else {
+            queued = try await store.db.write { db -> Int in
+                let count: Int
+                if let gameIDs = body.gameIDs {
+                    let uniqueIDs = Array(Set(gameIDs))
+                    let existing = try Int.fetchOne(db, sql: """
+                        SELECT COUNT(*) FROM games WHERE id IN (\(Array(repeating: "?", count: uniqueIDs.count).joined(separator: ",")))
+                        """, arguments: StatementArguments(uniqueIDs)) ?? 0
+                    guard existing == uniqueIDs.count else { throw HTTPError(.notFound, message: "Game not found") }
+                    count = uniqueIDs.count
+                    if !uniqueIDs.isEmpty {
+                        try db.execute(sql: "DELETE FROM metadata_jobs WHERE game_id IN (\(Array(repeating: "?", count: uniqueIDs.count).joined(separator: ",")))",
+                                       arguments: StatementArguments(uniqueIDs))
+                    }
+                } else {
+                    count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM games") ?? 0
+                    try db.execute(sql: "DELETE FROM metadata_jobs")
                 }
-            } else {
-                count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM games") ?? 0
-                try db.execute(sql: "DELETE FROM metadata_jobs")
+                try store.audit(auth, action: "metadata.rematch", detail: detail, in: db)
+                return count
             }
-            try store.audit(auth, action: "metadata.rematch", detail: body.gameIDs?.joined(separator: ",") ?? "all", in: db)
-            return count
         }
-        metadata?.enqueue()
         return try LibraryHTTP.json(MetadataRematchResponse(queued: queued))
     }
 

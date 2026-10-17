@@ -91,4 +91,10 @@ enum MetadataMigrations {
             try db.execute(sql: "UPDATE metadata_jobs SET match_status = NULL WHERE provider = 'libretro' AND match_status = 'unmatched'")
         }
     }
+
+    static func registerSearchYear(_ migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v12_metadata_search_year") { db in
+            try db.execute(sql: "ALTER TABLE metadata_jobs ADD COLUMN search_year INTEGER")
+        }
+    }
 }
