@@ -488,11 +488,15 @@ public enum CheatCodec {
             var groupLabel: String?
             var groupCodes: [String] = []
             var groupInput: [String] = []
+            var groupHasStandaloneLabel = false
+            var groupNeedsCompanion = false
             func flushGroup() {
                 guard !groupCodes.isEmpty else {
                     groupLabel = nil
                     groupCodes = []
                     groupInput = []
+                    groupHasStandaloneLabel = false
+                    groupNeedsCompanion = false
                     return
                 }
                 let label = groupLabel ?? "Cheat \(existingCount + entries.count + 1)"
@@ -503,6 +507,8 @@ public enum CheatCodec {
                 groupLabel = nil
                 groupCodes = []
                 groupInput = []
+                groupHasStandaloneLabel = false
+                groupNeedsCompanion = false
             }
             func append(_ code: String, label: String, input: String) {
                 for part in code.split(separator: "+") {
@@ -511,6 +517,14 @@ public enum CheatCodec {
                     entries.append(CheatBatchEntry(id: entries.count, label: label.isEmpty ? "Cheat \(n)" : label,
                                                    input: input, result: result, include: result.isValid))
                 }
+            }
+            func beginCodeGroup(_ code: String, label: String, input: String) {
+                groupLabel = label.isEmpty ? nil : label
+                groupCodes = [code]
+                groupInput = [input]
+                groupHasStandaloneLabel = false
+                groupNeedsCompanion = joinsNextLine(code, system: system)
+                if !groupNeedsCompanion { flushGroup() }
             }
             let lines = text.replacingOccurrences(of: "\r\n", with: "\n")
                 .replacingOccurrences(of: ";", with: "\n")
@@ -525,18 +539,26 @@ public enum CheatCodec {
                 if code.isEmpty {
                     flushGroup()
                     groupLabel = label.isEmpty ? trimmed : label
+                    groupHasStandaloneLabel = true
                     continue
                 }
-                if !label.isEmpty {
-                    flushGroup()
-                    append(code, label: label, input: trimmed)
-                } else if code.contains("+") {
-                    let pendingLabel = groupLabel ?? ""
+                if code.contains("+") {
+                    let pendingLabel = label.isEmpty ? (groupLabel ?? "") : label
                     flushGroup()
                     append(code, label: pendingLabel, input: trimmed)
-                } else {
+                } else if !label.isEmpty {
+                    flushGroup()
+                    beginCodeGroup(code, label: label, input: trimmed)
+                } else if groupHasStandaloneLabel {
                     groupCodes.append(code)
                     groupInput.append(trimmed)
+                } else if groupNeedsCompanion {
+                    groupCodes.append(code)
+                    groupInput.append(trimmed)
+                    groupNeedsCompanion = joinsNextLine(code, system: system)
+                    if !groupNeedsCompanion { flushGroup() }
+                } else {
+                    beginCodeGroup(code, label: "", input: trimmed)
                 }
             }
             flushGroup()
@@ -583,6 +605,23 @@ public enum CheatCodec {
             return (code, rest.joined(separator: " ").trimmingCharacters(in: CharacterSet(charactersIn: " -–:\t")))
         }
         return (words.first ?? line, words.dropFirst().joined(separator: " "))
+    }
+
+    static func joinsNextLine(_ normalizedLine: String, system: SystemID) -> Bool {
+        guard system == .psx || system == .n64 else { return false }
+        let parts = normalizeLine(normalizedLine).split(whereSeparator: \.isWhitespace)
+        guard let address = parts.first, address.count == 8,
+              address.allSatisfy({ hexDigits.contains($0) }),
+              let type = UInt8(String(address.prefix(2)), radix: 16) else { return false }
+        switch system {
+        case .n64:
+            return [0x50, 0xD0, 0xD1, 0xD2, 0xD3].contains(type)
+        case .psx:
+            return psxGameSharkTypes.contains(type)
+                && [0x50, 0xC2, 0xD0, 0xD1, 0xD2, 0xD3, 0xE0, 0xE1, 0xE2, 0xE3].contains(type)
+        default:
+            return false
+        }
     }
 
     static func looksLikeCode(_ word: String, system: SystemID) -> Bool { codeShapeRank(word, system: system) != nil }

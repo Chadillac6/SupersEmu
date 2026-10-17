@@ -317,7 +317,7 @@ struct CheatPasteView: View {
 
     private var editor: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("One code per line. Words on the same line become its name, e.g. \"Infinite lives C2C3-CF0D\".")
+            Text(editorHelpText)
                 .font(.callout).foregroundStyle(.secondary)
             TextEditor(text: $text)
                 .font(.body.monospaced())
@@ -328,6 +328,12 @@ struct CheatPasteView: View {
                 .accessibilityIdentifier("cheat-batch-text")
         }
         .padding()
+    }
+
+    private var editorHelpText: String {
+        let help = "One code per line. Words on the same line become its name, e.g. \"Infinite lives C2C3-CF0D\"."
+        guard [.gba, .psx, .n64].contains(system) else { return help }
+        return help + " For a code that spans several lines, put its name on its own line above it."
     }
 
     private var review: some View {
