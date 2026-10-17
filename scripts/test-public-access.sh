@@ -10,6 +10,7 @@ events="$tmp/events"
 cat >"$tmp/bin/caddy" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n ${CADDY_CALLS:-} ]]; then printf '%s\n' "$1" >>"$CADDY_CALLS"; fi
 if [[ "$1" == validate ]]; then exit 0; fi
 printf 'caddy\n' >>"$TEST_EVENTS"
 exec sleep 60
@@ -111,6 +112,23 @@ assert "public-access config is mode 0600" bash -c '[[ "$(stat -f "%Lp" "$1")" =
 
 "$script_dir/public-access.sh" disable --no-launchd --purge --data-dir "$data" >/dev/null
 assert "purge removes token and DDNS state" bash -c '[[ ! -e "$1/cloudflare.token" && ! -e "$1/ddns-state.json" && ! -e "$1/bin" ]]' _ "$data"
+
+path_data="$tmp/path-data"
+caddy_calls="$tmp/caddy-calls"
+: >"$events"
+if PATH=/usr/bin:/bin TEST_EVENTS="$events" CADDY_CALLS="$caddy_calls" \
+  SUPERSEMU_CADDY_PATH="$tmp/bin/caddy" \
+  "$script_dir/public-access.sh" enable --local-test --no-launchd --host localhost \
+  --data-dir "$path_data" >"$tmp/path-enable.log" 2>&1; then
+  path_status=0
+else
+  path_status=$?
+fi
+assert "enable works with Caddy outside the restricted PATH" test "$path_status" -eq 0
+assert "restricted-PATH enable validates and runs Caddy" bash -c \
+  '[[ -f "$1" && "$(wc -l <"$1")" -eq 2 && "$(sed -n "1p" "$1")" == validate && "$(sed -n "2p" "$1")" == run ]]' \
+  _ "$caddy_calls"
+"$script_dir/public-access.sh" disable --no-launchd --purge --data-dir "$path_data" >/dev/null
 
 rejected="$tmp/rejected"
 mkdir -p "$rejected"

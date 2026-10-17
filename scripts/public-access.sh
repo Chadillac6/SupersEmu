@@ -243,7 +243,7 @@ case "$action" in
     fi
     write_caddyfile
     SUPERSEMU_PUBLIC_HOST=$host SUPERSEMU_PUBLIC_PORT=$port SUPERSEMU_CADDY_DATA_DIR=$caddy_dir \
-      XDG_DATA_HOME=$caddy_dir caddy validate --config "$caddyfile" --adapter caddyfile
+      XDG_DATA_HOME=$caddy_dir "$caddy_bin" validate --config "$caddyfile" --adapter caddyfile
     if ((no_launchd)); then
       if [[ -f "$caddy_dir/caddy.pid" ]]; then
         old_pid=$(cat "$caddy_dir/caddy.pid")
