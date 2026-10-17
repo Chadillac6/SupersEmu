@@ -54,7 +54,6 @@ struct SystemSelectorBar: View {
         let fill = chip.logoStyle == .plate ? Color.white : Brand.Colors.surface
         return Button { selection = chip.system } label: {
             chipLabel(chip)
-                .frame(height: 22)
                 .padding(.horizontal, 14).padding(.vertical, 7)
                 .background { Capsule().fill(fill) }
                 .overlay {
@@ -73,13 +72,16 @@ struct SystemSelectorBar: View {
             switch chip.logoStyle {
             case .light:
                 Image(logo).renderingMode(.template).resizable().scaledToFit().foregroundStyle(Brand.Colors.ink)
+                    .frame(height: 22)
             case .original, .plate:
                 Image(logo).resizable().scaledToFit()
+                    .frame(height: 22)
             }
         } else {
             Text(chip.chip)
                 .font(.subheadline.bold())
                 .foregroundStyle(Brand.Colors.ink)
+                .frame(minHeight: 22)
         }
     }
 }
