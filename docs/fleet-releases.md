@@ -1,15 +1,19 @@
-# Mac fleet releases
+# Fleet releases
 
 The `Fleet CI and release` workflow runs server tests, Mac host/input tests, and an
 unsigned iOS simulator build for PRs. PR jobs have read-only tokens and no release
 secrets. Homebrew test fixtures use the existing fetch script; unavailable fixtures
-skip their matching tests. iOS distribution is not enabled by this workflow.
+skip their matching tests.
 
-A push to `main` (including a merged PR) runs the same checks, then builds a universal
-Developer ID release, notarizes and staples it, signs the Sparkle ZIP, and publishes
-a GitHub release with ZIP, DMG, and `appcast.xml`. The installed app polls the existing
-latest-release feed. Standard `macos-15` hosted runners with Xcode 26.2 (Swift 6.2) are used; no runner is installed
-on the production Mac mini. Failed checks or notarization prevent publication.
+A push to `main` (including a merged PR) runs the same checks, then builds and publishes
+the universal Developer ID Mac update and uploads the iOS build to TestFlight using one
+shared marketing version and build number. The marketing version advances by 0.0.1
+above the latest App Store Connect iOS or Sparkle Mac version, with `project.yml` as
+the minimum floor. TestFlight builds are added to the internal **Chad** group
+automatically. The Mac release is notarized and stapled, and its GitHub release contains
+the ZIP, DMG, and `appcast.xml`. Standard `macos-15` hosted runners with Xcode 26.2
+(Swift 6.2) are used; no runner is installed on the production Mac mini. Failed checks,
+notarization, or TestFlight upload fail the release job.
 
 ## One-time credential setup
 
@@ -51,14 +55,17 @@ remain enabled; do not grant release credentials to PR workflows.
 1. Open a PR and wait for `Mac and server checks` to pass.
 2. Merge the PR into `main`.
 3. Watch `Publish fleet update` in the Actions tab. Its successful completion means
-   a signed release is published; merging by itself is not proof of delivery.
-4. Macs with the bootstrap Sparkle app installed can fetch the update automatically
+   the Mac update was published and the iOS build was uploaded to TestFlight; merging
+   by itself is not proof of delivery.
+4. The iOS build appears in the internal **Chad** TestFlight group after processing.
+   Macs with the bootstrap Sparkle app installed can fetch the update automatically
    or use **Check for Updates**. A Mac serving the library may need administrator
    approval to restart its boot daemon; client-only Macs do not run that daemon.
 
 To retry a failed release, run this workflow manually on `main` using **Run workflow**.
-Build versions use UTC timestamps and reruns receive a new version. Builds are serialized
-per ref, and a stale main commit is not published if main has moved forward.
+Build numbers use UTC timestamps. Builds are serialized per ref, and a stale main
+commit is not published if main has moved forward. If the Mac update publishes but
+the TestFlight upload fails, the next run advances from the latest Mac version.
 
 ## Recovery
 
