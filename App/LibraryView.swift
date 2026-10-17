@@ -191,9 +191,22 @@ struct LibraryView: View {
                     .accessibilityIdentifier("connect-server")
             }
         } label: {
-            Label("Server", systemImage: server.isOnline ? "server.rack" : "exclamationmark.icloud")
+            Image(systemName: server.isOnline || server.status == .connecting ? "server.rack" : "exclamationmark.icloud")
+                .overlay(alignment: .topTrailing) {
+                    if server.status == .connecting {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.55)
+                            .frame(width: 10, height: 10)
+                            .background(.background, in: Circle())
+                            .offset(x: 4, y: -4)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .accessibilityLabel("Server")
         }
         .accessibilityIdentifier("server-menu")
+        .accessibilityValue(server.status == .connecting ? "Connecting" : "")
     }
 
     private var statusText: String {
