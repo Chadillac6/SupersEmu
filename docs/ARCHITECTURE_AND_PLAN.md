@@ -10,7 +10,7 @@ Legend: **[Verified]** = checked today against a primary source. **[Inference]**
   invites fewer than 10 friends and chooses which games each person sees.
 - Phase 2 friends sign in with an invite. Games download to their Mac/iPhone/iPad and **run locally**. Saves,
   favourites and history are private per user and sync to the server.
-- LAN and remote (Tailscale) access from Phase 1. Server starts at boot. HTTP API + `supersemu` CLI
+- LAN and public HTTPS access from Phase 1. Server starts at boot. HTTP API + `supersemu` CLI
   for bots such as OpenClaw.
 - **Phase 1 is Chad only** (server + Mac/iPhone/iPad apps) so he can use it and give feedback.
   **Phase 2 goal:** invited friends with their own accounts, permitted games and private saves.
@@ -132,16 +132,16 @@ Each milestone: spec docs → implementation → tests → demo video/screens �
 | Milestone | Scope | Exit criteria |
 |---|---|---|
 | **M0 — Decision gate + spike** | Done: ADRs, specs, SNES on Mac + iPhone sim, save/load, N64 iOS build check | Merged (#1–#3) |
-| **M1 — Server + apps for Chad** | Mac mini server spike, then daemon at boot, Server mode, import on the server, Chad's devices paired by QR; Netflix-style library from the server; download and play locally SNES, GB, GBC, GBA, Genesis; native saves, auto/manual states synced across his devices; LAN + his Tailscale; CLI | Chad plays on his iPhone from the Mac mini library (at home and on cellular), quits, and continues on his Mac |
+| **M1 — Server + apps for Chad** | Mac mini server spike, then daemon at boot, Server mode, import on the server, Chad's devices paired by QR; Netflix-style library from the server; download and play locally SNES, GB, GBC, GBA, Genesis; native saves, auto/manual states synced across his devices; LAN + public HTTPS; CLI | Chad plays on his iPhone from the Mac mini library (at home and on cellular), quits, and continues on his Mac |
 | **M2 — Smart import + disc systems** | Bulk messy import on the server, hash ID, art, Review Needed; PS1, Sega CD, 32X; multi-disc + .m3u; BIOS checker | 200-file messy import fixture; 3-disc PS1 test set |
 | **M3 — Hard consoles + controller polish** | N64, Retrolink/generic HID on Mac, per-game remapping UI | Per-console device test logs |
-| **Phase 2 — Friends** | Invites, player accounts, per-user game permissions, private saves, Tailscale sharing, revoke; webhooks, OpenClaw skill, backups, offline UX; Dreamcast if no-JIT speed allows; Apple TV; shaders | A friend accepts an invite, sees only permitted games, and their saves never appear in Chad's account |
+| **Phase 2 — Friends** | Invites, player accounts, per-user game permissions, private saves, public HTTPS access, revoke; webhooks, OpenClaw skill, backups, offline UX; Dreamcast if no-JIT speed allows; Apple TV; shaders | A friend accepts an invite, sees only permitted games, and their saves never appear in Chad's account |
 
 **Parallelism (per your preference):** M0 is a single blocking "Wave 0". From M1 on, independent tracks (server + API, player app UI, import pipeline, client sync, controllers, per-console core bring-up) can run as parallel Devin sessions consolidated into one PR per milestone.
 
 ## 9. Decisions (v0.2)
 
-Settled: ADR 0004; Tailscale for remote access; one Mac app with Server and Player modes; invite
+Settled: ADR 0004; public HTTPS for remote access; one Mac app with Server and Player modes; invite
 sign-in (Phase 2) on top of QR device pairing (Phase 1); Phase 1 is Chad only.
 
 Still needed from Chad:

@@ -227,7 +227,7 @@ final class ClientCacheTests: XCTestCase {
 
     func testPairingLinkRoundTripAndTypedAddress() throws {
         let payload = PairingPayload(serverName: "Chad's Mac mini",
-                                     urls: [URL(string: "https://mac-mini.local:8487")!, URL(string: "https://mini.tail.ts.net:8487")!],
+                                     urls: [URL(string: "https://mac-mini.local:8487")!, URL(string: "https://games.supersemu.com:8487")!],
                                      certificateSHA256: "ab12", code: "123456")
         let link = try PairingLinkParser.link(for: payload)
         XCTAssertTrue(link.hasPrefix("supersemu://pair?d="))
@@ -239,7 +239,7 @@ final class ClientCacheTests: XCTestCase {
         XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "mac-mini.local")?.absoluteString, "https://mac-mini.local:8487")
         XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "192.168.1.20:9000")?.absoluteString, "https://192.168.1.20:9000")
         XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "http://localhost:8487")?.absoluteString, "http://localhost:8487")
-        XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "https://mini.tail.ts.net/")?.absoluteString, "https://mini.tail.ts.net:8487")
+        XCTAssertEqual(PairingLinkParser.serverURL(fromAddress: "https://games.supersemu.com/")?.absoluteString, "https://games.supersemu.com:8487")
         XCTAssertNil(PairingLinkParser.serverURL(fromAddress: "  "))
         XCTAssertEqual(PairingLinkParser.payload(address: "mac-mini.local", code: "123 456")?.code, "123456")
         XCTAssertNil(PairingLinkParser.payload(address: "mac-mini.local", code: "12345"))

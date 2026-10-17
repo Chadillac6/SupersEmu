@@ -21,7 +21,7 @@ public enum CertificatePin {
     }
 
     /// The leaf certificate of `trust` must match the pin. Hostname and CA chain are deliberately not
-    /// checked: the pin from the pairing QR is the trust anchor for LAN and Tailscale URLs alike.
+    /// checked: the pin from the pairing QR is the trust anchor for private server URLs.
     public static func evaluate(_ trust: SecTrust, expected: String) -> Bool {
         guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let leaf = chain.first else { return false }
         return matches(certificateDER: SecCertificateCopyData(leaf) as Data, expected: expected)

@@ -7,7 +7,7 @@ struct Login: AsyncParsableCommand {
         abstract: "Save a server URL and token to ~/.config/supersemu/config.json (mode 0600).",
         discussion: "The token is checked against /v1/me first. Env SUPERSEMU_CONFIG overrides the file path.")
 
-    @Option(help: "Server URL, e.g. https://macmini.tailnet.ts.net:8487.") var server: String
+    @Option(help: "Server URL, e.g. https://games.supersemu.com.") var server: String
     @Option(help: "Token. Prefer --token-stdin so it stays out of shell history.") var token: String?
     @Flag(help: "Read the token from stdin.") var tokenStdin = false
     @Option(help: "Server certificate SHA-256 to pin for the check (self-signed server).") var certificateSHA256: String?

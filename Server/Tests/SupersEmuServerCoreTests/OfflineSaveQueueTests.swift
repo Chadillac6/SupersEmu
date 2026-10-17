@@ -3,7 +3,7 @@ import SupersEmuKit
 @testable import SupersEmuServerCore
 import XCTest
 
-/// Signed in, but the app knows the server is unreachable (e.g. away from home with Tailscale off).
+/// Signed in, but the app knows the server is unreachable while away from home.
 final class KnownOfflineProvider: SaveSyncServerProvider, @unchecked Sendable {
     private let lock = NSLock()
     private var client: APIClient?

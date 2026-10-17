@@ -112,9 +112,9 @@ final class NetworkTests: XCTestCase {
 
     func testConnectionFallsBackAndRemembersLastGoodURL() async throws {
         let lan = URL(string: "https://mac-mini.local:8487")!
-        let tailscale = URL(string: "https://mac-mini.tail1234.ts.net:8487")!
+        let remote = URL(string: "https://games.supersemu.com:8487")!
         let changes = TestBox<[URL?]>([])
-        let connection = ServerConnection(profile: ServerProfile(serverName: "Mini", urls: [lan, tailscale], certificateSHA256: nil),
+        let connection = ServerConnection(profile: ServerProfile(serverName: "Mini", urls: [lan, remote], certificateSHA256: nil),
                                           tokenStore: InMemoryTokenStore(),
                                           onProfileChange: { profile in changes.update { $0.append(profile.lastGoodURL) } })
         let tried = TestBox<[URL]>([])
@@ -122,11 +122,11 @@ final class NetworkTests: XCTestCase {
             tried.update { $0.append(url) }
             if url == lan { throw URLError(.cannotFindHost) }
         }
-        XCTAssertEqual(url, tailscale)
-        XCTAssertEqual(tried.value, [lan, tailscale])
-        XCTAssertEqual(changes.value, [tailscale])
+        XCTAssertEqual(url, remote)
+        XCTAssertEqual(tried.value, [lan, remote])
+        XCTAssertEqual(changes.value, [remote])
         let candidates = await connection.candidates
-        XCTAssertEqual(candidates, [tailscale, lan])
+        XCTAssertEqual(candidates, [remote, lan])
 
         do {
             try await connection.resolveURL { _ in throw URLError(.timedOut) }
@@ -150,21 +150,22 @@ final class NetworkTests: XCTestCase {
         XCTAssertEqual(ServerConnection.candidateOrder(urls: [a], lastGood: b), [b, a])
     }
 
-    // MARK: LAN / Tailscale URLs and Bonjour
+    // MARK: LAN URLs and Bonjour
 
-    func testAdvertisedURLsPutLANBeforeTailscale() {
+    func testAdvertisedURLsKeepLANAndExcludeOverlayVPNAddresses() {
         let urls = LocalNetwork.advertisedURLs(
-            scheme: "https", port: 8487, tailscaleHost: "mini.tail1234.ts.net", hostName: "Chads-Mac-mini",
+            scheme: "https", port: 8487, hostName: "Chads-Mac-mini",
             addresses: [.init(interface: "utun4", address: "100.101.1.2"), .init(interface: "en0", address: "192.168.1.20"),
-                        .init(interface: "en1", address: "169.254.3.4"), .init(interface: "en0", address: "192.168.1.20")])
+                        .init(interface: "en1", address: "169.254.3.4"), .init(interface: "en0", address: "192.168.1.20"),
+                        .init(interface: "utun4", address: "fd7a:115c:a1e0::1")])
         XCTAssertEqual(urls.map(\.absoluteString), [
             "https://Chads-Mac-mini.local:8487", "https://192.168.1.20:8487",
-            "https://mini.tail1234.ts.net:8487", "https://100.101.1.2:8487",
         ])
-        XCTAssertTrue(LocalNetwork.isTailscale("100.64.0.1"))
-        XCTAssertTrue(LocalNetwork.isTailscale("100.127.255.255"))
-        XCTAssertFalse(LocalNetwork.isTailscale("100.128.0.1"))
-        XCTAssertFalse(LocalNetwork.isTailscale("10.0.0.1"))
+        XCTAssertTrue(LocalNetwork.isOverlayVPNAddress("100.64.0.1"))
+        XCTAssertTrue(LocalNetwork.isOverlayVPNAddress("100.127.255.255"))
+        XCTAssertTrue(LocalNetwork.isOverlayVPNAddress("fd7a:115c:a1e0::1"))
+        XCTAssertFalse(LocalNetwork.isOverlayVPNAddress("100.128.0.1"))
+        XCTAssertFalse(LocalNetwork.isOverlayVPNAddress("10.0.0.1"))
     }
 
     func testPairingEnvironmentUsesSnapshotWithoutDetection() {
@@ -174,11 +175,11 @@ final class NetworkTests: XCTestCase {
     }
 
     func testPairingEnvironmentDetectsCurrentURLsWhenConfigured() {
-        let detection = URLDetection(scheme: "https", port: 8487, tailscaleHost: "mini.tail1234.ts.net")
+        let detection = URLDetection(scheme: "https", port: 8487)
         let environment = PairingEnvironment(urls: [], certificateSHA256: "pin", detection: detection)
         XCTAssertEqual(
             environment.currentURLs,
-            LocalNetwork.advertisedURLs(scheme: detection.scheme, port: detection.port, tailscaleHost: detection.tailscaleHost))
+            LocalNetwork.advertisedURLs(scheme: detection.scheme, port: detection.port))
     }
 
     func testPairingEnvironmentFallbackEnablesRuntimeDetection() throws {
@@ -187,7 +188,6 @@ final class NetworkTests: XCTestCase {
         let detection = try XCTUnwrap(environment.detection)
         XCTAssertEqual(detection.scheme, environment.certificateSHA256 == nil ? "http" : "https")
         XCTAssertEqual(detection.port, ServerDefaults.port)
-        XCTAssertNil(detection.tailscaleHost)
     }
 
     func testServerLauncherUsesDetectionUnlessAdvertiseURLsAreExplicit() throws {
@@ -198,7 +198,7 @@ final class NetworkTests: XCTestCase {
         options.port = 8487
 
         let detected = try ServerLauncher.makeApplication(store: store, options: options).environment
-        XCTAssertEqual(detected.detection, URLDetection(scheme: "http", port: 8487, tailscaleHost: nil))
+        XCTAssertEqual(detected.detection, URLDetection(scheme: "http", port: 8487))
 
         let explicitURLs = [URL(string: "https://manual.example.com:8487")!]
         options.advertiseURLs = explicitURLs

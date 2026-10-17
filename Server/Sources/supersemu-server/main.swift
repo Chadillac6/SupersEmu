@@ -29,10 +29,11 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
         var publicPort: Int?
         @Flag(help: "Serve plain HTTP instead of HTTPS (tests and local debugging only).")
         var insecureHTTP = false
-        @Option(name: .customLong("advertise-url"), help: "URL to put in pairing QR codes (repeatable; default: detected LAN + Tailscale).")
+        @Option(name: .customLong("advertise-url"), help: "URL to put in pairing QR codes (repeatable; default: detected LAN addresses).")
         var advertiseURLs: [String] = []
-        @Option(help: "Tailscale MagicDNS name of this Mac, e.g. mac-mini.tail1234.ts.net.")
-        var tailscaleHost: String?
+        // Deprecated compatibility option for existing LaunchDaemon plists.
+        @Option(name: .customLong("tailscale-host"), help: ArgumentHelp("Deprecated and ignored.", visibility: .hidden))
+        var deprecatedTailscaleHost: String?
         @Flag(help: "Don't advertise _supersemu._tcp over Bonjour.")
         var noBonjour = false
         @Flag(help: "Don't match games against libretro-database or download artwork.")
@@ -65,7 +66,6 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
                 }
                 return url
             }
-            runOptions.tailscaleHost = tailscaleHost
             runOptions.bonjour = !noBonjour
             runOptions.metadata = !noMetadata
             try await ServerLauncher.run(store: store, options: runOptions)

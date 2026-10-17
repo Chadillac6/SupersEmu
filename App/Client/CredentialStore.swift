@@ -12,7 +12,7 @@ enum LaunchEnvironment {
 /// What this device needs to talk to its server after pairing.
 struct ServerCredential: Codable, Equatable, Sendable {
     var serverName: String
-    /// Tried in order (LAN first, then Tailscale).
+    /// Tried in order, with the last successful URL first.
     var urls: [URL]
     var publicURL: URL? = nil
     var certificateSHA256: String?
