@@ -122,10 +122,16 @@ struct HomeHero: View {
             }
             if screenshot != nil {
                 VStack(alignment: .leading, spacing: 0) {
-                    titleBlock
-                        .padding(.leading, badgeLeading + badgeWidth + 14)
-                        .padding(.trailing, bodyPadding)
-                        .frame(maxWidth: .infinity, minHeight: titleBlockHeight, alignment: .topLeading)
+                    if hasScreenshotBadge {
+                        titleBlock
+                            .padding(.leading, badgeLeading + badgeWidth + 14)
+                            .padding(.trailing, bodyPadding)
+                            .frame(maxWidth: .infinity, minHeight: titleBlockHeight, alignment: .topLeading)
+                    } else {
+                        titleBlock
+                            .padding(.horizontal, bodyPadding)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
                     actionRow
                         .padding(.horizontal, bodyPadding)
                         .padding(.top, 12)
@@ -179,13 +185,17 @@ struct HomeHero: View {
                 await ArtworkCache.load(path, key: ArtworkCache.key(item.id, path), server: server) {
                     screenshot = $0
                 }
-            } else if let url = SaveSlotStore(directory: AppPaths.stateDirectory(for: item.id)).latestScreenshotURL(),
-                      let data = try? Data(contentsOf: url),
-                      let image = ArtworkCache.image(from: data) {
+            }
+            if screenshot == nil,
+               let url = SaveSlotStore(directory: AppPaths.stateDirectory(for: item.id)).latestScreenshotURL(),
+               let data = try? Data(contentsOf: url),
+               let image = ArtworkCache.image(from: data) {
                 screenshot = image
             }
-            await ArtworkCache.load(item.coverPath, key: item.id, server: server) {
-                cover = $0
+            if screenshot != nil {
+                await ArtworkCache.load(item.coverPath, key: item.id, server: server) {
+                    cover = $0
+                }
             }
         }
     }
@@ -233,6 +243,7 @@ struct HomeHero: View {
     private var badgeOverlap: CGFloat { compact ? 34 : 44 }
     private var badgeLeading: CGFloat { 14 }
     private var titleBlockHeight: CGFloat { badgeOverlap + 24 }
+    private var hasScreenshotBadge: Bool { screenshot != nil && cover != nil }
 
     private var height: CGFloat {
         #if os(iOS)
