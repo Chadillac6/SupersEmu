@@ -82,7 +82,7 @@ struct WideArt: View {
                     GeometryReader { proxy in
                         cover.resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 10)).shadow(radius: 12)
                             .padding(18)
-                            .frame(maxWidth: proxy.size.width * (preferCover ? Self.heroCoverFraction : 1), maxHeight: proxy.size.height)
+                            .frame(maxWidth: proxy.size.width * (preferCover ? Self.heroCoverFraction : 1), maxHeight: proxy.size.height, alignment: .trailing)
                             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .trailing)
                     }
                 }
