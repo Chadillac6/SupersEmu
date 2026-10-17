@@ -21,7 +21,7 @@ final class UpdateStatusTests: XCTestCase {
     func testVersionLabelIncludesMarketingAndBuildVersions() {
         XCTAssertEqual(
             UpdateStatusPresentation.versionLabel(shortVersion: "0.0.1", buildVersion: "20261017.111102"),
-            "0.0.1 (20261017.111102)"
+            "Version 0.0.1 (20261017.111102)"
         )
     }
 

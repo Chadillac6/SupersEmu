@@ -59,7 +59,7 @@ enum UpdateStatusPresentation {
     }
 
     static func versionLabel(shortVersion: String?, buildVersion: String?) -> String {
-        "\(shortVersion ?? "Unknown") (\(buildVersion ?? "Unknown"))"
+        "Version \(shortVersion ?? "Unknown") (\(buildVersion ?? "Unknown"))"
     }
 
     static var currentVersionLabel: String {
