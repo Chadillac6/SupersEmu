@@ -18,6 +18,13 @@ final class CheatCodecTests: XCTestCase {
         XCTAssertEqual(CheatCodec.parse(" c2c3cf0d ", system: .snes).normalized, "C2C3-CF0D")
         XCTAssertTrue(CheatCodec.parse("c2c3 cf0d", system: .snes).isValid)
         XCTAssertEqual(CheatCodec.parse("rfaaa6vr", system: .genesis).normalized, "RFAA-A6VR")
+        XCTAssertEqual(CheatCodec.parse("000000", system: .gb).normalized, "000-000")
+        XCTAssertEqual(CheatCodec.parse("000000000", system: .gbc).normalized, "000-000-000")
+        XCTAssertEqual(CheatCodec.parse("01001234", system: .gb).normalized, "01001234")
+        XCTAssertEqual(CheatCodec.parse("12345678abcdef01", system: .gba).normalized, "12345678 ABCDEF01")
+        XCTAssertEqual(CheatCodec.parse("12345678abcd", system: .n64).normalized, "12345678 ABCD")
+        XCTAssertEqual(CheatCodec.normalize("12345678abcd,12345678ABCDEF01", system: .gba),
+                       "12345678 ABCD\n12345678 ABCDEF01")
     }
 
     func testSNESInvalidCodesExplainWhy() {
@@ -39,17 +46,70 @@ final class CheatCodecTests: XCTestCase {
     func testWrongSystemAndActionReplayAreUnsupportedNotInvalid() {
         guard case .unsupported(let detected, _, _) = CheatCodec.parse("RFAA-A6VR", system: .snes) else { return XCTFail() }
         XCTAssertEqual(detected, .genesisGameGenie)
-        guard case .unsupported(let par, _, _) = CheatCodec.parse("7E0DBE:05", system: .snes) else { return XCTFail() }
-        XCTAssertEqual(par, .proActionReplay)
-        guard case .unsupported(let genesisPAR, _, _) = CheatCodec.parse("FFFE18:0009", system: .genesis) else { return XCTFail() }
-        XCTAssertEqual(genesisPAR, .proActionReplay)
+        XCTAssertEqual(CheatCodec.parse("7E0DBE:05", system: .snes),
+                       .valid(format: .proActionReplay, normalized: "7E0DBE:05", address: 0x7E0DBE, value: 0x05))
+        XCTAssertEqual(CheatCodec.parse("FFFE18:0009", system: .genesis),
+                       .valid(format: .proActionReplay, normalized: "FFFE18:0009", address: 0xFFFE18, value: 0x0009))
+        XCTAssertEqual(CheatCodec.parse("FFFE18:0009", system: .sega32x),
+                       .valid(format: .proActionReplay, normalized: "FFFE18:0009", address: 0xFFFE18, value: 0x0009))
+        XCTAssertEqual(CheatCodec.parse("FFFE18:0009", system: .segacd),
+                       .valid(format: .proActionReplay, normalized: "FFFE18:0009", address: 0xFFFE18, value: 0x0009))
+        let discReason = "Game Genie codes patch a cartridge, and Sega CD games run from a disc. Use Pro Action Replay codes (XXXXXX:XXXX)."
+        XCTAssertEqual(CheatCodec.parse("RFAA-A6VR", system: .segacd),
+                       .unsupported(detected: .genesisGameGenie, normalized: "RFAA-A6VR", reason: discReason))
+        XCTAssertEqual(CheatCodec.parse("7E0DBE05", system: .snes).normalized, "7E0D-BE05")
     }
 
-    func testSystemsWithoutCheatSupport() {
-        XCTAssertFalse(CheatCodec.supportsCheats(.psx))
-        XCTAssertFalse(CheatCodec.supportsCheats(.segacd))
-        XCTAssertTrue(CheatCodec.supportsCheats(.snes))
+    func testEverySystemHasCheatFormats() {
+        XCTAssertTrue(SystemID.allCases.allSatisfy(CheatCodec.supportsCheats))
+        XCTAssertEqual(CheatCodec.formats(for: .snes), [.snesGameGenie, .proActionReplay])
+        XCTAssertEqual(CheatCodec.formats(for: .genesis), [.genesisGameGenie, .proActionReplay])
+        XCTAssertEqual(CheatCodec.formats(for: .sega32x), [.genesisGameGenie, .proActionReplay])
+        XCTAssertEqual(CheatCodec.formats(for: .segacd), [.proActionReplay])
+        XCTAssertEqual(CheatCodec.formats(for: .gb), [.gbGameGenie, .gbGameShark])
+        XCTAssertEqual(CheatCodec.formats(for: .gbc), [.gbGameGenie, .gbGameShark])
+        XCTAssertEqual(CheatCodec.formats(for: .gba), [.gbaCode, .gbaCodeBreaker])
+        XCTAssertEqual(CheatCodec.formats(for: .psx), [.psxGameShark])
+        XCTAssertEqual(CheatCodec.formats(for: .n64), [.n64GameShark])
         guard case .invalid = CheatCodec.parse("C2C3-CF0D", system: .gba) else { return XCTFail() }
+    }
+
+    func testGameBoyFormatsAndGameSharkTypes() {
+        XCTAssertEqual(CheatCodec.parse("000-000", system: .gb),
+                       .valid(format: .gbGameGenie, normalized: "000-000", address: 0x7000, value: 0))
+        XCTAssertEqual(CheatCodec.parse("000-000-000", system: .gbc),
+                       .valid(format: .gbGameGenie, normalized: "000-000-000", address: 0x7000, value: 0))
+        XCTAssertEqual(CheatCodec.parse("01001234", system: .gb),
+                       .valid(format: .gbGameShark, normalized: "01001234", address: 0x1234, value: 0))
+        XCTAssertEqual(CheatCodec.parse("00123456", system: .gbc),
+                       .unsupported(detected: .gbGameShark, normalized: "00123456",
+                                    reason: "Only GameShark codes starting with 01 work for Game Boy."))
+        guard case .invalid = CheatCodec.parse("000-00Z", system: .gb) else { return XCTFail() }
+    }
+
+    func testGBACodesAndLineNormalization() {
+        XCTAssertEqual(CheatCodec.parse("12345678 89abcdef", system: .gba),
+                       .valid(format: .gbaCode, normalized: "12345678 89ABCDEF", address: 0x12345678, value: 0xCDEF))
+        XCTAssertEqual(CheatCodec.parse("12345678 abcd", system: .gba),
+                       .valid(format: .gbaCodeBreaker, normalized: "12345678 ABCD", address: 0x12345678, value: 0xABCD))
+        XCTAssertEqual(CheatCodec.parse("12345678abcd,12345678abcdef01", system: .gba).normalized,
+                       "12345678 ABCD\n12345678 ABCDEF01")
+    }
+
+    func testPS1AndN64GameSharkCodesAndLimits() {
+        XCTAssertEqual(CheatCodec.parse("8009c6e4 03e7", system: .psx),
+                       .valid(format: .psxGameShark, normalized: "8009C6E4 03E7", address: 0x8009C6E4, value: 0x03E7))
+        guard case .unsupported(.psxGameShark, _, let psxReason) = CheatCodec.parse("0009C6E4 03E7", system: .psx) else {
+            return XCTFail()
+        }
+        XCTAssertTrue(psxReason.contains("0x00"), psxReason)
+        XCTAssertEqual(CheatCodec.parse("8009C6E403E7", system: .n64),
+                       .valid(format: .n64GameShark, normalized: "8009C6E4 03E7", address: 0x8009C6E4, value: 0x03E7))
+        XCTAssertEqual(CheatCodec.coreCode("8009C6E4 03E7\n8009C6E6 0001"), "8009C6E4 03E7 8009C6E6 0001")
+        guard case .invalid(let reason) = CheatCodec.parse(String(repeating: "A", count: 241), system: .n64) else {
+            return XCTFail()
+        }
+        XCTAssertTrue(reason.contains("240"), reason)
     }
 
     func testBatchTakesNamesFromTheLineAndFallsBackToNumbers() {
@@ -66,6 +126,27 @@ final class CheatCodecTests: XCTestCase {
         XCTAssertEqual(entries.map(\.include), [true, true, true, false, true, true])
         XCTAssertEqual(entries[3].result.isValid, false)
         XCTAssertEqual(entries.map { $0.result.normalized }, ["C2C3-CF0D", "DD32-6DAD", "1234-5678", nil, "DD32-6DAD", "C2C3-CF0D"])
+    }
+
+    func testLineBasedBatchGroupsLabelsAndCodeLines() {
+        let grouped = CheatCodec.parseBatch("""
+        Infinite lives
+        8009C6E4 03E7
+        8009C6E6 0001
+        8009C6E8 0002
+        """, system: .n64)
+        XCTAssertEqual(grouped.count, 1)
+        XCTAssertEqual(grouped[0].label, "Infinite lives")
+        XCTAssertEqual(grouped[0].result.normalized, "8009C6E4 03E7\n8009C6E6 0001\n8009C6E8 0002")
+
+        let bare = CheatCodec.parseBatch("8009C6E403E7\n8009C6E60001\n8009C6E80002", system: .n64)
+        XCTAssertEqual(bare.count, 3)
+        XCTAssertEqual(bare.map(\.result.isValid), [true, true, true])
+
+        let inline = CheatCodec.parseBatch("8009C6E4 03E7 Infinite lives", system: .n64)
+        XCTAssertEqual(inline.count, 1)
+        XCTAssertEqual(inline[0].label, "Infinite lives")
+        XCTAssertEqual(inline[0].result.normalized, "8009C6E4 03E7")
     }
 
     func testNewCheatsDefaultToEnabledAndUnknownFormatsDecode() throws {
@@ -122,6 +203,22 @@ final class CheatMergeTests: XCTestCase {
         var a = base()
         a.setLabel("x", at: t0 + 5)
         XCTAssertEqual(CheatMerge.merge(a, a), a)
+    }
+
+    func testUnknownIncomingFormatPreservesKnownFormatOnlyWhenCodeMatches() {
+        var current = base()
+        var oldServerEcho = base()
+        oldServerEcho.format = .unknown
+        oldServerEcho.codeUpdatedAt = t0 + 5
+        let sameCode = CheatMerge.merge(current, oldServerEcho)
+        XCTAssertEqual(sameCode.code, current.code)
+        XCTAssertEqual(sameCode.format, .snesGameGenie)
+
+        var newCode = oldServerEcho
+        newCode.setCode("000-000", format: .gbGameGenie, at: t0 + 10)
+        let changedCode = CheatMerge.merge(current, newCode)
+        XCTAssertEqual(changedCode.code, "000-000")
+        XCTAssertEqual(changedCode.format, .gbGameGenie)
     }
 }
 

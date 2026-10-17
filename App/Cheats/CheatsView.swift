@@ -1,7 +1,7 @@
 import SwiftUI
 import SupersEmuKit
 
-/// Saved Game Genie codes for one game: toggle, edit, delete, add one, or paste many.
+/// Saved codes for one game: toggle, edit, delete, add one, or paste many.
 struct CheatsView: View {
     let gameID: String
     let title: String
@@ -23,7 +23,7 @@ struct CheatsView: View {
                     if cheats.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("No cheats yet").font(.headline)
-                            Text("Add a \(CheatCodec.gameGenieFormat(for: system)?.displayName ?? "Game Genie") code, or paste a list with one code per line.")
+                            Text("Add a \(CheatCodec.formats(for: system).first?.displayName ?? "cheat") code, or paste a list with one code per line.")
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 6)
@@ -181,17 +181,26 @@ struct CheatEditor: View {
                     TextField(defaultLabel, text: $label).accessibilityIdentifier("cheat-label")
                 }
                 Section {
-                    TextField(placeholder, text: $code)
-                        .font(.body.monospaced())
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.characters)
-                        #endif
-                        .focused($codeFocused)
-                        .onSubmit(save)
-                        .accessibilityIdentifier("cheat-code")
+                    Group {
+                        if usesMultilineInput {
+                            TextField("Code", text: $code, prompt: Text(placeholder), axis: .vertical)
+                                .lineLimit(1...8)
+                                .labelsHidden()
+                        } else {
+                            TextField("Code", text: $code, prompt: Text(placeholder))
+                                .labelsHidden()
+                                .onSubmit(save)
+                        }
+                    }
+                    .font(.body.monospaced())
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.characters)
+                    #endif
+                    .focused($codeFocused)
+                    .accessibilityIdentifier("cheat-code")
                 } header: {
-                    Text(CheatCodec.gameGenieFormat(for: system)?.displayName ?? "Code")
+                    Text(CheatCodec.formats(for: system).map(\.displayName).joined(separator: " or "))
                 } footer: {
                     feedback(result).accessibilityIdentifier("cheat-code-feedback")
                 }
@@ -215,7 +224,18 @@ struct CheatEditor: View {
         #endif
     }
 
-    private var placeholder: String { system == .snes ? "C2C3-CF0D" : "RFAA-A6VR" }
+    private var usesMultilineInput: Bool { system == .gba || system == .psx || system == .n64 }
+
+    private var placeholder: String {
+        switch system {
+        case .snes: "C2C3-CF0D"
+        case .genesis, .sega32x: "RFAA-A6VR"
+        case .segacd: "FF0123:0063"
+        case .gb, .gbc: "00A-17B-C49"
+        case .gba: "XXXXXXXX XXXXXXXX"
+        case .psx, .n64: "8009C6E4 03E7"
+        }
+    }
 
     @ViewBuilder private func feedback(_ result: CheatParseResult) -> some View {
         if code.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -223,8 +243,14 @@ struct CheatEditor: View {
         } else {
             switch result {
             case .valid(let format, let normalized, let address, let value):
-                Label("Valid \(format.displayName): \(normalized) → $\(String(address, radix: 16, uppercase: true)) = \(String(value, radix: 16, uppercase: true))",
-                      systemImage: "checkmark.circle").foregroundStyle(.green)
+                if usesMultilineInput {
+                    let count = normalized.split(separator: "\n").count
+                    let lineLabel = count == 1 ? "line" : "lines"
+                    Label("Valid \(format.displayName) (\(count) \(lineLabel))", systemImage: "checkmark.circle").foregroundStyle(.green)
+                } else {
+                    Label("Valid \(format.displayName): \(normalized) → $\(String(address, radix: 16, uppercase: true)) = \(String(value, radix: 16, uppercase: true))",
+                          systemImage: "checkmark.circle").foregroundStyle(.green)
+                }
             case .invalid(let reason):
                 Label(reason, systemImage: "xmark.circle").foregroundStyle(.red)
             case .unsupported(_, _, let reason):

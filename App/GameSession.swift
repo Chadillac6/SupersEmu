@@ -223,7 +223,7 @@ final class GameSession {
             normalized.code = code
             sent.append(normalized)
         }
-        let outcomes = host.applyCheats(sent.map(\.code))
+        let outcomes = host.applyCheats(sent.map { CheatCodec.coreCode($0.code) })
         for (cheat, outcome) in zip(sent, outcomes) {
             switch CheatOutcome(rawValue: outcome.intValue) {
             case .applied: states[cheat.id] = .applied
