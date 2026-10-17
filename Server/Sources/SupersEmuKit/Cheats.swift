@@ -177,6 +177,8 @@ public struct CheatBatchEntry: Equatable, Sendable, Identifiable {
 }
 
 public enum CheatCodec {
+    public static let maxCodeLength = 240
+
     public static func formats(for system: SystemID) -> [CheatFormat] {
         switch system {
         case .snes: [.snesGameGenie, .proActionReplay]
@@ -232,7 +234,7 @@ public enum CheatCodec {
             return .invalid(reason: "Cheats aren't supported for this system yet.")
         }
         if code.isEmpty { return .invalid(reason: "Enter a code.") }
-        if coreCode(code).utf8.count > 240 {
+        if coreCode(code).utf8.count > maxCodeLength {
             return .invalid(reason: "Codes may not exceed 240 characters when sent to the core.")
         }
 
@@ -487,12 +489,13 @@ public enum CheatCodec {
             var groupCodes: [String] = []
             var groupInput: [String] = []
             func flushGroup() {
-                guard let label = groupLabel, !groupCodes.isEmpty else {
+                guard !groupCodes.isEmpty else {
                     groupLabel = nil
                     groupCodes = []
                     groupInput = []
                     return
                 }
+                let label = groupLabel ?? "Cheat \(existingCount + entries.count + 1)"
                 let code = groupCodes.joined(separator: "\n")
                 let result = parse(code, system: system)
                 entries.append(CheatBatchEntry(id: entries.count, label: label, input: groupInput.joined(separator: "\n"),
@@ -509,10 +512,15 @@ public enum CheatCodec {
                                                    input: input, result: result, include: result.isValid))
                 }
             }
-            let lines = text.replacingOccurrences(of: ";", with: "\n").replacingOccurrences(of: ",", with: "\n")
-            for line in lines.split(whereSeparator: \.isNewline) {
+            let lines = text.replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: ";", with: "\n")
+                .replacingOccurrences(of: ",", with: "\n")
+            for line in lines.components(separatedBy: .newlines) {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
-                guard !trimmed.isEmpty else { continue }
+                guard !trimmed.isEmpty else {
+                    flushGroup()
+                    continue
+                }
                 let (code, label) = splitLine(trimmed, system: system)
                 if code.isEmpty {
                     flushGroup()
@@ -526,11 +534,9 @@ public enum CheatCodec {
                     let pendingLabel = groupLabel ?? ""
                     flushGroup()
                     append(code, label: pendingLabel, input: trimmed)
-                } else if groupLabel != nil {
+                } else {
                     groupCodes.append(code)
                     groupInput.append(trimmed)
-                } else {
-                    append(code, label: "", input: trimmed)
                 }
             }
             flushGroup()
@@ -602,6 +608,7 @@ public enum CheatCodec {
         if w.count == 9, Array(w)[4] == "-" { return 0 }
         if system == .gb || system == .gbc {
             if gameBoyGameGenieBody(w) != nil { return 0 }
+            if [6, 9].contains(w.count), w.allSatisfy({ hexDigits.contains($0) }) { return 0 }
             if w.count == 8, w.allSatisfy({ hexDigits.contains($0) }) { return 1 }
         }
         if isProActionReplayShape(w, system: system),

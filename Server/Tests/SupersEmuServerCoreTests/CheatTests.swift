@@ -139,14 +139,30 @@ final class CheatCodecTests: XCTestCase {
         XCTAssertEqual(grouped[0].label, "Infinite lives")
         XCTAssertEqual(grouped[0].result.normalized, "8009C6E4 03E7\n8009C6E6 0001\n8009C6E8 0002")
 
-        let bare = CheatCodec.parseBatch("8009C6E403E7\n8009C6E60001\n8009C6E80002", system: .n64)
-        XCTAssertEqual(bare.count, 3)
-        XCTAssertEqual(bare.map(\.result.isValid), [true, true, true])
+        let bare = CheatCodec.parseBatch("8009C6E403E7\n8009C6E60001", system: .n64)
+        XCTAssertEqual(bare.count, 1)
+        XCTAssertEqual(bare[0].label, "Cheat 1")
+        XCTAssertEqual(bare[0].result.normalized, "8009C6E4 03E7\n8009C6E6 0001")
+        XCTAssertTrue(bare[0].result.isValid)
+
+        let separated = CheatCodec.parseBatch(
+            "8009C6E4 03E7\n8009C6E6 0001\n\n8009C6E8 0002",
+            system: .n64,
+            existingCount: 4)
+        XCTAssertEqual(separated.count, 2)
+        XCTAssertEqual(separated.map(\.label), ["Cheat 5", "Cheat 6"])
+        XCTAssertEqual(separated.map { $0.result.normalized }, ["8009C6E4 03E7\n8009C6E6 0001", "8009C6E8 0002"])
 
         let inline = CheatCodec.parseBatch("8009C6E4 03E7 Infinite lives", system: .n64)
         XCTAssertEqual(inline.count, 1)
         XCTAssertEqual(inline[0].label, "Infinite lives")
         XCTAssertEqual(inline[0].result.normalized, "8009C6E4 03E7")
+
+        let inlineAfterBare = CheatCodec.parseBatch("8009C6E4 03E7\n8009C6E6 0001\n8009C6E8 0002 Infinite lives", system: .n64)
+        XCTAssertEqual(inlineAfterBare.count, 2)
+        XCTAssertEqual(inlineAfterBare[0].result.normalized, "8009C6E4 03E7\n8009C6E6 0001")
+        XCTAssertEqual(inlineAfterBare[1].label, "Infinite lives")
+        XCTAssertEqual(inlineAfterBare[1].result.normalized, "8009C6E8 0002")
     }
 
     func testNewCheatsDefaultToEnabledAndUnknownFormatsDecode() throws {
@@ -291,6 +307,33 @@ final class CheatRoutesTests: XCTestCase {
         }
     }
 
+    func testPutLongMultilineCodeRoundTripsThroughList() async throws {
+        let code = [
+            "8009C6E4 03E7",
+            "8009C6E6 0001",
+            "8009C6E8 0002",
+            "8009C6EA 0003",
+            "8009C6EC 0004",
+            "8009C6EE 0005",
+            "8009C6F0 0006",
+        ].joined(separator: "\n")
+        XCTAssertGreaterThan(code.utf8.count, 64)
+        XCTAssertLessThanOrEqual(code.utf8.count, CheatCodec.maxCodeLength)
+        try await app().test(.router) { client in
+            var long = self.cheat("Long N64 code")
+            long.code = code
+            long.format = .n64GameShark
+            let saved = try await self.put(client, long, token: self.iPhone.token)!
+            XCTAssertEqual(saved.code, code)
+
+            try await client.execute(uri: "/v1/cheats/\(self.game)", method: .get, headers: self.bearer(self.mac.token)) { response in
+                XCTAssertEqual(response.status, .ok)
+                let list = try SupersEmuJSON.decoder().decode(CheatListResponse.self, from: Data(buffer: response.body))
+                XCTAssertEqual(list.cheats.map(\.code), [code])
+            }
+        }
+    }
+
     func testFieldLevelMergeAcrossDevicesAndTombstones() async throws {
         try await app().test(.router) { client in
             let start = CheatRecord.now()
@@ -340,7 +383,7 @@ final class CheatRoutesTests: XCTestCase {
         let apiToken = try store.createAPIToken(ownerUserID: chad.id, name: "bot", scopes: [.savesRead, .libraryRead])
         try await app().test(.router) { client in
             var long = self.cheat("Long")
-            long.code = String(repeating: "A", count: 200)
+            long.code = String(repeating: "A", count: 241)
             _ = try await self.put(client, long, token: self.iPhone.token, expect: .badRequest)
             _ = try await self.put(client, self.cheat("Mismatch"), token: self.iPhone.token, game: self.other, expect: .badRequest)
             _ = try await self.put(client, self.cheat("Bot"), token: apiToken.token, expect: .forbidden)
@@ -419,6 +462,31 @@ final class CheatSyncEngineTests: XCTestCase {
             _ = await mac.sync()
             let macAfterDelete = await mac.cheats(for: self.game)
             XCTAssertTrue(macAfterDelete.isEmpty)
+        }
+    }
+
+    func testLongMultilineCodeSyncsAcrossDevices() async throws {
+        try await withServer { url in
+            let (phone, _, _) = try self.engine("long-phone", server: url)
+            let code = [
+                "8009C6E4 03E7",
+                "8009C6E6 0001",
+                "8009C6E8 0002",
+                "8009C6EA 0003",
+                "8009C6EC 0004",
+                "8009C6EE 0005",
+                "8009C6F0 0006",
+            ].joined(separator: "\n")
+            XCTAssertGreaterThan(code.utf8.count, 64)
+            let n64 = CheatRecord(gameID: self.game, label: "Long N64 code", code: code, format: .n64GameShark)
+            try await phone.save([n64])
+            guard case .synced = await phone.sync() else { return XCTFail("phone sync failed") }
+
+            let (mac, _, _) = try self.engine("long-mac", server: url)
+            guard case .synced = await mac.sync() else { return XCTFail("mac sync failed") }
+            let onMac = await mac.cheats(for: self.game)
+            XCTAssertEqual(onMac.map(\.code), [code])
+            XCTAssertEqual(onMac.first?.format, .n64GameShark)
         }
     }
 
@@ -521,6 +589,29 @@ final class CheatReviewFixTests: XCTestCase {
         XCTAssertEqual(plusLabel.first?.label, "+ 9 lives")
         let joined = CheatCodec.parseBatch("Max power C2C3-CF0D+D4A1-0FA4", system: .snes)
         XCTAssertEqual(joined.count, 2)
+    }
+
+    func testNamedUndashedGameBoyCodesInBatch() {
+        let sixDigit = CheatCodec.parseBatch("Infinite lives 000000", system: .gb)
+        XCTAssertEqual(sixDigit.count, 1)
+        XCTAssertEqual(sixDigit.first?.label, "Infinite lives")
+        XCTAssertEqual(sixDigit.first?.result.normalized, "000-000")
+        XCTAssertEqual(sixDigit.first?.result.format, .gbGameGenie)
+        XCTAssertTrue(sixDigit.first?.result.isValid == true)
+
+        let nineDigit = CheatCodec.parseBatch("Infinite lives 123456789", system: .gb)
+        XCTAssertEqual(nineDigit.count, 1)
+        XCTAssertEqual(nineDigit.first?.label, "Infinite lives")
+        XCTAssertEqual(nineDigit.first?.result.normalized, "123-456-789")
+        XCTAssertEqual(nineDigit.first?.result.format, .gbGameGenie)
+        XCTAssertTrue(nineDigit.first?.result.isValid == true)
+
+        let gameShark = CheatCodec.parseBatch("Infinite lives 01001234", system: .gb)
+        XCTAssertEqual(gameShark.count, 1)
+        XCTAssertEqual(gameShark.first?.label, "Infinite lives")
+        XCTAssertEqual(gameShark.first?.result.normalized, "01001234")
+        XCTAssertEqual(gameShark.first?.result.format, .gbGameShark)
+        XCTAssertTrue(gameShark.first?.result.isValid == true)
     }
 
     func testSameSecondDeleteThenEditRevivesAndEditThenDeleteSticks() {

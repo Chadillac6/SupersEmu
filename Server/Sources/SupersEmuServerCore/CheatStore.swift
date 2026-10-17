@@ -5,7 +5,7 @@ import SupersEmuKit
 
 /// Per-user cheat storage. Uploads merge field by field (`CheatMerge`), so replaying the same upload is a no-op.
 public struct CheatStore: Sendable {
-    public static let maxCodeLength = 64
+    public static let maxCodeLength = CheatCodec.maxCodeLength
     public static let maxLabelLength = 120
     public static let maxCheatsPerGame = 500
     /// Deleted cheats are forgotten after this long; a device offline for longer may bring one back.
@@ -39,7 +39,7 @@ public struct CheatStore: Sendable {
     }
 
     public func put(userID: String, deviceID: String?, _ incoming: CheatRecord, now: Date = Date()) throws -> CheatRecord {
-        guard incoming.code.count <= Self.maxCodeLength, !incoming.code.isEmpty else {
+        guard incoming.code.utf8.count <= Self.maxCodeLength, !incoming.code.isEmpty else {
             throw HTTPError(.badRequest, message: "Cheat code must be 1–\(Self.maxCodeLength) characters")
         }
         guard incoming.label.count <= Self.maxLabelLength else {
