@@ -2,6 +2,26 @@ import CoreGraphics
 import Darwin
 import Foundation
 
+struct AudioStallBackoff {
+    private(set) var attemptCount = 0
+    private var nextAttemptAt: TimeInterval = 0
+    private var interval: TimeInterval = 5
+
+    mutating func reset() {
+        attemptCount = 0
+        nextAttemptAt = 0
+        interval = 5
+    }
+
+    mutating func attempt(at now: TimeInterval) -> Int? {
+        guard now >= nextAttemptAt else { return nil }
+        attemptCount += 1
+        nextAttemptAt = now + interval
+        interval = min(interval * 2, 60)
+        return attemptCount
+    }
+}
+
 final class EmulationLoop: @unchecked Sendable {
     typealias FrameRunner = (SELibretroHost?) -> Void
 
@@ -30,10 +50,11 @@ final class EmulationLoop: @unchecked Sendable {
     private let diagnosticsLog: DiagnosticsLog?
     private let logsFrameTime: Bool
     private let requestAudioRestart: ((SELibretroHost) -> Void)?
+    private var hasRecordedRenderPath = false
     private var lastSummaryAt: TimeInterval?
     private var lastAudioCheckAt: TimeInterval = 0
     private var lastAudioProgressAt: TimeInterval = 0
-    private var lastAudioRestartAt: TimeInterval = -.infinity
+    private var audioStallBackoff = AudioStallBackoff()
     private var lastAudioCallbackCount: UInt64 = 0
     private var audioWasEnabled = false
 
@@ -102,7 +123,7 @@ final class EmulationLoop: @unchecked Sendable {
         return try! box.result!.get()
     }
 
-    private func performAsync<T>(_ work: @escaping (SELibretroHost?) throws -> T) async throws -> T {
+    func performAsync<T>(_ work: @escaping (SELibretroHost?) throws -> T) async throws -> T {
         let result: Result<T, Error> = await withCheckedContinuation { continuation in
             enqueue { [self] in
                 do { continuation.resume(returning: .success(try work(host))) }
@@ -194,6 +215,10 @@ final class EmulationLoop: @unchecked Sendable {
             }
             let imageStart = ProcessInfo.processInfo.systemUptime
             imageSlot.publish(host?.copyFrameImage())
+            if let host, !hasRecordedRenderPath, host.frameWidth > 0 {
+                hasRecordedRenderPath = true
+                diagnosticsLog?.appendEvent("renderPath=\(host.renderPath) graphicsRenderer=\(host.graphicsRenderer ?? "nil")")
+            }
             let present = ProcessInfo.processInfo.systemUptime - imageStart
             let nowFinished = ProcessInfo.processInfo.systemUptime
             if let host, let performanceStats {
@@ -230,8 +255,10 @@ final class EmulationLoop: @unchecked Sendable {
 
     private func currentRate() -> Double {
         guard let host else { return 1 }
-        let capacity = host.audioEnabled ? host.audioCapacityFrames : 0
-        return AudioRateControl.rate(bufferedFrames: host.audioBufferedFrames, capacityFrames: capacity)
+        return AudioRateControl.rate(
+            bufferedFrames: host.audioBufferedFrames,
+            capacityFrames: host.audioCapacityFrames,
+            engineRunning: host.audioEnabled && host.audioEngineRunning)
     }
 
     private func checkAudioWatchdog(now: TimeInterval) {
@@ -241,6 +268,7 @@ final class EmulationLoop: @unchecked Sendable {
             audioWasEnabled = false
             lastAudioCallbackCount = 0
             lastAudioProgressAt = now
+            audioStallBackoff.reset()
             return
         }
         let callbackCount = host.audioRenderCallbackCount
@@ -248,16 +276,17 @@ final class EmulationLoop: @unchecked Sendable {
             audioWasEnabled = true
             lastAudioCallbackCount = callbackCount
             lastAudioProgressAt = now
+            audioStallBackoff.reset()
             return
         }
         if callbackCount != lastAudioCallbackCount {
             lastAudioCallbackCount = callbackCount
             lastAudioProgressAt = now
+            audioStallBackoff.reset()
             return
         }
-        guard now - lastAudioProgressAt >= 1, now - lastAudioRestartAt >= 5 else { return }
-        diagnosticsLog?.appendEvent("audio stalled engineRunning=\(host.audioEngineRunning)")
-        lastAudioRestartAt = now
+        guard now - lastAudioProgressAt >= 1, let attempt = audioStallBackoff.attempt(at: now) else { return }
+        diagnosticsLog?.appendEvent("audio stalled engineRunning=\(host.audioEngineRunning) attempt=\(attempt)")
         requestAudioRestart?(host)
     }
 

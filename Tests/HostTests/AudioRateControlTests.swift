@@ -21,4 +21,8 @@ final class AudioRateControlTests: XCTestCase {
     func testZeroCapacityUsesNormalRate() {
         XCTAssertEqual(AudioRateControl.rate(bufferedFrames: 100, capacityFrames: 0), 1)
     }
+
+    func testStoppedEngineUsesNormalRateEvenWithFullBuffer() {
+        XCTAssertEqual(AudioRateControl.rate(bufferedFrames: 1_000, capacityFrames: 1_000, engineRunning: false), 1)
+    }
 }

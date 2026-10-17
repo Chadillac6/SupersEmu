@@ -102,4 +102,34 @@ final class EmulationLoopTests: XCTestCase {
         XCTAssertEqual(activity.maximumActive(), 1)
         XCTAssertGreaterThan(loop.pacingMetrics().catchUpFrames, 0)
     }
+
+    func testTakingFrameImageDoesNotWaitForSlowFrame() {
+        let frameStarted = DispatchSemaphore(value: 0)
+        let loop = EmulationLoop(framesPerSecond: 10, runFrame: { _ in
+            frameStarted.signal()
+            Thread.sleep(forTimeInterval: 0.1)
+        })
+        defer { loop.stop() }
+        loop.start(running: true)
+        XCTAssertEqual(frameStarted.wait(timeout: .now() + 1), .success)
+
+        let start = ProcessInfo.processInfo.systemUptime
+        _ = loop.takeFrameImage()
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 0.005)
+    }
+
+    func testAudioStallBackoffDoublesCapsAndResetsAfterProgress() {
+        var backoff = AudioStallBackoff()
+        XCTAssertEqual(backoff.attempt(at: 0), 1)
+        XCTAssertNil(backoff.attempt(at: 4.9))
+        XCTAssertEqual(backoff.attempt(at: 5), 2)
+        XCTAssertEqual(backoff.attempt(at: 15), 3)
+        XCTAssertEqual(backoff.attempt(at: 35), 4)
+        XCTAssertEqual(backoff.attempt(at: 75), 5)
+        XCTAssertNil(backoff.attempt(at: 134))
+        XCTAssertEqual(backoff.attempt(at: 135), 6)
+
+        backoff.reset()
+        XCTAssertEqual(backoff.attempt(at: 200), 1)
+    }
 }

@@ -69,8 +69,9 @@ final class GameSession {
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var core: SaveCore?
     @ObservationIgnored private var performanceStats = PerformanceStats()
+    @ObservationIgnored private var hostFramesPerSecond = 60.0
+    @ObservationIgnored private var hostSampleRate = 48_000.0
     @ObservationIgnored private var diagnosticsLog: DiagnosticsLog?
-    @ObservationIgnored private var hasRecordedRenderPath = false
     @ObservationIgnored private var lastLayoutDescription = ""
     @ObservationIgnored private var pendingDiagnosticsEvents: [String] = []
     @ObservationIgnored private var pickerTimer: Timer?
@@ -182,7 +183,11 @@ final class GameSession {
             startTask = nil
             return
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else {
+            loop.stop()
+            if emulationLoop === loop { emulationLoop = nil }
+            return
+        }
         self.host = host
         let hostInfo: (Bool, Int, Int, String, String, String, Double, Double, [String: String])? = loop.perform { host in
             guard let host else { return nil }
@@ -205,6 +210,8 @@ final class GameSession {
             startTask = nil
             return
         }
+        hostSampleRate = hostInfo.6
+        hostFramesPerSecond = hostInfo.7
         loop.setFramesPerSecond(hostInfo.7)
         startDiagnostics(
             coreName: hostInfo.5,
@@ -227,7 +234,14 @@ final class GameSession {
             ? stateFiles
             : [SaveSync.autoFile(for: game.id, core: core)] + stateFiles)
         isSyncing = false
-        guard !Task.isCancelled, self.host === host else { return }
+        guard !Task.isCancelled, self.host === host else {
+            loop.stop()
+            if emulationLoop === loop {
+                emulationLoop = nil
+                if self.host === host { self.host = nil }
+            }
+            return
+        }
         refreshSaveSlots()
         if startFresh {
             do {
@@ -262,10 +276,10 @@ final class GameSession {
             }
         }
         applyCheats()
-        loop.perform { $0?.audioEventHandler = { [weak self] event in
+        host.audioEventHandler = { [weak self] event in
             DispatchQueue.main.async { self?.recordEvent(event) }
-        } }
-        loop.perform { $0?.audioEnabled = true }
+        }
+        host.audioEnabled = true
         lastAutosave = .now
         hasStarted = true
         resume()
@@ -468,19 +482,11 @@ final class GameSession {
         if let image = emulationLoop?.takeFrameImage() {
             displayLayer?.contents = image
         }
-        let renderInfo: (String, String?)? = emulationLoop?.perform { host in
-               guard let host, host.frameWidth > 0 else { return nil }
-               return (host.renderPath, host.graphicsRenderer)
-           }
-        if !hasRecordedRenderPath, let renderInfo {
-            hasRecordedRenderPath = true
-            diagnosticsLog?.appendEvent("renderPath=\(renderInfo.0) graphicsRenderer=\(renderInfo.1 ?? "nil")")
-        }
         if needsFreshCheckpoint {
             needsFreshCheckpoint = false
-            autosave(preservingStatus: true)
+            scheduleAutosave(preservingStatus: true)
         } else if ContinuousClock.now - lastAutosave >= Self.autosaveInterval {
-            autosave()
+            scheduleAutosave()
         }
     }
 
@@ -488,8 +494,7 @@ final class GameSession {
     private static let logsFrameTime = ProcessInfo.processInfo.environment["SUPERSEMU_LOG_FRAME_TIME"] == "1"
 
     var performanceOverlayText: String {
-        let metrics = emulationLoop?.perform { ($0?.framesPerSecond ?? 60, $0?.sampleRate ?? 48_000) } ?? (60, 48_000)
-        let summary = performanceStats.summary(framesPerSecond: metrics.0, sampleRate: metrics.1)
+        let summary = performanceStats.summary(framesPerSecond: hostFramesPerSecond, sampleRate: hostSampleRate)
         return String(
             format: "%.0f%% · %.1f ms · gaps %.0f ms",
             locale: Locale(identifier: "en_US_POSIX"),
@@ -597,6 +602,33 @@ final class GameSession {
         } catch {
             status = "Auto-save failed"
             // The battery save was still flushed; sync it on its own.
+            upload([SaveSync.nativeFile(for: game.id)], saved: "Auto-save failed")
+            return
+        }
+        upload([SaveSync.nativeFile(for: game.id)] + (core.map { [SaveSync.autoFile(for: game.id, core: $0)] } ?? []),
+               saved: "Auto-saved")
+    }
+
+    private func scheduleAutosave(preservingStatus: Bool = false) {
+        lastAutosave = .now
+        Task { [weak self] in
+            await self?.autosaveAsynchronously(preservingStatus: preservingStatus)
+        }
+    }
+
+    private func autosaveAsynchronously(preservingStatus: Bool) async {
+        guard host != nil, let loop = emulationLoop, hasStarted else { return }
+        let stateURL = AppPaths.autoState(for: game.id)
+        do {
+            try await loop.performAsync { host in
+                guard let host else { throw CocoaError(.fileNoSuchFile) }
+                host.flushSaveRAM()
+                try host.saveState(to: stateURL)
+            }
+            diagnosticsLog?.appendEvent("save-state save auto")
+            if !preservingStatus { status = "Auto-saved on this device" }
+        } catch {
+            status = "Auto-save failed"
             upload([SaveSync.nativeFile(for: game.id)], saved: "Auto-save failed")
             return
         }
@@ -1037,6 +1069,7 @@ final class GameSession {
         diagnosticsLog?.appendEvent("stop")
         pause()
         autosave()
+        host?.audioEnabled = false
         hasStarted = false
         isSyncing = false
         pickerTimer?.invalidate()

@@ -637,6 +637,8 @@ static __weak SELibretroHost *gActiveHost;
     void (^_audioEventHandler)(NSString *);
 }
 
+@synthesize audioEnabled = _audioEnabled;
+
 + (SELibretroHost *)activeHost { return gActiveHost; }
 
 + (NSDictionary<NSString *,NSString *> *)pendingCoreOptionOverrides {
@@ -1025,12 +1027,7 @@ static __weak SELibretroHost *gActiveHost;
 
 - (void)setAudioEnabled:(BOOL)audioEnabled {
     if (!_loaded) return;
-    if (audioEnabled == _audioEnabled) {
-#if TARGET_OS_IOS
-        if (!audioEnabled) [self stopAudioDeactivatingSession:YES];
-#endif
-        return;
-    }
+    if (audioEnabled == _audioEnabled) return;
     _audioEnabled = audioEnabled;
     g.audioEnabled = audioEnabled;
     if (audioEnabled) {
@@ -1039,6 +1036,8 @@ static __weak SELibretroHost *gActiveHost;
         [self stopAudioDeactivatingSession:YES];
     }
 }
+
+- (BOOL)audioEnabled { return g.audioEnabled.load(); }
 
 - (void)activateAudioSession {
 #if TARGET_OS_IOS
@@ -1192,7 +1191,6 @@ static __weak SELibretroHost *gActiveHost;
     if (!_loaded) {
         _audioEnabled = NO;
         g.audioEnabled = false;
-        [self stopAudioDeactivatingSession:YES];
         return;
     }
 #else
