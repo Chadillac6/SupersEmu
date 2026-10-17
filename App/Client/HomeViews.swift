@@ -50,20 +50,37 @@ struct SystemSelectorBar: View {
 
     private func chip(_ chip: SystemTheme) -> some View {
         let isSelected = chip.system == selection
+        // Plate-style logos are dark artwork, so their chip is the white plate in both appearances.
+        let fill = chip.logoStyle == .plate ? Color.white : Brand.Colors.surface
         return Button { selection = chip.system } label: {
-            Text(chip.chip)
-                .font(.subheadline.bold())
+            chipLabel(chip)
+                .frame(height: 22)
                 .padding(.horizontal, 14).padding(.vertical, 7)
-                .foregroundStyle(isSelected ? Brand.Colors.paper : Brand.Colors.ink)
-                .background {
-                    Capsule().fill(isSelected ? Brand.Colors.ink : Brand.Colors.surface)
+                .background { Capsule().fill(fill) }
+                .overlay {
+                    Capsule().strokeBorder(isSelected ? Brand.Colors.red : Brand.Colors.line, lineWidth: isSelected ? 2 : 1)
                 }
-                .overlay { Capsule().stroke(isSelected ? .clear : Brand.Colors.line, lineWidth: 1) }
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(chip.system?.displayName ?? chip.chip)
         .accessibilityIdentifier("system-chip-\(chip.id)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder private func chipLabel(_ chip: SystemTheme) -> some View {
+        if let logo = chip.logo {
+            switch chip.logoStyle {
+            case .light:
+                Image(logo).renderingMode(.template).resizable().scaledToFit().foregroundStyle(Brand.Colors.ink)
+            case .original, .plate:
+                Image(logo).resizable().scaledToFit()
+            }
+        } else {
+            Text(chip.chip)
+                .font(.subheadline.bold())
+                .foregroundStyle(Brand.Colors.ink)
+        }
     }
 }
 
