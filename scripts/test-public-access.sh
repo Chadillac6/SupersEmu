@@ -96,7 +96,7 @@ else
 fi
 assert "rejected token exits 3" test "$rejected_status" -eq 3
 assert "rejected new token is removed and config is rolled back" bash -c '[[ ! -e "$1/cloudflare.token" && ! -e "$1/public-access.json" ]]' _ "$rejected"
-assert "rejected token does not start Caddy" bash -c '! rg -q "^caddy$" "$1"' _ "$events"
+assert "rejected token does not start Caddy" bash -c '! grep -Fqx "caddy" "$1"' _ "$events"
 
 missing="$tmp/missing"
 if PATH="$tmp/empty-path:/usr/bin:/bin" "$script_dir/public-access.sh" enable --no-launchd --host games.supersemu.com \

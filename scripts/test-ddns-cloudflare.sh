@@ -83,22 +83,22 @@ run_case() {
 }
 
 run_case create create
-assert "missing record is created" rg -q '^POST\\|https://cloudflare.test/client/v4/zones/zone-parent/dns_records\\|' "$tmp/create/curl.log"
+assert "missing record is created" grep -Fq 'POST|https://cloudflare.test/client/v4/zones/zone-parent/dns_records|' "$tmp/create/curl.log"
 
 run_case changed changed games.supersemu.com 198.51.100.25
-assert "changed IP patches existing record" rg -q '^PATCH\\|https://cloudflare.test/client/v4/zones/zone-parent/dns_records/record-1\\|' "$tmp/changed/curl.log"
+assert "changed IP patches existing record" grep -Fq 'PATCH|https://cloudflare.test/client/v4/zones/zone-parent/dns_records/record-1|' "$tmp/changed/curl.log"
 
 run_case unchanged unchanged
-assert "unchanged record is not written" bash -c '! rg -q "^(POST|PATCH)\\|" "$1"' _ "$tmp/unchanged/curl.log"
+assert "unchanged record is not written" bash -c '! grep -q "^POST|" "$1" && ! grep -q "^PATCH|" "$1"' _ "$tmp/unchanged/curl.log"
 
 run_case proxied proxied
-assert "proxied record is patched to DNS-only" rg -q '^PATCH\\|https://cloudflare.test/client/v4/zones/zone-parent/dns_records/record-1\\|' "$tmp/proxied/curl.log"
+assert "proxied record is patched to DNS-only" grep -Fq 'PATCH|https://cloudflare.test/client/v4/zones/zone-parent/dns_records/record-1|' "$tmp/proxied/curl.log"
 
 run_case longest create
 assert "zone lookup tries longest suffix first" bash -c '[[ "$(sed -n "2p" "$1")" == *"name=games.supersemu.com"* && "$(sed -n "3p" "$1")" == *"name=supersemu.com"* ]]' _ "$tmp/longest/curl.log"
 
 run_case fallback fallback example.com
-assert "ipify failure falls back to checkip" rg -q '^GET\\|https://checkip.amazonaws.com\\|' "$tmp/fallback/curl.log"
+assert "ipify failure falls back to checkip" grep -Fq 'GET|https://checkip.amazonaws.com|' "$tmp/fallback/curl.log"
 
 mkdir -p "$tmp/forbidden"
 printf '%s\n' 'token-string-must-not-appear' >"$tmp/forbidden/cloudflare.token"
@@ -112,7 +112,7 @@ else
 fi
 assert "403 returns token-rejected exit status" test "$forbidden_status" -eq 3
 assert "403 stores the rejected-token error" python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["lastError"] == "Cloudflare token was rejected"' "$tmp/forbidden/ddns-state.json"
-assert "token never appears in recorded curl args or output" bash -c '! rg -q "token-string-must-not-appear" "$@"' _ "$tmp/forbidden/curl.log" "$tmp/forbidden/output.log"
+assert "token never appears in recorded curl args or output" bash -c '! grep -Fq "token-string-must-not-appear" "$@"' _ "$tmp/forbidden/curl.log" "$tmp/forbidden/output.log"
 
 if ((failures)); then
   printf 'FAIL: %d DDNS test(s)\n' "$failures" >&2
