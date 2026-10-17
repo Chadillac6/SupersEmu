@@ -32,7 +32,7 @@ final class AdminUserRoutesTests: XCTestCase {
     }
 
     static let adminRoutes: [(HTTPRequest.Method, String)] = [
-        (.get, "/v1/admin/status"), (.get, "/v1/admin/users"), (.post, "/v1/admin/users"),
+        (.get, "/v1/admin/status"), (.get, "/v1/admin/remote-access"), (.get, "/v1/admin/users"), (.post, "/v1/admin/users"),
         (.get, "/v1/admin/devices"), (.delete, "/v1/admin/devices/x"),
         (.get, "/v1/admin/tokens"), (.post, "/v1/admin/tokens"), (.delete, "/v1/admin/tokens/x"),
     ]
@@ -54,6 +54,64 @@ final class AdminUserRoutesTests: XCTestCase {
                 XCTAssertEqual(status.userCount, 1)
                 XCTAssertEqual(status.deviceCount, 1)
                 XCTAssertEqual(status.health.serverName, "Test Server")
+            }
+        }
+    }
+
+    func testRemoteAccessStatusReadsConfigDDNSAndCertificateExpiry() async throws {
+        let root = store.paths.root
+        let expectedNow = Date(timeIntervalSince1970: 1_735_689_600)
+        let expectedExpiry = Calendar(identifier: .gregorian).date(byAdding: .year, value: 2, to: expectedNow)!
+        let config = try JSONSerialization.data(withJSONObject: ["enabled": true, "publicURL": "https://games.supersemu.com"])
+        try config.write(to: root.appendingPathComponent("public-access.json"))
+        try Data("not-returned-token".utf8).write(to: root.appendingPathComponent("cloudflare.token"))
+        let ddns = """
+        {"ip":"203.0.113.10","updatedAt":"2025-01-02T03:04:05Z","lastCheckAt":"2025-01-02T03:05:05Z","lastError":null}
+        """
+        try Data(ddns.utf8).write(to: root.appendingPathComponent("ddns-state.json"))
+        let identity = try TLSIdentity.generate(
+            commonName: "games.supersemu.com", dnsNames: ["games.supersemu.com"], validFor: 2, now: expectedNow)
+        let base64 = identity.certificateDER.base64EncodedString()
+        let lines = stride(from: 0, to: base64.count, by: 64).map { offset in
+            String(base64.dropFirst(offset).prefix(64))
+        }
+        let pem = (["-----BEGIN CERTIFICATE-----"] + lines + ["-----END CERTIFICATE-----", ""]).joined(separator: "\n")
+        let certificateDirectory = root
+            .appendingPathComponent("caddy", isDirectory: true)
+            .appendingPathComponent("caddy", isDirectory: true)
+            .appendingPathComponent("certificates", isDirectory: true)
+            .appendingPathComponent("issuer", isDirectory: true)
+            .appendingPathComponent("games.supersemu.com", isDirectory: true)
+        try FileManager.default.createDirectory(at: certificateDirectory, withIntermediateDirectories: true)
+        try Data(pem.utf8).write(to: certificateDirectory.appendingPathComponent("games.supersemu.com.crt"))
+
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/admin/remote-access", method: .get, headers: self.bearer(self.adminDevice.token)) { response in
+                XCTAssertEqual(response.status, .ok)
+                let status = try self.decode(RemoteAccessStatusResponse.self, response)
+                XCTAssertTrue(status.enabled)
+                XCTAssertEqual(status.publicURL?.absoluteString, "https://games.supersemu.com")
+                XCTAssertTrue(status.tokenSaved)
+                XCTAssertEqual(status.ddnsIP, "203.0.113.10")
+                XCTAssertEqual(status.ddnsUpdatedAt, ISO8601DateFormatter().date(from: "2025-01-02T03:04:05Z"))
+                XCTAssertEqual(status.ddnsLastCheckAt, ISO8601DateFormatter().date(from: "2025-01-02T03:05:05Z"))
+                XCTAssertNil(status.ddnsLastError)
+                XCTAssertEqual(status.certificateValidUntil, expectedExpiry)
+                XCTAssertFalse(String(buffer: response.body).contains("not-returned-token"))
+            }
+        }
+    }
+
+    func testRemoteAccessStatusTokenAbsentAndPublicRouterHidesAdminRoute() async throws {
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/admin/remote-access", method: .get, headers: self.bearer(self.adminDevice.token)) { response in
+                XCTAssertEqual(response.status, .ok)
+                XCTAssertFalse(try self.decode(RemoteAccessStatusResponse.self, response).tokenSaved)
+            }
+        }
+        try await Application(router: buildRouter(store: store, exposure: .publicInternet), configuration: .init()).test(.router) { client in
+            try await client.execute(uri: "/v1/admin/remote-access", method: .get) { response in
+                XCTAssertEqual(response.status, .notFound)
             }
         }
     }

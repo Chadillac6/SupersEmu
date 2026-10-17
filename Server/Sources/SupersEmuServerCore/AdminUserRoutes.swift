@@ -3,6 +3,7 @@ import Hummingbird
 import SupersEmuKit
 
 extension AdminStatus: ResponseEncodable {}
+extension RemoteAccessStatusResponse: ResponseEncodable {}
 extension UserInfo: ResponseEncodable {}
 extension UserGameAccess: ResponseEncodable {}
 extension DeviceInfo: ResponseEncodable {}
@@ -29,6 +30,11 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
     admin.get("status") { _, context in
         _ = try adminCaller(context)
         return try store.adminStatus()
+    }
+
+    admin.get("remote-access") { _, context in
+        _ = try adminCaller(context)
+        return store.remoteAccessStatus()
     }
 
     admin.get("users") { _, context in

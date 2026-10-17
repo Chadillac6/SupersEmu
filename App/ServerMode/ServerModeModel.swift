@@ -113,7 +113,7 @@ final class ServerModeModel {
     }
     var serverURL: URL { serverURL(for: source) }
 
-    /// Paired servers have LAN and Tailscale addresses; keep using whichever answered last.
+    /// Paired servers have LAN and public addresses; keep using whichever answered last.
     func resolvePairedURL() async {
         guard !isLocal, (try? await client(authenticated: false).health()) == nil else { return }
         for url in pairedCredential?.urls ?? [] where url != serverURL {

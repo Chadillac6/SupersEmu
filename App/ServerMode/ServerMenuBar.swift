@@ -43,6 +43,7 @@ final class ServerStatusMonitor {
     let model: ServerModeModel
     private var pollingTask: Task<Void, Never>?
     private var lastStatusRefreshAt: Date?
+    private var lastRemoteAccessRefreshAt: Date?
     private(set) var pairRequestsBySource: [ServerModeModel.Source: [PendingPairRequest]] = [:]
     private(set) var adminUsersBySource: [ServerModeModel.Source: [UserInfo]] = [:]
 
@@ -80,6 +81,7 @@ final class ServerStatusMonitor {
             let daemonIsRegistered = model.daemonStatus == .enabled || model.daemonStatus == .requiresApproval
             UserDefaults.standard.set(daemonIsRegistered, forKey: Self.showIconDefaultsKey)
         }
+        if UserDefaults.standard.bool(forKey: Self.showIconDefaultsKey) { startPolling() }
     }
 
     func startPolling() {
@@ -92,6 +94,10 @@ final class ServerStatusMonitor {
                 if self.model.health == nil || statusRefreshIsDue {
                     await refresh()
                 }
+                if self.lastRemoteAccessRefreshAt.map({ Date().timeIntervalSince($0) >= 30 }) ?? true {
+                    await RemoteAccessModel.shared.refresh()
+                    self.lastRemoteAccessRefreshAt = Date()
+                }
                 await refreshPairRequests()
                 do {
                     try await Task.sleep(for: .seconds(ServerPollingCadence.pairRequestRefreshInterval))
@@ -103,7 +109,12 @@ final class ServerStatusMonitor {
     }
 
     func setMenuBarIconVisible(_ visible: Bool) {
-        if visible { Task { await refresh() } }
+        if visible {
+            startPolling()
+        } else {
+            pollingTask?.cancel()
+            pollingTask = nil
+        }
     }
 
     private func refresh() async {
@@ -159,6 +170,7 @@ private struct ServerMenuBarContent: View {
         let status = monitor.status
         Text(status.title).disabled(true)
         Text(status.detail).disabled(true)
+        Text("Remote: \(RemoteAccessModel.shared.isOn ? "On · \(RemoteAccessModel.shared.host)" : RemoteAccessModel.shared.summary)").disabled(true)
         if monitor.model.lanReachability == .blocked {
             Text("Other devices can't reach this server.")
             Button("Allow in Firewall…") { Task { await monitor.model.allowInFirewall() } }
@@ -178,6 +190,7 @@ private struct ServerMenuBarContent: View {
                 Task { await monitor.denyPairRequest(request.id, source: source) }
             }
         }
+        Button("Remote Access…") { openServerWindow(section: .remote) }
         Button("Add Games…") { openServerWindow(section: .library) }
         Button("Review Needed…") { openServerWindow(section: .review) }
         Button("BIOS…") { openServerWindow(section: .bios) }

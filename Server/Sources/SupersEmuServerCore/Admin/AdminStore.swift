@@ -2,9 +2,44 @@ import Foundation
 import GRDB
 import Hummingbird
 import SupersEmuKit
+import SwiftASN1
+import X509
 
 /// Queries behind the users/devices/tokens admin API. Never exposes token hashes.
 extension ServerStore {
+    public func remoteAccessStatus() -> RemoteAccessStatusResponse {
+        let configURL = paths.root.appendingPathComponent("public-access.json")
+        let config = (try? Data(contentsOf: configURL))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let publicURL = (config["publicURL"] as? String).flatMap(URL.init(string:))
+        let ddnsURL = paths.root.appendingPathComponent("ddns-state.json")
+        let ddns = (try? Data(contentsOf: ddnsURL)).flatMap {
+            try? SupersEmuJSON.decoder().decode(RemoteAccessDDNSState.self, from: $0)
+        }
+        return RemoteAccessStatusResponse(
+            enabled: config["enabled"] as? Bool ?? false,
+            publicURL: publicURL,
+            tokenSaved: FileManager.default.fileExists(atPath: paths.root.appendingPathComponent("cloudflare.token").path),
+            ddnsIP: ddns?.ip,
+            ddnsUpdatedAt: ddns?.updatedAt,
+            ddnsLastCheckAt: ddns?.lastCheckAt,
+            ddnsLastError: ddns?.lastError,
+            certificateValidUntil: publicURL.flatMap { certificateExpiry(for: $0.host) })
+    }
+
+    private func certificateExpiry(for host: String?) -> Date? {
+        guard let host else { return nil }
+        let certificates = paths.root.appendingPathComponent("caddy/caddy/certificates", isDirectory: true)
+        guard let files = FileManager.default.enumerator(at: certificates, includingPropertiesForKeys: nil) else { return nil }
+        for case let file as URL in files
+        where file.lastPathComponent == "\(host).crt" && file.deletingLastPathComponent().lastPathComponent == host {
+            guard let pem = try? String(contentsOf: file, encoding: .utf8),
+                  let certificate = try? Certificate(pemEncoded: pem) else { continue }
+            return certificate.notValidAfter
+        }
+        return nil
+    }
+
     public func adminStatus() throws -> AdminStatus {
         let counts = try db.read { db in
             (games: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM games WHERE needs_review = 0") ?? 0,
@@ -255,4 +290,11 @@ extension ServerStore {
         return TokenInfo(id: row["id"], name: row["name"], scopes: scopes, createdAt: row["created_at"],
                          revokedAt: row["revoked_at"], token: plaintext)
     }
+}
+
+private struct RemoteAccessDDNSState: Decodable {
+    var ip: String?
+    var updatedAt: Date?
+    var lastCheckAt: Date?
+    var lastError: String?
 }
