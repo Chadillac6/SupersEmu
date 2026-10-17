@@ -343,24 +343,28 @@ PY
   cat "$versions_file"
 }
 
-release_mac_marketing_version() {
-  local appcast version
-  if ! appcast="$(curl -fsSL https://github.com/Chadillac6/SupersEmu/releases/latest/download/appcast.xml)"; then
-    echo "error: latest Mac marketing version lookup failed" >&2
-    return 1
-  fi
-  if ! version="$(printf '%s' "$appcast" | python3 -c '
+release_mac_marketing_version_from_appcast() {
+  python3 -c '
 import sys
 import xml.etree.ElementTree as ET
 
 namespace = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
 root = ET.fromstring(sys.stdin.read())
 for item in root.iter("item"):
-    version = item.get(namespace + "shortVersionString")
+    version = item.findtext(namespace + "shortVersionString") or item.get(namespace + "shortVersionString")
     if version:
-        print(version)
+        print(version.strip())
         break
-')"; then
+'
+}
+
+release_mac_marketing_version() {
+  local appcast version
+  if ! appcast="$(curl -fsSL https://github.com/Chadillac6/SupersEmu/releases/latest/download/appcast.xml)"; then
+    echo "error: latest Mac marketing version lookup failed" >&2
+    return 1
+  fi
+  if ! version="$(printf '%s' "$appcast" | release_mac_marketing_version_from_appcast)"; then
     echo "error: latest Mac appcast does not contain a valid release item" >&2
     return 1
   fi

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <item>
+    <title>0.0.1</title>
+    <pubDate>Sat, 17 Oct 2026 11:25:42 +0000</pubDate>
+    <sparkle:version>20261017.111102</sparkle:version>
+    <sparkle:shortVersionString>0.0.1</sparkle:shortVersionString>
+    <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+    <enclosure url="https://github.com/Chadillac6/SupersEmu/releases/download/mac-20261017.111102/SupersEmu-0.0.1-20261017.111102.zip" length="40736279" type="application/octet-stream" sparkle:edSignature="RvQKOsljxURgcVtZnS3qc/69EpnLjeNPD+6oAi7clZw+iAzMET/yF2yitoYM1ovPl7Xsko7CyRuB/EF1iZeRAA==" />
+  </item>
+</rss>
