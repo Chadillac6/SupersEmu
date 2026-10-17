@@ -61,6 +61,8 @@ struct WideArt: View {
     @Environment(ServerSession.self) private var server
     let item: LibraryItem
     var preferCover = false
+    /// Widest the sharp cover gets in a hero, leaving the rest of the card for its text.
+    static let heroCoverFraction: CGFloat = 0.42
     @State private var hero: Image?
     @State private var cover: Image?
 
@@ -71,9 +73,17 @@ struct WideArt: View {
                 if let hero {
                     hero.resizable().scaledToFill()
                 } else if let cover {
-                    ZStack(alignment: .trailing) {
-                        cover.resizable().scaledToFill().blur(radius: 28).opacity(0.75)
-                        cover.resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 10)).shadow(radius: 12).padding(18)
+                    cover.resizable().scaledToFill().blur(radius: 28).opacity(0.75)
+                }
+            }
+            // A separate overlay so the oversized blurred fill can't stretch the sharp cover past the card.
+            .overlay(alignment: .trailing) {
+                if hero == nil, let cover {
+                    GeometryReader { proxy in
+                        cover.resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 10)).shadow(radius: 12)
+                            .padding(18)
+                            .frame(maxWidth: proxy.size.width * (preferCover ? Self.heroCoverFraction : 1), maxHeight: proxy.size.height)
+                            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .trailing)
                     }
                 }
             }

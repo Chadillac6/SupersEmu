@@ -103,7 +103,7 @@ struct HomeHero: View {
                     }
                     .foregroundStyle(.white)
                     .padding(compact ? 16 : 24)
-                    .frame(maxWidth: compact ? geometry.size.width * 0.6 : 480, maxHeight: .infinity, alignment: .bottomLeading)
+                    .frame(maxWidth: min(480, geometry.size.width * (1 - WideArt.heroCoverFraction)), maxHeight: .infinity, alignment: .bottomLeading)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 22))
