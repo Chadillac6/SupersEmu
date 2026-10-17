@@ -76,11 +76,16 @@ enum RemoteAccessPhase: Equatable {
 @MainActor
 protocol RemoteAccessBackend: AnyObject {
     var tokenSaved: Bool { get }
+    var configuredHost: String? { get }
     func currentPhase(host: String) async -> RemoteAccessPhase
     func turnOn(host: String, pastedToken: String?, progress: @escaping @MainActor (RemoteAccessPhase) -> Void) async -> RemoteAccessPhase
     func turnOff() async -> RemoteAccessPhase
     func checkNow(host: String) async -> RemoteAccessPhase
     func installCaddy() async -> RemoteAccessPhase
+}
+
+extension RemoteAccessBackend {
+    var configuredHost: String? { nil }
 }
 
 @MainActor @Observable
@@ -97,6 +102,7 @@ final class RemoteAccessModel {
     private(set) var phase: RemoteAccessPhase = .off
     private(set) var busy = false
     private let backend: RemoteAccessBackend
+    private var generation = 0
 
     init(backend: RemoteAccessBackend? = nil) {
 #if DEBUG
@@ -130,14 +136,23 @@ final class RemoteAccessModel {
         (backend as? LiveRemoteAccessBackend)?.attach(serverMode: serverMode)
     }
 
-    func refresh() async { phase = await backend.currentPhase(host: host) }
+    func refresh() async {
+        guard !busy else { return }
+        generation += 1
+        let requestGeneration = generation
+        let refreshedPhase = await backend.currentPhase(host: host)
+        guard requestGeneration == generation, !busy else { return }
+        publish(refreshedPhase)
+    }
 
     func turnOn() async {
         guard canTurnOn else { return }
+        generation += 1
         busy = true
         defer { busy = false }
         let token = pastedToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        phase = await backend.turnOn(host: host, pastedToken: token.isEmpty ? nil : token) { [weak self] in self?.phase = $0 }
+        let result = await backend.turnOn(host: host, pastedToken: token.isEmpty ? nil : token) { [weak self] in self?.phase = $0 }
+        publish(result)
         pastedToken = ""
         replacingToken = false
     }
@@ -147,9 +162,17 @@ final class RemoteAccessModel {
     func installCaddy() async { await run { await $0.installCaddy() } }
 
     private func run(_ action: (RemoteAccessBackend) async -> RemoteAccessPhase) async {
+        generation += 1
         busy = true
         defer { busy = false }
-        phase = await action(backend)
+        publish(await action(backend))
+    }
+
+    private func publish(_ phase: RemoteAccessPhase) {
+        if case .on = phase, let configuredHost = backend.configuredHost {
+            host = configuredHost
+        }
+        self.phase = phase
     }
 }
 

@@ -56,14 +56,20 @@ caddy_dir="$data_dir/caddy"
 config_file="$data_dir/public-access.json"
 caddyfile="$caddy_dir/Caddyfile"
 label="com.chadillac6.supersemu.caddy"
-plist="/Library/LaunchDaemons/$label.plist"
+launchd_dir=${SUPERSEMU_LAUNCHD_DIR:-/Library/LaunchDaemons}
+plist="$launchd_dir/$label.plist"
 ddns_label="com.chadillac6.supersemu.ddns"
-ddns_plist="/Library/LaunchDaemons/$ddns_label.plist"
+ddns_plist="$launchd_dir/$ddns_label.plist"
 ddns_script="$data_dir/bin/ddns-cloudflare.sh"
 token_file="$data_dir/cloudflare.token"
 server_label="system/com.chadillac6.supersemu.server"
 
 find_caddy() {
+  if [[ ${SUPERSEMU_CADDY_PATH+x} ]]; then
+    [[ -x "$SUPERSEMU_CADDY_PATH" ]] || return 1
+    printf '%s\n' "$SUPERSEMU_CADDY_PATH"
+    return 0
+  fi
   command -v caddy 2>/dev/null || {
     [[ ! -x /opt/homebrew/bin/caddy ]] || { printf '%s\n' /opt/homebrew/bin/caddy; return; }
     [[ ! -x /usr/local/bin/caddy ]] || { printf '%s\n' /usr/local/bin/caddy; return; }
@@ -75,6 +81,14 @@ if [[ "$action" != status ]]; then
   mkdir -p "$caddy_dir"
   chmod 700 "$caddy_dir"
 fi
+
+set_data_owner() {
+  if ((EUID == 0)); then
+    local owner
+    owner=$(stat -f '%u:%g' "$data_dir")
+    chown "$owner" "$@"
+  fi
+}
 
 write_access_config() {
   local enabled=$1
@@ -102,6 +116,7 @@ with open(temporary, "w", encoding="utf-8") as stream:
 os.chmod(temporary, 0o600)
 os.replace(temporary, path)
 PY
+  set_data_owner "$config_file"
 }
 
 write_caddyfile() {
@@ -116,6 +131,7 @@ write_caddyfile() {
     sed '/# SUPERSEMU_ACME_EMAIL/d' "$template" | sed "s|# SUPERSEMU_TLS_DIRECTIVE|$([[ $local_test == 1 ]] && echo 'tls internal')|" >"$caddyfile"
   fi
   chmod 600 "$caddyfile"
+  set_data_owner "$caddyfile"
 }
 
 launchctl_cmd() {
@@ -127,7 +143,12 @@ rollback_enable() {
   trap - ERR
   if ((ddns_started)); then
     launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
-    rm -f "$ddns_plist"
+    if ((previous_ddns_plist_existed)); then
+      cp -p "$previous_ddns_plist_backup" "$ddns_plist" || true
+      launchctl_cmd bootstrap system "$ddns_plist" >/dev/null 2>&1 || echo "Couldn't restore the previous DDNS LaunchDaemon." >&2
+    else
+      rm -f "$ddns_plist"
+    fi
   fi
   if ((caddy_started)); then
     if ((no_launchd)); then
@@ -138,7 +159,12 @@ rollback_enable() {
       rm -f "$caddy_dir/caddy.pid"
     else
       launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
-      rm -f "$plist"
+      if ((previous_caddy_plist_existed)); then
+        cp -p "$previous_caddy_plist_backup" "$plist" || true
+        launchctl_cmd bootstrap system "$plist" >/dev/null 2>&1 || echo "Couldn't restore the previous Caddy LaunchDaemon." >&2
+      else
+        rm -f "$plist"
+      fi
     fi
   fi
   if ((config_write_attempted)); then
@@ -157,6 +183,8 @@ rollback_enable() {
     fi
   fi
   [[ -z "$previous_token_backup" ]] || rm -f "$previous_token_backup"
+  [[ -z "$previous_caddy_plist_backup" ]] || rm -f "$previous_caddy_plist_backup"
+  [[ -z "$previous_ddns_plist_backup" ]] || rm -f "$previous_ddns_plist_backup"
   exit "$status"
 }
 
@@ -174,6 +202,10 @@ case "$action" in
     new_token_written=0
     previous_token_existed=0
     previous_token_backup=
+    previous_caddy_plist_existed=0
+    previous_caddy_plist_backup=
+    previous_ddns_plist_existed=0
+    previous_ddns_plist_backup=
     ddns_started=0
     started_caddy_pid=
     trap 'rollback_enable' ERR
@@ -243,7 +275,14 @@ case "$action" in
         sleep 0.1
       done
     else
+      mkdir -p "$launchd_dir"
       if [[ -f "$token_file" ]]; then
+        if [[ -f "$ddns_plist" ]]; then
+          previous_ddns_plist_backup=$(mktemp "$data_dir/ddns-plist.XXXXXX")
+          cp -p "$ddns_plist" "$previous_ddns_plist_backup"
+          previous_ddns_plist_existed=1
+        fi
+        ddns_started=1
         python3 - "$ddns_plist" "$ddns_script" "$host" "$data_dir" <<'PY'
 import os
 import plistlib
@@ -264,9 +303,19 @@ os.chmod(path, 0o644)
 PY
         chmod 644 "$ddns_plist"
         launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
-        launchctl_cmd bootstrap system "$ddns_plist"
-        ddns_started=1
+        if launchctl_cmd bootstrap system "$ddns_plist"; then
+          :
+        else
+          launchd_status=$?
+          rollback_enable "$launchd_status"
+        fi
       fi
+      if [[ -f "$plist" ]]; then
+        previous_caddy_plist_backup=$(mktemp "$data_dir/caddy-plist.XXXXXX")
+        cp -p "$plist" "$previous_caddy_plist_backup"
+        previous_caddy_plist_existed=1
+      fi
+      caddy_started=1
       python3 - "$plist" "$caddy_bin" "$caddyfile" "$caddy_dir" "$host" "$port" <<'PY'
 import os
 import plistlib
@@ -293,8 +342,12 @@ os.chmod(path, 0o600)
 PY
       chmod 600 "$plist"
       launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
-      caddy_started=1
-      launchctl_cmd bootstrap system "$plist"
+      if launchctl_cmd bootstrap system "$plist"; then
+        :
+      else
+        launchd_status=$?
+        rollback_enable "$launchd_status"
+      fi
     fi
     config_write_attempted=1
     SUPERSEMU_PUBLIC_HOST=$host SUPERSEMU_PUBLIC_PORT=$port SUPERSEMU_CADDY_DATA_DIR=$caddy_dir \
@@ -302,6 +355,8 @@ PY
     if ((no_launchd == 0)); then launchctl_cmd kickstart -k "$server_label"; fi
     echo "Public HTTPS configured for https://$host; admin routes return 404."
     [[ -z "$previous_config_backup" ]] || rm -f "$previous_config_backup"
+    [[ -z "$previous_caddy_plist_backup" ]] || rm -f "$previous_caddy_plist_backup"
+    [[ -z "$previous_ddns_plist_backup" ]] || rm -f "$previous_ddns_plist_backup"
     trap - ERR
     ;;
   disable)

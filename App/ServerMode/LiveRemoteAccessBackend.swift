@@ -19,6 +19,10 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
     private var latestStatus: RemoteAccessStatusResponse?
     private var lastHost = RemoteAccessModel.defaultHost
     private let defaults = UserDefaults.standard
+    var configuredHost: String? {
+        guard latestStatus?.enabled == true else { return nil }
+        return latestStatus?.publicURL?.host
+    }
 
     private var server: ServerModeModel { attachedServer ?? ServerStatusMonitor.shared.model }
     var tokenSaved: Bool {

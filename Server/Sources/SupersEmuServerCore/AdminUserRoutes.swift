@@ -34,7 +34,7 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
 
     admin.get("remote-access") { _, context in
         _ = try adminCaller(context)
-        return store.remoteAccessStatus()
+        return await store.remoteAccessStatus()
     }
 
     admin.get("users") { _, context in

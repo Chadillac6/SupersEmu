@@ -45,10 +45,13 @@ elif [[ "$url" == *"/dns_records?type=A"* ]]; then
     changed) body='{"success":true,"result":[{"id":"record-1","content":"192.0.2.1","proxied":false}]}' ;;
     unchanged) body='{"success":true,"result":[{"id":"record-1","content":"203.0.113.10","proxied":false}]}' ;;
     proxied) body='{"success":true,"result":[{"id":"record-1","content":"203.0.113.10","proxied":true}]}' ;;
+    multiple) body='{"success":true,"result":[{"id":"record-1","content":"192.0.2.1","proxied":false},{"id":"record-2","content":"203.0.113.10","proxied":true}]}' ;;
     *) body='{"success":true,"result":[]}' ;;
   esac
 elif [[ "$url" == *"/dns_records/record-1" && "$method" == PATCH ]]; then
   body='{"success":true,"result":{"id":"record-1"}}'
+elif [[ "$url" == *"/dns_records/record-2" && "$method" == PATCH ]]; then
+  body='{"success":true,"result":{"id":"record-2"}}'
 elif [[ "$url" == *"/dns_records" && "$method" == POST ]]; then
   body='{"success":true,"result":{"id":"record-new"}}'
 else
@@ -93,6 +96,11 @@ assert "unchanged record is not written" bash -c '! grep -q "^POST|" "$1" && ! g
 
 run_case proxied proxied
 assert "proxied record is patched to DNS-only" grep -Fq 'PATCH|https://cloudflare.test/client/v4/zones/zone-parent/dns_records/record-1|' "$tmp/proxied/curl.log"
+
+run_case multiple multiple
+assert "both A records needing correction are patched" bash -c \
+  'grep -Fq "dns_records/record-1|" "$1" && grep -Fq "dns_records/record-2|" "$1" && [[ "$(grep -c "^PATCH|" "$1")" == 2 ]]' \
+  _ "$tmp/multiple/curl.log"
 
 run_case longest create
 assert "zone lookup tries longest suffix first" bash -c '[[ "$(sed -n "2p" "$1")" == *"name=games.supersemu.com"* && "$(sed -n "3p" "$1")" == *"name=supersemu.com"* ]]' _ "$tmp/longest/curl.log"

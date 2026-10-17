@@ -172,12 +172,11 @@ encoded_host=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys
 zone_path=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$zone_id")
 records_url="$api/zones/$zone_path/dns_records?type=A&name=$encoded_host"
 if api_request GET "$records_url"; then
-  record=$(python3 - "$response_file" <<'PY'
+  records=$(python3 - "$response_file" <<'PY'
 import json
 import sys
 data = json.load(open(sys.argv[1], encoding="utf-8")).get("result") or []
-if data:
-    item = data[0]
+for item in data:
     print("\t".join(str(item.get(key, "")) for key in ("id", "content", "proxied")))
 PY
   )
@@ -187,39 +186,40 @@ else
   fail 1 "Cloudflare DNS record lookup failed"
 fi
 
-record_id=
-record_ip=
-record_proxied=
-if [[ -n "$record" ]]; then
-  IFS=$'\t' read -r record_id record_ip record_proxied <<<"$record"
-fi
-if [[ -n "$record_id" && "$record_ip" == "$ip" && "$record_proxied" == "False" ]]; then
-  write_state "" "$ip" no
-  exit 0
-fi
-
 payload=$(python3 - "$host" "$ip" <<'PY'
 import json
 import sys
 print(json.dumps({"type": "A", "name": sys.argv[1], "content": sys.argv[2], "ttl": 300, "proxied": False}))
 PY
 )
-if [[ -n "$record_id" ]]; then
-  write_url="$api/zones/$zone_path/dns_records/$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$record_id")"
-  if api_request PATCH "$write_url" "$payload"; then
-    :
-  else
-    request_status=$?
-    ((request_status == 3)) && fail 3 "Cloudflare token was rejected"
-    fail 1 "Cloudflare DNS record update failed"
-  fi
+records_written=0
+if [[ -n "$records" ]]; then
+  while IFS=$'\t' read -r record_id record_ip record_proxied; do
+    [[ -n "$record_id" ]] || continue
+    if [[ "$record_ip" == "$ip" && "$record_proxied" == "False" ]]; then
+      continue
+    fi
+    encoded_record_id=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$record_id")
+    write_url="$api/zones/$zone_path/dns_records/$encoded_record_id"
+    if api_request PATCH "$write_url" "$payload"; then
+      records_written=1
+    else
+      request_status=$?
+      ((request_status == 3)) && fail 3 "Cloudflare token was rejected"
+      fail 1 "Cloudflare DNS record update failed"
+    fi
+  done <<<"$records"
 else
   if api_request POST "$api/zones/$zone_path/dns_records" "$payload"; then
-    :
+    records_written=1
   else
     request_status=$?
     ((request_status == 3)) && fail 3 "Cloudflare token was rejected"
     fail 1 "Cloudflare DNS record creation failed"
   fi
 fi
-write_state "" "$ip" yes
+if ((records_written)); then
+  write_state "" "$ip" yes
+else
+  write_state "" "$ip" no
+fi

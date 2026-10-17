@@ -1,13 +1,15 @@
 import Foundation
 import GRDB
 import Hummingbird
+import Network
+import Security
 import SupersEmuKit
 import SwiftASN1
 import X509
 
 /// Queries behind the users/devices/tokens admin API. Never exposes token hashes.
 extension ServerStore {
-    public func remoteAccessStatus() -> RemoteAccessStatusResponse {
+    public func remoteAccessStatus() async -> RemoteAccessStatusResponse {
         let configURL = paths.root.appendingPathComponent("public-access.json")
         let config = (try? Data(contentsOf: configURL))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
@@ -15,6 +17,10 @@ extension ServerStore {
         let ddnsURL = paths.root.appendingPathComponent("ddns-state.json")
         let ddns = (try? Data(contentsOf: ddnsURL)).flatMap {
             try? SupersEmuJSON.decoder().decode(RemoteAccessDDNSState.self, from: $0)
+        }
+        var certificateValidUntil = publicURL.flatMap { certificateExpiry(for: $0.host) }
+        if certificateValidUntil == nil, let host = publicURL?.host {
+            certificateValidUntil = await certificateExpiryFromTLS(host: host)
         }
         return RemoteAccessStatusResponse(
             enabled: config["enabled"] as? Bool ?? false,
@@ -24,7 +30,7 @@ extension ServerStore {
             ddnsUpdatedAt: ddns?.updatedAt,
             ddnsLastCheckAt: ddns?.lastCheckAt,
             ddnsLastError: ddns?.lastError,
-            certificateValidUntil: publicURL.flatMap { certificateExpiry(for: $0.host) })
+            certificateValidUntil: certificateValidUntil)
     }
 
     private func certificateExpiry(for host: String?) -> Date? {
@@ -38,6 +44,50 @@ extension ServerStore {
             return certificate.notValidAfter
         }
         return nil
+    }
+
+    private func certificateExpiryFromTLS(host: String) async -> Date? {
+        let queue = DispatchQueue(label: "com.chadillac6.supersemu.remote-access-certificate")
+        let capturedExpiry = CertificateExpiryCapture()
+        let handshake = CertificateExpiryHandshake()
+        let tlsOptions = NWProtocolTLS.Options()
+        host.withCString {
+            sec_protocol_options_set_tls_server_name(tlsOptions.securityProtocolOptions, $0)
+        }
+        sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { _, trustReference, complete in
+            let trust = sec_trust_copy_ref(trustReference).takeRetainedValue()
+            if let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+               let leaf = chain.first,
+               let certificate = try? Certificate(leaf) {
+                capturedExpiry.store(certificate.notValidAfter)
+            }
+            complete(true)
+        }, queue)
+
+        let connection = NWConnection(
+            host: NWEndpoint.Host("127.0.0.1"),
+            port: 443,
+            using: NWParameters(tls: tlsOptions))
+        let timeout = DispatchWorkItem {
+            if handshake.finish(nil) { connection.cancel() }
+        }
+        return await withCheckedContinuation { continuation in
+            handshake.install(continuation)
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    timeout.cancel()
+                    if handshake.finish(capturedExpiry.value) { connection.cancel() }
+                case .failed, .cancelled:
+                    timeout.cancel()
+                    handshake.finish(nil)
+                default:
+                    break
+                }
+            }
+            queue.asyncAfter(deadline: .now() + .seconds(3), execute: timeout)
+            connection.start(queue: queue)
+        }
     }
 
     public func adminStatus() throws -> AdminStatus {
@@ -289,6 +339,34 @@ extension ServerStore {
         let scopes = (row["scopes"] as String).split(separator: ",").compactMap { Scope(rawValue: String($0)) }
         return TokenInfo(id: row["id"], name: row["name"], scopes: scopes, createdAt: row["created_at"],
                          revokedAt: row["revoked_at"], token: plaintext)
+    }
+}
+
+private final class CertificateExpiryCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var expiry: Date?
+
+    var value: Date? { lock.withLock { expiry } }
+
+    func store(_ expiry: Date) { lock.withLock { self.expiry = expiry } }
+}
+
+private final class CertificateExpiryHandshake: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Date?, Never>?
+
+    func install(_ continuation: CheckedContinuation<Date?, Never>) {
+        lock.withLock { self.continuation = continuation }
+    }
+
+    @discardableResult
+    func finish(_ expiry: Date?) -> Bool {
+        let continuation = lock.withLock { () -> CheckedContinuation<Date?, Never>? in
+            defer { self.continuation = nil }
+            return self.continuation
+        }
+        continuation?.resume(returning: expiry)
+        return continuation != nil
     }
 }
 
