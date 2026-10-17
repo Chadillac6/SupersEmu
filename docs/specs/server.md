@@ -120,6 +120,7 @@ GET  /v1/events                     server-sent events: library.updated, save.sy
 admin: /v1/admin/users, /invites, /permissions, /library/import, /library/publish, /tokens
        /v1/admin/library/upload?batch=&path= (stream one file), /library/upload/{batch}/finish (move batch into Incoming, scan)
        /v1/admin/library/issues (Review Needed), /issues/{id}/system (pick console), DELETE /issues/{id}
+       /v1/admin/metadata/rematch (queue metadata matching again)
        /v1/admin/storage, /storage/move (Move Library)
 ```
 - Saves: same model as `save-and-resume.md`. The server stores immutable revisions per user. An upload

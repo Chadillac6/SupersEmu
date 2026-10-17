@@ -42,6 +42,9 @@ public struct APIClient: Sendable {
     public func health() async throws -> HealthResponse { try await get("/v1/health") }
     public func me() async throws -> MeResponse { try await get("/v1/me") }
     public func library() async throws -> LibraryResponse { try await get("/v1/library") }
+    public func rematchMetadata(gameIDs: [String]?) async throws -> MetadataRematchResponse {
+        try await send("POST", "/v1/admin/metadata/rematch", body: MetadataRematchRequest(gameIDs: gameIDs))
+    }
 
     // MARK: Cheats
 
