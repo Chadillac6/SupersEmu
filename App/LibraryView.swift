@@ -90,6 +90,10 @@ struct LibraryView: View {
                 await server.refresh()
             }
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    BrandLockup(size: 18)
+                        .accessibilityIdentifier("home-logo")
+                }
                 ToolbarItem(placement: .primaryAction) {
                     profileMenu
                 }
@@ -107,6 +111,9 @@ struct LibraryView: View {
                 }
                 #endif
             }
+            #if os(macOS)
+            .toolbar(removing: .title)
+            #endif
             .sheet(isPresented: $isShowingControls) {
                 NavigationStack {
                     ControlsView()

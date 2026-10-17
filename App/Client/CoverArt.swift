@@ -179,7 +179,7 @@ enum ArtworkCache {
         ]
     }
 
-    private static func image(from data: Data) -> Image? {
+    static func image(from data: Data) -> Image? {
         #if os(macOS)
         NSImage(data: data).map { Image(nsImage: $0) }
         #else

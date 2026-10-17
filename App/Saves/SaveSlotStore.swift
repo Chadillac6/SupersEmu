@@ -77,6 +77,17 @@ struct SaveSlotStore {
         }
     }
 
+    /// Returns the newest slot screenshot whose state and screenshot still match their saved metadata.
+    func latestScreenshotURL() -> URL? {
+        slots()
+            .compactMap { slot -> (Date, URL)? in
+                guard let savedAt = slot.savedAt, let screenshotURL = slot.screenshotURL else { return nil }
+                return (savedAt, screenshotURL)
+            }
+            .max { $0.0 < $1.0 }?
+            .1
+    }
+
     func save(into slot: Int, savedAt: Date, screenshotPNG: Data?, writeState: (URL) throws -> Void) throws {
         try validate(slot)
         guard !FileManager.default.fileExists(atPath: stateURL(slot).path) else {

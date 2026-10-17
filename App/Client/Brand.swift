@@ -23,6 +23,10 @@ enum Brand {
 
     static let eyebrow = Font.caption.monospaced().weight(.semibold)
     static let serifTitle = Font.system(.largeTitle, design: .serif).weight(.bold)
+
+    static func wordmark(size: CGFloat) -> Font {
+        .custom("Silkscreen-Bold", size: size, relativeTo: .title2)
+    }
 }
 
 struct BrandPrimaryButtonStyle: ButtonStyle {
@@ -56,20 +60,31 @@ struct BrandSecondaryButtonStyle: ButtonStyle {
 }
 
 struct BrandMark: View {
+    var size: CGFloat = 24
+    var litDots: Int = 6
+
     var body: some View {
         ZStack {
             CartridgeOutline()
-                .stroke(Brand.Colors.ink, style: StrokeStyle(lineWidth: 1.7, lineJoin: .round))
+                .stroke(Brand.Colors.ink, style: StrokeStyle(lineWidth: 1.7 * size / 24, lineJoin: .round))
             Canvas { context, _ in
+                var index = 0
                 for y in [8.4, 11.8] {
                     for x in [8.6, 12.0, 15.4] {
-                        let dot = CGRect(x: x - 1.15, y: y - 1.15, width: 2.3, height: 2.3)
-                        context.fill(Path(ellipseIn: dot), with: .color(Brand.Colors.red))
+                        let dot = CGRect(
+                            x: (x - 1.15) * size / 24,
+                            y: (y - 1.15) * size / 24,
+                            width: 2.3 * size / 24,
+                            height: 2.3 * size / 24
+                        )
+                        let opacity = index >= litDots ? 0.15 : 1
+                        context.fill(Path(ellipseIn: dot), with: .color(Brand.Colors.red.opacity(opacity)))
+                        index += 1
                     }
                 }
             }
         }
-        .frame(width: 24, height: 24)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 }
@@ -104,15 +119,27 @@ private struct CartridgeOutline: Shape {
 }
 
 struct BrandLockup: View {
+    var size: CGFloat = 22
+
     var body: some View {
-        HStack(spacing: 8) {
-            BrandMark()
-            Text("SupersEmu")
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(Brand.Colors.ink)
+        HStack {
+            BrandMark(size: size * 1.1)
+            BrandWordmark(size: size)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("SupersEmu")
+    }
+}
+
+struct BrandWordmark: View {
+    var size: CGFloat = 22
+
+    var body: some View {
+        (Text("SUPERS").foregroundColor(Brand.Colors.ink)
+         + Text("EMU").foregroundColor(Brand.Colors.redText))
+            .font(Brand.wordmark(size: size))
+            .tracking(1)
+            .accessibilityLabel("SupersEmu")
     }
 }
 
