@@ -45,6 +45,13 @@ in BrandInk and “EMU” in BrandRedText. It is used only for the wordmark.
 Corner radii: 14 cards, 12 buttons, 10 rows, capsule chips. 1 pt BrandLine borders instead of shadows and materials.
 Spacing on a 4 pt grid; screen margin 20 (compact) / 32 (regular).
 
+## Home hero
+
+The featured game leads with its server screenshot, then the newest valid local save-slot screenshot, and finally the
+existing blurred-cover `WideArt` fallback. When a screenshot exists, the cover art appears as a small white-bordered
+sticker hanging from its lower leading edge; the title, last-played subtitle and actions remain below the art, with no
+separate red eyebrow.
+
 ## Mark
 
 Cartridge outline with a 3×2 dot label, on a 24×24 grid:

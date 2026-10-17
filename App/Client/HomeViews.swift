@@ -88,8 +88,9 @@ struct SystemSelectorBar: View {
     }
 }
 
-/// The featured game: cover art above the title, status and primary actions.
+/// The featured game: screenshot art and an overlapping cover above the title, status and primary actions.
 struct HomeHero: View {
+    @Environment(ServerSession.self) private var server
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -98,58 +99,69 @@ struct HomeHero: View {
     let primaryTitle: String
     let primary: () -> Void
     let details: () -> Void
+    @State private var screenshot: Image?
+    @State private var cover: Image?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WideArt(item: item, preferCover: true)
-                // Scaled artwork can extend beyond its clipped frame and intercept selector-chip clicks.
-                .allowsHitTesting(false)
-                .frame(height: height)
-                .overlay(alignment: .topLeading) {
-                    if let logo = item.logoPath {
-                        RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit) { EmptyView() }
-                            .frame(maxWidth: 240, maxHeight: 68, alignment: .leading)
-                            .padding(16)
-                            .accessibilityHidden(true)
-                    }
-                }
-                .clipped()
-            VStack(alignment: .leading, spacing: 10) {
-                Text(item.lastPlayed != nil ? "CONTINUE PLAYING" : "IN YOUR LIBRARY")
-                    .font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.redText)
-                Text(item.title)
-                    .font(.system(size: compact ? 25 : 30, weight: .bold))
-                    .foregroundStyle(Brand.Colors.ink)
-                    .lineLimit(2)
-                Text(subtitle)
-                    .font(.callout)
-                    .foregroundStyle(Brand.Colors.ink2)
-                HStack(spacing: 10) {
-                    Button(action: primary) {
-                        Label(primaryTitle, systemImage: "play.fill")
-                            .frame(minWidth: compact ? nil : 140)
-                    }
-                    .buttonStyle(BrandPrimaryButtonStyle())
-                    .controlSize(compact ? .regular : .large)
-                    .fixedSize(horizontal: !compact, vertical: false)
-                    .accessibilityIdentifier("hero-primary")
-                    Button(action: details) {
-                        Label("Details", systemImage: "info.circle")
-                            .frame(minWidth: compact ? nil : 140)
-                    }
-                    .buttonStyle(BrandSecondaryButtonStyle())
-                    .controlSize(compact ? .regular : .large)
-                    .fixedSize(horizontal: !compact, vertical: false)
-                    .accessibilityIdentifier("hero-details")
-                }
+            if let screenshot {
+                screenshot
+                    .resizable()
+                    .scaledToFill()
+                    // Scaled artwork can extend beyond its clipped frame and intercept selector-chip clicks.
+                    .allowsHitTesting(false)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: height)
+                    .clipped()
+            } else {
+                WideArt(item: item, preferCover: true)
+                    // Scaled artwork can extend beyond its clipped frame and intercept selector-chip clicks.
+                    .allowsHitTesting(false)
+                    .frame(height: height)
+                    .clipped()
             }
-            .padding(compact ? 16 : 22)
+            if screenshot != nil {
+                VStack(alignment: .leading, spacing: 0) {
+                    titleBlock
+                        .padding(.leading, badgeLeading + badgeWidth + 14)
+                        .padding(.trailing, bodyPadding)
+                        .frame(maxWidth: .infinity, minHeight: titleBlockHeight, alignment: .topLeading)
+                    actionRow
+                        .padding(.horizontal, bodyPadding)
+                        .padding(.top, 12)
+                        .padding(.bottom, bodyPadding)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    titleBlock
+                    actionRow
+                }
+                .padding(compact ? 16 : 22)
+            }
         }
         .background(Brand.Colors.surface)
         .clipShape(RoundedRectangle(cornerRadius: Brand.Radii.card))
         .overlay {
             RoundedRectangle(cornerRadius: Brand.Radii.card)
                 .stroke(Brand.Colors.line, lineWidth: 1)
+        }
+        .overlay(alignment: .topLeading) {
+            if screenshot != nil, let cover {
+                cover
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: badgeWidth, height: badgeHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(.white, lineWidth: 2)
+                    }
+                    .shadow(color: .black.opacity(0.35), radius: 9, y: 6)
+                    .padding(.leading, 14)
+                    .offset(y: height - badgeHeight + badgeOverlap)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
         .contentShape(RoundedRectangle(cornerRadius: Brand.Radii.card))
         .onTapGesture { details() }
@@ -160,13 +172,73 @@ struct HomeHero: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Opens game details")
         .accessibilityAction { details() }
+        .task(id: artworkTaskID) {
+            screenshot = nil
+            cover = nil
+            if let path = item.heroPath {
+                await ArtworkCache.load(path, key: ArtworkCache.key(item.id, path), server: server) {
+                    screenshot = $0
+                }
+            } else if let url = SaveSlotStore(directory: AppPaths.stateDirectory(for: item.id)).latestScreenshotURL(),
+                      let data = try? Data(contentsOf: url),
+                      let image = ArtworkCache.image(from: data) {
+                screenshot = image
+            }
+            await ArtworkCache.load(item.coverPath, key: item.id, server: server) {
+                cover = $0
+            }
+        }
     }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(item.title)
+                .font(.system(size: compact ? 25 : 30, weight: .bold))
+                .foregroundStyle(Brand.Colors.ink)
+                .lineLimit(2)
+            Text(subtitle)
+                .font(.callout)
+                .foregroundStyle(Brand.Colors.ink2)
+        }
+    }
+
+    private var actionRow: some View {
+        HStack(spacing: 10) {
+            Button(action: primary) {
+                Label(primaryTitle, systemImage: "play.fill")
+                    .frame(minWidth: compact ? nil : 140, maxWidth: compact ? .infinity : nil, alignment: .leading)
+            }
+            .buttonStyle(BrandPrimaryButtonStyle())
+            .controlSize(compact ? .regular : .large)
+            .fixedSize(horizontal: !compact, vertical: false)
+            .accessibilityIdentifier("hero-primary")
+            Button(action: details) {
+                Label("Details", systemImage: "info.circle")
+                    .frame(minWidth: compact ? nil : 140, maxWidth: compact ? .infinity : nil, alignment: .leading)
+            }
+            .buttonStyle(BrandSecondaryButtonStyle())
+            .controlSize(compact ? .regular : .large)
+            .fixedSize(horizontal: !compact, vertical: false)
+            .accessibilityIdentifier("hero-details")
+        }
+    }
+
+    private var artworkTaskID: String {
+        "\(item.id)|\(ArtworkCache.taskID(item.heroPath, server))|\(item.coverPath ?? "")"
+    }
+
+    private var bodyPadding: CGFloat { compact ? 16 : 22 }
+    private var badgeWidth: CGFloat { compact ? 74 : 96 }
+    private var badgeHeight: CGFloat { badgeWidth * 4 / 3 }
+    private var badgeOverlap: CGFloat { compact ? 34 : 44 }
+    private var badgeLeading: CGFloat { 14 }
+    private var titleBlockHeight: CGFloat { badgeOverlap + 24 }
 
     private var height: CGFloat {
         #if os(iOS)
-        compact ? 240 : 260
+        compact ? 240 : 300
         #else
-        260
+        300
         #endif
     }
 
