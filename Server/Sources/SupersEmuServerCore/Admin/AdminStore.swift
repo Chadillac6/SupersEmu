@@ -40,7 +40,8 @@ extension ServerStore {
         for case let file as URL in files
         where file.lastPathComponent == "\(host).crt" && file.deletingLastPathComponent().lastPathComponent == host {
             guard let pem = try? String(contentsOf: file, encoding: .utf8),
-                  let certificate = try? Certificate(pemEncoded: pem) else { continue }
+                  let certificate = try? Certificate(pemEncoded: pem),
+                  CertificateHostMatcher.matches(host: host, certificate: certificate) else { continue }
             return certificate.notValidAfter
         }
         return nil
@@ -58,7 +59,8 @@ extension ServerStore {
             let trust = sec_trust_copy_ref(trustReference).takeRetainedValue()
             if let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
                let leaf = chain.first,
-               let certificate = try? Certificate(leaf) {
+               let certificate = try? Certificate(leaf),
+               CertificateHostMatcher.matches(host: host, certificate: certificate) {
                 capturedExpiry.store(certificate.notValidAfter)
             }
             complete(true)
@@ -339,6 +341,34 @@ extension ServerStore {
         let scopes = (row["scopes"] as String).split(separator: ",").compactMap { Scope(rawValue: String($0)) }
         return TokenInfo(id: row["id"], name: row["name"], scopes: scopes, createdAt: row["created_at"],
                          revokedAt: row["revoked_at"], token: plaintext)
+    }
+}
+
+enum CertificateHostMatcher {
+    static func matches(host: String, certificate: Certificate) -> Bool {
+        guard let names = try? certificate.extensions.subjectAlternativeNames else { return false }
+        return matches(host: host, dnsNames: names.compactMap { name in
+            if case .dnsName(let dnsName) = name { return dnsName }
+            return nil
+        })
+    }
+
+    static func matches(host: String, dnsNames: [String]) -> Bool {
+        let normalizedHost = host.lowercased()
+        guard !normalizedHost.isEmpty else { return false }
+        let hostLabels = normalizedHost.split(separator: ".", omittingEmptySubsequences: false)
+        guard !hostLabels.contains(where: { $0.isEmpty }) else { return false }
+
+        return dnsNames.contains { dnsName in
+            let normalizedName = dnsName.lowercased()
+            if normalizedName == normalizedHost { return true }
+            guard normalizedName.hasPrefix("*.") else { return false }
+            let suffixLabels = normalizedName.dropFirst(2).split(separator: ".", omittingEmptySubsequences: false)
+            return !suffixLabels.isEmpty
+                && !suffixLabels.contains(where: { $0.isEmpty })
+                && hostLabels.count == suffixLabels.count + 1
+                && hostLabels.dropFirst().elementsEqual(suffixLabels)
+        }
     }
 }
 
