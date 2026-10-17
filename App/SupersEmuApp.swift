@@ -7,12 +7,13 @@ struct SupersEmuApp: App {
     @State private var downloads = DownloadCenter()
     @State private var bios = BIOSCenter()
 
-    #if os(macOS)
     init() {
+        BrandFonts.register()
+        #if os(macOS)
         ServerStatusMonitor.shared.startPolling()
         _ = AppUpdater.shared
+        #endif
     }
-    #endif
 
     var body: some Scene {
         WindowGroup {
@@ -54,6 +55,7 @@ struct RootView: View {
     #endif
     @AppStorage("onboardingSkipped") private var onboardingSkipped = false
     @State private var playing: LaunchRequest?
+    @State private var showsLaunchSplash = LaunchSplash.claimColdLaunch()
 
     /// M0 flows (and test launches with SUPERSEMU_IMPORT_DIR) go straight to the local library.
     private var showsOnboarding: Bool {
@@ -76,6 +78,13 @@ struct RootView: View {
                     onPlay: { game in Task { await launch(game) } },
                     onStartFresh: { game in Task { await launch(game, startFresh: true) } }
                 )
+            }
+        }
+        .overlay {
+            if showsLaunchSplash && playing == nil {
+                LaunchSplash {
+                    showsLaunchSplash = false
+                }
             }
         }
         .task {
@@ -103,6 +112,9 @@ struct RootView: View {
                 library.refresh()
                 Task { await server.refresh() }
             }
+        }
+        .onChange(of: playing != nil) { _, isPlaying in
+            if isPlaying { showsLaunchSplash = false }
         }
         // Every successful refresh (including a LAN -> public URL switch) retries queued saves; overlapping
         // flushes coalesce inside the engine.

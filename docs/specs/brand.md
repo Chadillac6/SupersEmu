@@ -31,11 +31,14 @@ and progress. Everything else is ink on paper.
 
 ## Type
 
-System fonts only (Dynamic Type keeps working):
+System fonts for the interface (Dynamic Type keeps working):
 - SF Pro (default) for UI.
 - New York (`.system(..., design: .serif)`) for game titles on the detail page and the onboarding headline.
 - SF Mono (`.system(..., design: .monospaced)`), uppercase with 1–1.5 pt tracking, for eyebrows, counts and metadata lines,
   e.g. `N64 · 2000 · 1–4 PLAYERS`.
+
+The wordmark is the only custom-font exception: Silkscreen Bold, bundled under the SIL Open Font License (OFL), with “SUPERS”
+in BrandInk and “EMU” in BrandRedText. It is used only for the wordmark.
 
 ## Shape and spacing
 
@@ -47,5 +50,11 @@ Spacing on a 4 pt grid; screen margin 20 (compact) / 32 (regular).
 Cartridge outline with a 3×2 dot label, on a 24×24 grid:
 - Outline path `M4 2.5h16a1.5 1.5 0 0 1 1.5 1.5v17.5h-4v-2.2h-11v2.2h-4V4A1.5 1.5 0 0 1 4 2.5z`, stroke 1.7, round joins.
 - Dots r=1.15 at x ∈ {8.6, 12.0, 15.4}, y ∈ {8.4, 11.8}.
-- In-app: outline BrandInk, dots BrandRed, next to "SupersEmu" in SF Pro semibold.
+- In-app: outline BrandInk, dots BrandRed, next to the Silkscreen Bold wordmark.
 - App icon: white outline and dots on BrandRed (`docs/brand/app-icon.svg`).
+
+## Launch splash
+
+The cold-launch splash drops the cartridge mark into a slot, lights its dots, then reveals the wordmark before fading away. Tap
+anywhere or press a key on Mac to skip; Reduce Motion shows the final frame immediately. `SUPERSEMU_SPLASH=off` disables it
+and `SUPERSEMU_SPLASH=hold` keeps the final frame visible for screenshots. It never appears over the Player.

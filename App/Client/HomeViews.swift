@@ -23,9 +23,11 @@ struct SystemSelectorBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ThemeLogo(theme: theme, height: 38)
-                .padding(.horizontal, 20)
-                .accessibilityIdentifier("home-logo")
+            if theme.system != nil {
+                ThemeLogo(theme: theme, height: 38)
+                    .padding(.horizontal, 20)
+                    .accessibilityIdentifier("home-console-logo")
+            }
             Text(statusLine)
                 .font(Brand.eyebrow)
                 .tracking(1.2)
