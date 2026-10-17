@@ -150,10 +150,26 @@ struct OnboardingView: View {
         #endif
     }
 
+    private var linkSteps: Int {
+        #if os(macOS)
+        1
+        #else
+        0
+        #endif
+    }
+
+    private var serversStep: Int { linkSteps + 1 }
+    private var addressStep: Int { linkSteps + (discoveredServers.isEmpty ? 0 : 1) + 1 }
+    private var codeStep: Int { addressStep + 1 }
+
+    private func stepTitle(_ n: Int, _ title: String) -> String {
+        String(format: "%02d %@", n, title)
+    }
+
     #if os(macOS)
     private var linkForm: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("01 Pairing link").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
+            Text(stepTitle(1, "Pairing link")).font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
             HStack {
                 TextField("supersemu://pair?d=…", text: $link)
                     .textFieldStyle(.plain)
@@ -180,7 +196,7 @@ struct OnboardingView: View {
     private var codeForm: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !discoveredServers.isEmpty {
-                Text("02 Servers on your network").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
+                Text(stepTitle(serversStep, "Servers on your network")).font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
                 ForEach(discoveredServers) { server in
                     Button {
                         Task { await select(server) }
@@ -201,7 +217,7 @@ struct OnboardingView: View {
                     .accessibilityIdentifier("discovered-server-\(server.id)")
                 }
             }
-            Text("03 Server address").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
+            Text(stepTitle(addressStep, "Server address")).font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
             TextField("mac-mini.local", text: $address)
                 .textFieldStyle(.plain)
                 .padding(10)
@@ -225,24 +241,24 @@ struct OnboardingView: View {
             .buttonStyle(.borderless)
             .disabled(isPairing)
             if showCodeForm {
-            Text("04 Pairing code").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3).padding(.top, 6)
-            TextField("123456", text: $code)
-                .textFieldStyle(.plain)
-                .padding(10)
-                .background(Brand.Colors.surface, in: RoundedRectangle(cornerRadius: Brand.Radii.row))
-                .overlay(RoundedRectangle(cornerRadius: Brand.Radii.row).stroke(Brand.Colors.line, lineWidth: 1))
-                .font(.title3.monospacedDigit())
-                .disabled(isPairing)
-                #if os(iOS)
-                .keyboardType(.numberPad)
-                #endif
-                .onChange(of: code) { _, new in code = String(new.filter(\.isNumber).prefix(6)) }
-                .accessibilityIdentifier("pairing-code")
-            Button("Connect") { Task { await pairWithCode() } }
-                .buttonStyle(BrandPrimaryButtonStyle())
-                .disabled(address.isEmpty || code.count != 6 || isPairing)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .accessibilityIdentifier("connect-code")
+                Text(stepTitle(codeStep, "Pairing code")).font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3).padding(.top, 6)
+                TextField("123456", text: $code)
+                    .textFieldStyle(.plain)
+                    .padding(10)
+                    .background(Brand.Colors.surface, in: RoundedRectangle(cornerRadius: Brand.Radii.row))
+                    .overlay(RoundedRectangle(cornerRadius: Brand.Radii.row).stroke(Brand.Colors.line, lineWidth: 1))
+                    .font(.title3.monospacedDigit())
+                    .disabled(isPairing)
+                    #if os(iOS)
+                    .keyboardType(.numberPad)
+                    #endif
+                    .onChange(of: code) { _, new in code = String(new.filter(\.isNumber).prefix(6)) }
+                    .accessibilityIdentifier("pairing-code")
+                Button("Connect") { Task { await pairWithCode() } }
+                    .buttonStyle(BrandPrimaryButtonStyle())
+                    .disabled(address.isEmpty || code.count != 6 || isPairing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .accessibilityIdentifier("connect-code")
             }
         }
     }

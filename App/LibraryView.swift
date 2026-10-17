@@ -276,7 +276,7 @@ struct GameCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 4 : 6) {
-            ZStack(alignment: .bottomLeading) {
+            ZStack(alignment: .topTrailing) {
                 CoverArt(item: item)
                     .opacity(item.isCloudOnly ? 0.85 : 1)
                 if item.isCloudOnly {
