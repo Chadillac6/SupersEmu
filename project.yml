@@ -874,6 +874,9 @@ targets:
       - Tests/HostTests
       - App/ServerMode/ServerMenuStatus.swift
       - App/Diagnostics/PerformanceStats.swift
+      - App/FramePacer.swift
+      - App/AudioRateControl.swift
+      - App/EmulationLoop.swift
       - App/Diagnostics/DiagnosticsLog.swift
       - App/Diagnostics/N64Preset.swift
       - Host/SELibretroHost.h
@@ -895,6 +898,7 @@ targets:
     settings:
       base:
         HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/cores/snes9x/libretro", "$(SRCROOT)/Host", "$(SRCROOT)/Host/CoreEntry"]
+        SWIFT_OBJC_BRIDGING_HEADER: Host/SupersEmu-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: YES
 
   SupersEmuInputTests:
