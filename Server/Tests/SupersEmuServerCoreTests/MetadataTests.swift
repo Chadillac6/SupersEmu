@@ -676,6 +676,8 @@ let pass5 = await service(catalog).enrichPending()
         await gate.resumeFirstLookup()
         await pass.value
 
+        let pendingAfterFirstPass = await metadata.pendingRematchCount
+        XCTAssertEqual(pendingAfterFirstPass, 0)
         let calls = await gate.callCount()
         XCTAssertEqual(calls, 2)
         let final = try await store.db.read { db -> (String?, String?) in
@@ -687,6 +689,27 @@ let pass5 = await service(catalog).enrichPending()
         }
         XCTAssertEqual(final.0, "lookup-2")
         XCTAssertEqual(final.1, "matched")
+
+        let secondQueued = try await metadata.rematch(gameIDs: [id])
+        XCTAssertEqual(secondQueued, 1)
+        for _ in 0..<100 {
+            let ref = try await store.db.read {
+                try String.fetchOne($0, sql: "SELECT provider_ref FROM game_metadata WHERE game_id = ? AND provider = ?",
+                                    arguments: [id, provider.id])
+            }
+            let pendingCount = await metadata.pendingRematchCount
+            if ref == "lookup-3", pendingCount == 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let secondFinalRef = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT provider_ref FROM game_metadata WHERE game_id = ? AND provider = ?",
+                                arguments: [id, provider.id])
+        }
+        let secondPendingCount = await metadata.pendingRematchCount
+        let secondCallCount = await gate.callCount()
+        XCTAssertEqual(secondFinalRef, "lookup-3")
+        XCTAssertEqual(secondPendingCount, 0)
+        XCTAssertEqual(secondCallCount, 3)
     }
 
     func testRedumpDiscMatchesFirstDiscTrack() async throws {

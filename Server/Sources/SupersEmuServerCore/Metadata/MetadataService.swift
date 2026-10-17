@@ -89,6 +89,8 @@ public actor MetadataService {
     private var rematchAllAt = 0
     private let logger = Logger(label: "supersemu-metadata")
 
+    var pendingRematchCount: Int { rematchedAt.count }
+
     public init(store: ServerStore, http: RateLimitedFetcher, providers: [any MetadataProvider]) {
         self.store = store
         self.http = http
@@ -142,6 +144,8 @@ public actor MetadataService {
             await enrichPending()
         } while rerun
         running = false
+        rematchedAt.removeAll()
+        rematchAllAt = 0
     }
 
     /// One pass over every game still waiting for a match or artwork. Returns how many games changed.
