@@ -171,6 +171,9 @@ private struct ServerMenuBarContent: View {
         let status = monitor.status
         Text(updater.versionLabel).disabled(true)
         Text(UpdateStatusPresentation.menuText(for: updater.status)).disabled(true)
+        if case .readyToInstall(let version) = updater.status {
+            Button("Restart and Install \(version)") { updater.installNow() }
+        }
         Text(status.title).disabled(true)
         Text(status.detail).disabled(true)
         Text("Remote: \(RemoteAccessModel.shared.isOn ? "On · \(RemoteAccessModel.shared.host)" : RemoteAccessModel.shared.summary)").disabled(true)
