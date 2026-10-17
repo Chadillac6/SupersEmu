@@ -44,11 +44,12 @@ struct ServerModeCommands: Commands {
 
 /// Sidebar sections of the Server Mode window. Each is a self-contained view; add a case to add a section.
 enum ServerModeSection: String, CaseIterable, Identifiable {
-    case server, users, library, review, bios, storage
+    case server, remote, users, library, review, bios, storage
     var id: String { rawValue }
     var title: String {
         switch self {
         case .server: return "Server"
+        case .remote: return "Remote Access"
         case .users: return "Users & Games"
         case .library: return "Add Games"
         case .review: return "Review Needed"
@@ -59,6 +60,7 @@ enum ServerModeSection: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .server: return "server.rack"
+        case .remote: return "globe"
         case .users: return "person.2"
         case .library: return "square.and.arrow.down.on.square"
         case .review: return "exclamationmark.bubble"
@@ -66,13 +68,23 @@ enum ServerModeSection: String, CaseIterable, Identifiable {
         case .storage: return "externaldrive"
         }
     }
+
+    /// Debug builds: `SUPERSEMU_DEBUG_SERVER_SECTION=remote` opens that section first (for screenshots).
+    static var debugInitial: ServerModeSection? {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["SUPERSEMU_DEBUG_SERVER_SECTION"].flatMap(ServerModeSection.init(rawValue:))
+        #else
+        nil
+        #endif
+    }
 }
 
 struct ServerModeView: View {
     @State private var model = ServerModeModel()
     @State private var library: LibraryManagerModel?
     @State private var usersGames: UsersGamesModel?
-    @State private var section: ServerModeSection? = .server
+    @State private var section: ServerModeSection? = ServerModeSection.debugInitial ?? .server
+    @State private var remoteAccess = RemoteAccessModel.shared
     @State private var navigation = ServerModeNavigation.shared
     @State private var selectedPairingUserID: String?
     @AppStorage(ServerModeLaunch.defaultsKey) private var openAtLaunch = false
@@ -97,6 +109,7 @@ struct ServerModeView: View {
             return true
         }
         .task {
+            remoteAccess.attach(serverMode: model)
             if library == nil { library = LibraryManagerModel(server: model) }
             if usersGames == nil { usersGames = UsersGamesModel(server: model) }
             await library?.refreshStorage()
@@ -109,6 +122,7 @@ struct ServerModeView: View {
             Task { await model.refresh(); await library?.refreshAll(); await usersGames?.refresh() }
         }
         .onAppear {
+            remoteAccess.attach(serverMode: model)
             consumeNavigationRequest()
         }
         .onChange(of: navigation.requested) { _, _ in consumeNavigationRequest() }
@@ -119,6 +133,7 @@ struct ServerModeView: View {
 
     @ViewBuilder private var detail: some View {
         switch (section ?? .server, library, usersGames) {
+        case (.remote, _, _): RemoteAccessView(model: remoteAccess, serverMode: model)
         case (.users, _, let usersGames?): UsersGamesView(model: usersGames)
         case (.library, let library?, _): LibraryImportView(model: library, onReview: { section = .review })
         case (.review, let library?, _): ReviewNeededView(model: library)
@@ -144,10 +159,21 @@ struct ServerModeView: View {
         }
         .formStyle(.grouped)
         .task {
+            remoteAccess.attach(serverMode: model)
             await model.refresh()
+            await remoteAccess.refresh()
+            var nextRemoteRefresh = Date().addingTimeInterval(30)
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                do {
+                    try await Task.sleep(for: .seconds(5))
+                } catch {
+                    return
+                }
                 await model.refresh()
+                if Date() >= nextRemoteRefresh {
+                    await remoteAccess.refresh()
+                    nextRemoteRefresh = Date().addingTimeInterval(30)
+                }
             }
         }
     }
@@ -171,6 +197,16 @@ struct ServerModeView: View {
                 }
             }
             LabeledContent("Address", value: model.serverURL.absoluteString)
+            if model.isLocal {
+                LabeledContent("Remote Access") {
+                    HStack(spacing: 8) {
+                        Text(remoteAccess.isOn ? "On — \(remoteAccess.publicURLText)" : remoteAccess.summary)
+                            .foregroundStyle(remoteAccess.isOn ? Color.green : Color.secondary)
+                        Button(remoteAccess.isOn ? "Manage…" : "Set Up…") { section = .remote }
+                            .controlSize(.small)
+                    }
+                }
+            }
             if model.lanReachability == .blocked {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Other devices can't reach this server.", systemImage: "exclamationmark.triangle.fill")

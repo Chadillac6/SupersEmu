@@ -3,7 +3,7 @@ import Foundation
 /// What a device remembers about a paired server. The device token itself lives in a `DeviceTokenStore`.
 public struct ServerProfile: Codable, Sendable, Equatable {
     public var serverName: String
-    /// LAN first, then Tailscale, as given by the pairing QR (plus any Bonjour discoveries).
+    /// LAN addresses, as given by the pairing QR (plus any Bonjour discoveries).
     public var urls: [URL]
     public var certificateSHA256: String?
     public var publicURL: URL?
@@ -73,7 +73,7 @@ public enum ServerConnectionError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-/// Reaches a paired server over whichever of its URLs works (LAN, then Tailscale), pinning its certificate.
+/// Reaches a paired server over whichever of its URLs works, pinning its certificate.
 public actor ServerConnection {
     public private(set) var profile: ServerProfile
     public let tokenStore: any DeviceTokenStore
@@ -147,7 +147,7 @@ public actor ServerConnection {
         return response
     }
 
-    /// Adds an address found on the LAN (Bonjour) ahead of the Tailscale ones.
+    /// Adds an address found on the LAN (Bonjour) ahead of the other candidates.
     public func addDiscoveredURL(_ url: URL) {
         guard !profile.urls.contains(url) else { return }
         profile.urls.insert(url, at: 0)

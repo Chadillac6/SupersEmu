@@ -2,21 +2,40 @@ import Darwin
 import Foundation
 
 public enum ServerAddressLearning {
+    public static func withoutLegacyOverlayAddresses(_ urls: [URL]) -> [URL] {
+        urls.filter { url in
+            guard let host = url.host?.lowercased() else { return true }
+            return !isLegacyOverlayAddress(host)
+        }
+    }
+
     /// Addresses to keep for a paired server after its health listed `advertised`. nil means keep the current list.
     public static func merged(current: [URL], advertised: [URL]?, reachedAt: URL) -> [URL]? {
-        guard let advertised else { return nil }
+        let cleanedCurrent = withoutLegacyOverlayAddresses(current)
+        guard let advertised else { return cleanedCurrent == current ? nil : cleanedCurrent }
 
         var merged: [URL] = []
-        for url in advertised where isAdvertisedAddress(url) {
+        for url in withoutLegacyOverlayAddresses(advertised) where isAdvertisedAddress(url) {
             if !merged.contains(url) {
                 merged.append(url)
             }
         }
-        guard !merged.isEmpty else { return nil }
-        if !merged.contains(reachedAt) {
+        guard !merged.isEmpty else { return cleanedCurrent == current ? nil : cleanedCurrent }
+        if !isLegacyOverlayAddress(reachedAt.host?.lowercased() ?? ""), !merged.contains(reachedAt) {
             merged.append(reachedAt)
         }
         return merged == current ? nil : merged
+    }
+
+    private static func isLegacyOverlayAddress(_ host: String) -> Bool {
+        if host.hasSuffix(".ts.net") { return true }
+        let addressHost = String(host.split(separator: "%", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+        let octets = addressHost.split(separator: ".").compactMap { UInt8($0) }
+        if octets.count == 4, octets[0] == 100, (64...127).contains(octets[1]) { return true }
+
+        var ipv6 = in6_addr()
+        guard addressHost.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1 else { return false }
+        return withUnsafeBytes(of: ipv6) { Array($0.prefix(6)) == [0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0] }
     }
 
     private static func isAdvertisedAddress(_ url: URL) -> Bool {

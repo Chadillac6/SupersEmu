@@ -19,7 +19,7 @@ final class CurrentServerProvider: SaveSyncServerProvider, @unchecked Sendable {
     }
 
     func set(_ client: APIClient?) { lock.withLock { self.client = client } }
-    /// Asks `resolver` for the current client at each sync, so pairing, sign-out and LAN/Tailscale switches apply.
+    /// Asks `resolver` for the current client at each sync, so pairing, sign-out and network changes apply.
     func use(_ resolver: @escaping @MainActor @Sendable () -> APIClient?, reachable: (@MainActor @Sendable () -> Bool)? = nil) {
         lock.withLock {
             self.resolver = resolver

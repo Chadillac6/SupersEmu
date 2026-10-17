@@ -4,12 +4,10 @@ import Synchronization
 public struct URLDetection: Sendable, Equatable {
     public var scheme: String
     public var port: Int
-    public var tailscaleHost: String?
 
-    public init(scheme: String, port: Int, tailscaleHost: String?) {
+    public init(scheme: String, port: Int) {
         self.scheme = scheme
         self.port = port
-        self.tailscaleHost = tailscaleHost
     }
 }
 
@@ -32,8 +30,7 @@ public struct PairingEnvironment: Sendable, Equatable {
         guard let detection else { return urls }
         return LocalNetwork.advertisedURLs(
             scheme: detection.scheme,
-            port: detection.port,
-            tailscaleHost: detection.tailscaleHost)
+            port: detection.port)
     }
 
     private static let configured = Mutex<PairingEnvironment?>(nil)
@@ -50,7 +47,7 @@ public struct PairingEnvironment: Sendable, Equatable {
         return PairingEnvironment(
             urls: LocalNetwork.advertisedURLs(scheme: scheme, port: ServerDefaults.port),
             certificateSHA256: pin,
-            detection: URLDetection(scheme: scheme, port: ServerDefaults.port, tailscaleHost: nil))
+            detection: URLDetection(scheme: scheme, port: ServerDefaults.port))
     }
 }
 

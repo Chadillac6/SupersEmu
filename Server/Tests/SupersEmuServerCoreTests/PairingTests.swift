@@ -16,7 +16,7 @@ final class PairingTests: XCTestCase {
         admin = try store.createUser(displayName: "Chad", role: .admin)
         adminToken = try store.createDeviceToken(userID: admin.id, deviceName: "Chad's Mac").token
         PairingEnvironment.current = PairingEnvironment(
-            urls: [URL(string: "https://mac-mini.local:8487")!, URL(string: "https://mac-mini.tail1234.ts.net:8487")!],
+            urls: [URL(string: "https://mac-mini.local:8487")!],
             certificateSHA256: String(repeating: "ab", count: 32))
     }
 
@@ -74,7 +74,7 @@ final class PairingTests: XCTestCase {
         let environment = PairingEnvironment(
             urls: [URL(string: "https://old-mini.local:8487")!],
             certificateSHA256: String(repeating: "ab", count: 32),
-            detection: URLDetection(scheme: "https", port: 8487, tailscaleHost: "mini.tail1234.ts.net"))
+            detection: URLDetection(scheme: "https", port: 8487))
         PairingEnvironment.current = environment
         try await app().test(.router) { client in
             let code = try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: self.bearer(self.adminToken),
@@ -83,7 +83,6 @@ final class PairingTests: XCTestCase {
                 return try self.decode(PairingCode.self, response)
             }
             XCTAssertEqual(code.payload.urls, environment.currentURLs)
-            XCTAssertTrue(code.payload.urls.contains(URL(string: "https://mini.tail1234.ts.net:8487")!))
         }
     }
 

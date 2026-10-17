@@ -843,10 +843,9 @@ targets:
     info:
       path: Config/SupersEmu-Info.plist
       properties:
-        # The pinned, self-signed server is reached by Tailscale IP/MagicDNS, which ATS exception domains cannot express.
-        # PinnedCertificateDelegate enforces pins; public URLs keep default trust handling.
+        # LAN IPs and .local names reach the pinned self-signed server; the public host uses default WebPKI trust.
         NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         SUFeedURL: $(SUPERSEMU_UPDATE_FEED_URL)

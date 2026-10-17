@@ -2,7 +2,7 @@ import SwiftUI
 import SupersEmuKit
 
 /// One-line connection status above the library: unreachable, certificate mismatch, signed out, connected via
-/// Tailscale, and a short "back online" after recovering. Nothing on the home network.
+/// the public internet, and a short "back online" after recovering. Nothing on the home network.
 struct ConnectionBanner: View {
     @Environment(ServerSession.self) private var server
     @Environment(DownloadCenter.self) private var downloads
@@ -18,8 +18,6 @@ struct ConnectionBanner: View {
                     .padding(.horizontal, 20)
             } else if showsRecovery {
                 pill("Back online. Saves made offline are syncing.", symbol: "checkmark.icloud", id: "connection-recovered")
-            } else if server.connection == .connected(.tailscale) {
-                pill("Connected to \(server.serverName) via Tailscale", symbol: "network.badge.shield.half.filled", id: "connection-tailscale")
             } else if server.connection == .connected(.internet) {
                 pill("Connected to \(server.serverName) via Internet", symbol: "globe", id: "connection-internet")
             }

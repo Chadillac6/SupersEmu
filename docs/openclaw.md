@@ -34,14 +34,14 @@ change friend visibility.
 Either set environment variables for the process that runs the CLI:
 
 ```sh
-export SUPERSEMU_SERVER=https://macmini.<tailnet>.ts.net:8487   # or https://127.0.0.1:8487 on the Mac mini (pins tls/server.cer)
+export SUPERSEMU_SERVER=https://games.supersemu.com
 export SUPERSEMU_TOKEN=sek_…
 ```
 
 or save them once for the bot's OS user (the token is read from stdin to keep it out of shell history):
 
 ```sh
-printf %s "$TOKEN" | supersemu login --server https://macmini.<tailnet>.ts.net:8487 --token-stdin
+printf %s "$TOKEN" | supersemu login --server https://games.supersemu.com --token-stdin
 # writes ~/.config/supersemu/config.json with mode 0600
 ```
 
@@ -63,7 +63,7 @@ flags, JSON output and exit codes.
 | 0 | Parse stdout as JSON |
 | 3 | Token missing, wrong or revoked: ask Chad for a new one |
 | 4 | Not allowed (scope): don't retry; report it |
-| 5 | Server unreachable: retry later (Mac mini asleep, Tailscale down) |
+| 5 | Server unreachable: retry later (Mac mini asleep or offline) |
 | 2, 6, 64 | Bad ID or arguments: fix the command |
 | 7, 1 | Server/unexpected error: report stderr |
 

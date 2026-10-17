@@ -1,7 +1,8 @@
 import Foundation
 import SystemConfiguration
+import Darwin
 
-/// The addresses a device can use to reach this Mac: Bonjour `.local` name and LAN IPs first, then Tailscale.
+/// The private addresses a device can use to reach this Mac: Bonjour `.local` name and LAN IPs.
 public enum LocalNetwork {
     public struct InterfaceAddress: Sendable, Equatable {
         public var interface: String
@@ -30,23 +31,24 @@ public enum LocalNetwork {
         return result
     }
 
-    /// Tailscale assigns addresses from the CGNAT range 100.64.0.0/10.
-    public static func isTailscale(_ ipv4: String) -> Bool {
-        let parts = ipv4.split(separator: ".").compactMap { Int($0) }
-        return parts.count == 4 && parts[0] == 100 && (64...127).contains(parts[1])
+    public static func isOverlayVPNAddress(_ address: String) -> Bool {
+        let address = String(address.split(separator: "%", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+        let parts = address.split(separator: ".").compactMap { UInt8($0) }
+        if parts.count == 4, parts[0] == 100, (64...127).contains(parts[1]) { return true }
+        var ipv6 = in6_addr()
+        guard address.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1 else { return false }
+        return withUnsafeBytes(of: ipv6) { Array($0.prefix(6)) == [0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0] }
     }
 
     public static func isLinkLocal(_ ipv4: String) -> Bool { ipv4.hasPrefix("169.254.") }
 
-    /// Ordered URLs for the pairing payload: Bonjour name, LAN IPs, Tailscale MagicDNS name, Tailscale IPs.
-    public static func advertisedURLs(scheme: String, port: Int, tailscaleHost: String? = nil,
+    /// Ordered URLs for the pairing payload: Bonjour name, then LAN IPs.
+    public static func advertisedURLs(scheme: String, port: Int,
                                       hostName: String? = bonjourHostName(), addresses: [InterfaceAddress] = ipv4Addresses()) -> [URL] {
         var hosts: [String] = []
         if let hostName, !hostName.isEmpty { hosts.append("\(hostName).local") }
         let usable = addresses.map(\.address).filter { !isLinkLocal($0) }
-        hosts += usable.filter { !isTailscale($0) }
-        if let tailscaleHost, !tailscaleHost.isEmpty { hosts.append(tailscaleHost) }
-        hosts += usable.filter(isTailscale)
+        hosts += usable.filter { !isOverlayVPNAddress($0) }
         var seen = Set<String>()
         return hosts.filter { seen.insert($0).inserted }.compactMap { URL(string: "\(scheme)://\($0):\(port)") }
     }

@@ -8,11 +8,11 @@ import Foundation
 /// Encoded into the QR code as `supersemu://pair?d=<base64url(JSON)>`.
 public struct PairingPayload: Codable, Sendable, Equatable {
     public var serverName: String
-    /// LAN first, then Tailscale (MagicDNS / 100.x). The app tries them in order.
+    /// LAN addresses. The app tries them in order.
     public var urls: [URL]
     /// SHA-256 (hex) of the server's self-signed TLS certificate; the client pins it.
     public var certificateSHA256: String?
-    /// Optional public HTTPS address. Separate from LAN and Tailscale URLs.
+    /// Optional public HTTPS address, separate from LAN URLs.
     public var publicURL: URL?
     public var code: String
     public init(serverName: String, urls: [URL], certificateSHA256: String?, code: String, publicURL: URL? = nil) {
@@ -222,6 +222,29 @@ public struct AdminStatus: Codable, Sendable, Equatable {
     }
 }
 
+public struct RemoteAccessStatusResponse: Codable, Sendable, Equatable {
+    public var enabled: Bool
+    public var publicURL: URL?
+    public var tokenSaved: Bool
+    public var ddnsIP: String?
+    public var ddnsUpdatedAt: Date?
+    public var ddnsLastCheckAt: Date?
+    public var ddnsLastError: String?
+    public var certificateValidUntil: Date?
+
+    public init(enabled: Bool, publicURL: URL?, tokenSaved: Bool, ddnsIP: String?, ddnsUpdatedAt: Date?,
+                ddnsLastCheckAt: Date?, ddnsLastError: String?, certificateValidUntil: Date?) {
+        self.enabled = enabled
+        self.publicURL = publicURL
+        self.tokenSaved = tokenSaved
+        self.ddnsIP = ddnsIP
+        self.ddnsUpdatedAt = ddnsUpdatedAt
+        self.ddnsLastCheckAt = ddnsLastCheckAt
+        self.ddnsLastError = ddnsLastError
+        self.certificateValidUntil = certificateValidUntil
+    }
+}
+
 // MARK: Saves (track: save sync)
 
 public struct SaveRevision: Codable, Sendable, Equatable, Identifiable {
@@ -320,6 +343,7 @@ extension APIClient {
     public func grant(_ grant: PermissionGrant) async throws -> PermissionGrant { try await send("PUT", "/v1/admin/permissions", body: grant) }
 
     public func adminStatus() async throws -> AdminStatus { try await get("/v1/admin/status") }
+    public func remoteAccessStatus() async throws -> RemoteAccessStatusResponse { try await get("/v1/admin/remote-access") }
     public func users() async throws -> [UserInfo] { try await get("/v1/admin/users") }
     public func devices() async throws -> [DeviceInfo] { try await get("/v1/admin/devices") }
     public func revokeDevice(_ id: String) async throws -> DeviceInfo { try await send("DELETE", "/v1/admin/devices/\(id)", body: Optional<String>.none) }

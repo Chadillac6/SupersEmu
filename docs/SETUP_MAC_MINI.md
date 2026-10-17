@@ -25,39 +25,19 @@ ditto build/mac/Build/Products/Debug/SupersEmu.app /Applications/SupersEmu.app
 4. Server data lives in `/Library/Application Support/SupersEmu Server`.
 5. A **SupersEmu Server** icon appears in the menu bar and shows the server status. Use it to open the Server window or jump straight to its Add Games, Review Needed, BIOS and Storage sections. Hide or show the icon from the Server window.
 
-## 4. Remote access with Tailscale
-1. Install Tailscale on the Mac mini and sign in. Use the standalone download from tailscale.com, not the Mac App Store
-   version: the App Store version only runs while someone is logged in. **[untested]**
-2. Install Tailscale on your iPhone/iPad with the same account.
-3. No router port forwarding is needed. Don't open any ports.
-Already-paired devices learn the Mac mini's Tailscale address the next time they connect at home, so re-pairing is not needed. The server also detects Tailscale if it starts after SupersEmu.
+## 4. Remote Access
+1. In Server Mode, open **Remote Access**.
+2. Create a Cloudflare API token from the **Edit zone DNS** template and limit it to the
+   `supersemu.com` zone. Paste it into the panel; the token is stored locally on the server.
+3. In the Eero app, open **Settings → Network settings → Reservations & port forwarding**, reserve
+   the Mac mini, and forward TCP ports **443** and **80** to it.
+4. Click **Turn On**. macOS asks for the administrator password once. Caddy obtains and renews the
+   public HTTPS certificate, and Cloudflare DNS is kept current automatically.
+5. The public address is `https://games.supersemu.com`. Admin APIs remain private; only player
+   routes are available through the public listener.
 
-## Public access (invite-only)
-Use this only when invited players cannot use Tailscale. The public HTTPS listener is a loopback-only
-player API behind Caddy; admin routes remain private and return 404 through the public hostname.
-
-1. Create a DNS `A` record (and `AAAA` only if the Mac mini has working IPv6 connectivity) for a hostname
-   such as `games.example.com`, pointing to your router's public address.
-2. Forward TCP port 443 on the router to this Mac mini. Do not forward the server's LAN/TLS port or
-   the loopback proxy port. Allow Caddy to obtain and renew its HTTPS certificate.
-3. Install Caddy with `brew install caddy`, then enable public access:
-
-   ```bash
-   sudo ./scripts/public-access.sh enable --host games.example.com
-   sudo ./scripts/public-access.sh status
-   ```
-
-   The command writes the server's `public-access.json`, a private Caddy data directory and a
-   launch daemon. Set `SUPERSEMU_ACME_EMAIL` before `enable` if you want Caddy's ACME account to
-   include a contact email.
-4. To roll back, run `sudo ./scripts/public-access.sh disable`. This stops Caddy and disables the
-   second listener; `--purge` also removes Caddy's stored certificates and keys.
-
-Public access permits pairing, the permitted game/library and BIOS downloads, and a user's own save
-sync. Admin APIs are not registered on the public server, API tokens are rejected, and paired device
-tokens are still permission-checked. Health exposes only the server identity pin and configured
-public URL in addition to its existing health fields. The LAN/Tailscale server keeps its existing
-admin behavior.
+Use **Turn Off** in the same panel to disable Remote Access. The optional purge removes its saved
+Cloudflare token and local DDNS state as well.
 
 ## 5. Add games and BIOS files
 Everything below is in the Server Mode window; no Terminal needed.
@@ -109,7 +89,7 @@ supersemu server status
 
 ## 8. Check it works
 - At home: the library loads, a game downloads and plays, and a save made on the iPhone continues on the Mac.
-- Away: turn off Wi-Fi on the iPhone (Tailscale on). The library should still load and games should download. **[untested]**
+- Away: turn off Wi-Fi on the iPhone. The public library should still load and games should download. **[untested]**
 - Restart the Mac mini without logging in, then open the app on the iPhone. The server should answer. **[untested]**
 
 ## 9. Bots (OpenClaw)
