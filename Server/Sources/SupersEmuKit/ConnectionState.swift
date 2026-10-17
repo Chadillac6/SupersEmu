@@ -3,17 +3,23 @@ import Foundation
 /// How a paired client currently reaches its server.
 public enum ConnectionRoute: String, Codable, Sendable, Equatable {
     case home
-    case tailscale
     case internet
 
-    /// Tailscale addresses: MagicDNS (`*.ts.net`), the CGNAT range 100.64.0.0/10 and the `fd7a:115c:a1e0::/48` ULA.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        if value == "tailscale" {
+            self = .home
+        } else if let route = Self(rawValue: value) {
+            self = route
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid connection route: \(value)")
+        }
+    }
+
     public static func of(_ url: URL, publicURL: URL? = nil) -> ConnectionRoute {
         guard let host = url.host?.lowercased() else { return .home }
-        if host == publicURL?.host?.lowercased() { return .internet }
-        if host.hasSuffix(".ts.net") || host.hasPrefix("fd7a:115c:a1e0:") { return .tailscale }
-        let octets = host.split(separator: ".").compactMap { UInt8($0) }
-        if octets.count == 4, octets[0] == 100, (64...127).contains(octets[1]) { return .tailscale }
-        return .home
+        return host == publicURL?.host?.lowercased() ? .internet : .home
     }
 }
 
@@ -49,7 +55,7 @@ public enum ConnectionState: Equatable, Sendable {
         case .connected, .signedOut(.notPaired), .connecting:
             return nil
         case .unreachable:
-            return Message(title: "Can't reach \(serverName). Check that it's on, or turn on Tailscale when you're away.",
+            return Message(title: "Can't reach \(serverName). Check that it's on and connected to the internet.",
                            detail: "Downloaded games still play, and saves sync when you're back. Retrying automatically.",
                            symbol: "wifi.slash", canRetry: true)
         case .certificateMismatch:
@@ -120,7 +126,7 @@ public struct ConnectionMonitor: Equatable, Sendable {
         consecutiveFailures += 1
     }
 
-    /// Wi-Fi joined, Tailscale toggled, etc.: retry right away instead of waiting out the backoff.
+    /// A network change retries right away instead of waiting out the backoff.
     public mutating func networkChanged() { consecutiveFailures = 0 }
 
     /// Delay before the next automatic retry; nil when there's nothing to retry.

@@ -13,10 +13,8 @@ public struct ServerRunOptions: Sendable {
     public var port = ServerDefaults.port
     /// Plain HTTP, for tests and local debugging only. Pairing payloads then carry no certificate pin.
     public var insecureHTTP = false
-    /// Overrides the URLs put into pairing QR codes (otherwise LAN + Tailscale are detected).
+    /// Overrides the URLs put into pairing QR codes (otherwise LAN addresses are detected).
     public var advertiseURLs: [URL] = []
-    /// Tailscale MagicDNS name, e.g. `mac-mini.tail1234.ts.net`, added after the LAN URLs.
-    public var tailscaleHost: String?
     public var bonjour = true
     /// Background libretro-database matching and thumbnail downloads after imports.
     public var metadata = true
@@ -43,10 +41,10 @@ public enum ServerLauncher {
             pin = identity.sha256
         }
         let urls = options.advertiseURLs.isEmpty
-            ? LocalNetwork.advertisedURLs(scheme: scheme, port: options.port, tailscaleHost: options.tailscaleHost)
+            ? LocalNetwork.advertisedURLs(scheme: scheme, port: options.port)
             : options.advertiseURLs
         let detection = options.advertiseURLs.isEmpty
-            ? URLDetection(scheme: scheme, port: options.port, tailscaleHost: options.tailscaleHost)
+            ? URLDetection(scheme: scheme, port: options.port)
             : nil
         let publicAccess = options.publicAccess
         let environment = PairingEnvironment(

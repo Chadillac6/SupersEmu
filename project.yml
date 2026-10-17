@@ -117,7 +117,7 @@ targets:
     platform: [iOS, macOS]
     sources:
       - path: Host/CoreEntry/SECoreEntry.c
-        compilerFlags: ["-DSE_CORE_ID=gambatte", "-DSE_CORE_REVISION=d9d6cd0"]
+        compilerFlags: ["-DSE_CORE_ID=gambatte", "-DSE_CORE_REVISION=d9d6cd0", "-DSE_CORE_CHEATS=1"]
       - path: Vendor/cores/gambatte/libgambatte
         includes:
           - "src/*.cpp"
@@ -157,7 +157,7 @@ targets:
     platform: [iOS, macOS]
     sources:
       - path: Host/CoreEntry/SECoreEntry.c
-        compilerFlags: ["-DSE_CORE_ID=mgba", "-DSE_CORE_REVISION=7a12d6d"]
+        compilerFlags: ["-DSE_CORE_ID=mgba", "-DSE_CORE_REVISION=7a12d6d", "-DSE_CORE_CHEATS=1"]
       - path: Host/CoreEntry/mgba/version.c
       - path: Vendor/cores/mgba/src
         includes:
@@ -288,7 +288,8 @@ targets:
     platform: [iOS, macOS]
     sources:
       - path: Host/CoreEntry/SECoreEntry.c
-        compilerFlags: ["-DSE_CORE_ID=picodrive", "-DSE_CORE_REVISION=1890c29"]
+        compilerFlags: ["-DSE_CORE_ID=picodrive", "-DSE_CORE_REVISION=1890c29", "-DSE_CORE_CHEAT_COUNT=se_picodrive_cheat_count"]
+      - path: Host/CoreEntry/picodrive/se_cheats.c
       - path: Vendor/cores/picodrive
         includes:
           - "pico/pico.c"
@@ -397,7 +398,8 @@ targets:
     platform: [iOS, macOS]
     sources:
       - path: Host/CoreEntry/SECoreEntry.c
-        compilerFlags: ["-DSE_CORE_ID=beetle_psx", "-DSE_CORE_REVISION=10e4b0c"]
+        compilerFlags: ["-DSE_CORE_ID=beetle_psx", "-DSE_CORE_REVISION=10e4b0c", "-DSE_CORE_CHEAT_COUNT=se_beetle_psx_cheat_count"]
+      - path: Host/CoreEntry/beetle_psx/se_mempatcher.c
       - path: Vendor/cores/beetle_psx
         includes:
           - "input.c"
@@ -460,7 +462,6 @@ targets:
           - "mednafen/cdstream.c"
           - "mednafen/error.c"
           - "mednafen/general.c"
-          - "mednafen/mempatcher.c"
           - "mednafen/psx/cdc.c"
           - "mednafen/psx/cpu.c"
           - "mednafen/psx/dma.c"
@@ -506,9 +507,10 @@ targets:
     platform: [iOS, macOS]
     sources:
       - path: Host/CoreEntry/SECoreEntry.c
-        compilerFlags: ["-DSE_CORE_ID=mupen64plus_next", "-DSE_CORE_REVISION=12edd2c", "-DSE_CORE_DEINIT=se_mupen64plus_next_deinit", "-DSE_CORE_LOAD_GAME=se_mupen64plus_next_load_game", "-DSE_CORE_UNSERIALIZE=se_mupen64plus_next_unserialize"]
+        compilerFlags: ["-DSE_CORE_ID=mupen64plus_next", "-DSE_CORE_REVISION=12edd2c", "-DSE_CORE_DEINIT=se_mupen64plus_next_deinit", "-DSE_CORE_LOAD_GAME=se_mupen64plus_next_load_game", "-DSE_CORE_UNSERIALIZE=se_mupen64plus_next_unserialize", "-DSE_CORE_CHEAT_SET=se_mupen64plus_next_cheat_set", "-DSE_CORE_CHEAT_COUNT=se_mupen64plus_next_cheat_count"]
       - path: Host/CoreEntry/Mupen64PlusNext/glsym.c
       - path: Host/CoreEntry/Mupen64PlusNext/se_lifecycle.c
+      - path: Host/CoreEntry/Mupen64PlusNext/se_cheats.c
       - path: Vendor/cores/mupen64plus_next
         includes:
           - "GLideN64/src/3DMath.cpp"
@@ -842,10 +844,9 @@ targets:
     info:
       path: Config/SupersEmu-Info.plist
       properties:
-        # The pinned, self-signed server is reached by Tailscale IP/MagicDNS, which ATS exception domains cannot express.
-        # PinnedCertificateDelegate enforces pins; public URLs keep default trust handling.
+        # LAN IPs and .local names reach the pinned self-signed server; the public host uses default WebPKI trust.
         NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         SUFeedURL: $(SUPERSEMU_UPDATE_FEED_URL)

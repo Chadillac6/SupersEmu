@@ -22,7 +22,7 @@ Config file: `~/.config/supersemu/config.json` (or `$XDG_CONFIG_HOME/supersemu/c
 in a `0700` directory. The file is only read when a flag or env var doesn't already give both server and token, so a broken config never blocks explicit flags.
 
 ```json
-{ "server" : "https://macmini.tailnet.ts.net:8487", "token" : "sek_…" }
+{ "server" : "https://games.supersemu.com", "token" : "sek_…" }
 ```
 
 ## Commands

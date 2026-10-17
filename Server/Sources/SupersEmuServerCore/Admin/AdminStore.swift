@@ -1,10 +1,97 @@
 import Foundation
 import GRDB
 import Hummingbird
+import Network
+import Security
 import SupersEmuKit
+import SwiftASN1
+import X509
 
 /// Queries behind the users/devices/tokens admin API. Never exposes token hashes.
 extension ServerStore {
+    public func remoteAccessStatus() async -> RemoteAccessStatusResponse {
+        let configURL = paths.root.appendingPathComponent("public-access.json")
+        let config = (try? Data(contentsOf: configURL))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let publicURL = (config["publicURL"] as? String).flatMap(URL.init(string:))
+        let ddnsURL = paths.root.appendingPathComponent("ddns-state.json")
+        let ddns = (try? Data(contentsOf: ddnsURL)).flatMap {
+            try? SupersEmuJSON.decoder().decode(RemoteAccessDDNSState.self, from: $0)
+        }
+        var certificateValidUntil = publicURL.flatMap { certificateExpiry(for: $0.host) }
+        if certificateValidUntil == nil, let host = publicURL?.host {
+            certificateValidUntil = await certificateExpiryFromTLS(host: host)
+        }
+        return RemoteAccessStatusResponse(
+            enabled: config["enabled"] as? Bool ?? false,
+            publicURL: publicURL,
+            tokenSaved: FileManager.default.fileExists(atPath: paths.root.appendingPathComponent("cloudflare.token").path),
+            ddnsIP: ddns?.ip,
+            ddnsUpdatedAt: ddns?.updatedAt,
+            ddnsLastCheckAt: ddns?.lastCheckAt,
+            ddnsLastError: ddns?.lastError,
+            certificateValidUntil: certificateValidUntil)
+    }
+
+    private func certificateExpiry(for host: String?) -> Date? {
+        guard let host else { return nil }
+        let certificates = paths.root.appendingPathComponent("caddy/caddy/certificates", isDirectory: true)
+        guard let files = FileManager.default.enumerator(at: certificates, includingPropertiesForKeys: nil) else { return nil }
+        for case let file as URL in files
+        where file.lastPathComponent == "\(host).crt" && file.deletingLastPathComponent().lastPathComponent == host {
+            guard let pem = try? String(contentsOf: file, encoding: .utf8),
+                  let certificate = try? Certificate(pemEncoded: pem),
+                  CertificateHostMatcher.matches(host: host, certificate: certificate) else { continue }
+            return certificate.notValidAfter
+        }
+        return nil
+    }
+
+    private func certificateExpiryFromTLS(host: String) async -> Date? {
+        let queue = DispatchQueue(label: "com.chadillac6.supersemu.remote-access-certificate")
+        let capturedExpiry = CertificateExpiryCapture()
+        let handshake = CertificateExpiryHandshake()
+        let tlsOptions = NWProtocolTLS.Options()
+        host.withCString {
+            sec_protocol_options_set_tls_server_name(tlsOptions.securityProtocolOptions, $0)
+        }
+        sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { _, trustReference, complete in
+            let trust = sec_trust_copy_ref(trustReference).takeRetainedValue()
+            if let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+               let leaf = chain.first,
+               let certificate = try? Certificate(leaf),
+               CertificateHostMatcher.matches(host: host, certificate: certificate) {
+                capturedExpiry.store(certificate.notValidAfter)
+            }
+            complete(true)
+        }, queue)
+
+        let connection = NWConnection(
+            host: NWEndpoint.Host("127.0.0.1"),
+            port: 443,
+            using: NWParameters(tls: tlsOptions))
+        let timeout = DispatchWorkItem {
+            if handshake.finish(nil) { connection.cancel() }
+        }
+        return await withCheckedContinuation { continuation in
+            handshake.install(continuation)
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    timeout.cancel()
+                    if handshake.finish(capturedExpiry.value) { connection.cancel() }
+                case .failed, .cancelled:
+                    timeout.cancel()
+                    handshake.finish(nil)
+                default:
+                    break
+                }
+            }
+            queue.asyncAfter(deadline: .now() + .seconds(3), execute: timeout)
+            connection.start(queue: queue)
+        }
+    }
+
     public func adminStatus() throws -> AdminStatus {
         let counts = try db.read { db in
             (games: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM games WHERE needs_review = 0") ?? 0,
@@ -255,4 +342,67 @@ extension ServerStore {
         return TokenInfo(id: row["id"], name: row["name"], scopes: scopes, createdAt: row["created_at"],
                          revokedAt: row["revoked_at"], token: plaintext)
     }
+}
+
+enum CertificateHostMatcher {
+    static func matches(host: String, certificate: Certificate) -> Bool {
+        guard let names = try? certificate.extensions.subjectAlternativeNames else { return false }
+        return matches(host: host, dnsNames: names.compactMap { name in
+            if case .dnsName(let dnsName) = name { return dnsName }
+            return nil
+        })
+    }
+
+    static func matches(host: String, dnsNames: [String]) -> Bool {
+        let normalizedHost = host.lowercased()
+        guard !normalizedHost.isEmpty else { return false }
+        let hostLabels = normalizedHost.split(separator: ".", omittingEmptySubsequences: false)
+        guard !hostLabels.contains(where: { $0.isEmpty }) else { return false }
+
+        return dnsNames.contains { dnsName in
+            let normalizedName = dnsName.lowercased()
+            if normalizedName == normalizedHost { return true }
+            guard normalizedName.hasPrefix("*.") else { return false }
+            let suffixLabels = normalizedName.dropFirst(2).split(separator: ".", omittingEmptySubsequences: false)
+            return !suffixLabels.isEmpty
+                && !suffixLabels.contains(where: { $0.isEmpty })
+                && hostLabels.count == suffixLabels.count + 1
+                && hostLabels.dropFirst().elementsEqual(suffixLabels)
+        }
+    }
+}
+
+private final class CertificateExpiryCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var expiry: Date?
+
+    var value: Date? { lock.withLock { expiry } }
+
+    func store(_ expiry: Date) { lock.withLock { self.expiry = expiry } }
+}
+
+private final class CertificateExpiryHandshake: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Date?, Never>?
+
+    func install(_ continuation: CheckedContinuation<Date?, Never>) {
+        lock.withLock { self.continuation = continuation }
+    }
+
+    @discardableResult
+    func finish(_ expiry: Date?) -> Bool {
+        let continuation = lock.withLock { () -> CheckedContinuation<Date?, Never>? in
+            defer { self.continuation = nil }
+            return self.continuation
+        }
+        continuation?.resume(returning: expiry)
+        return continuation != nil
+    }
+}
+
+private struct RemoteAccessDDNSState: Decodable {
+    var ip: String?
+    var updatedAt: Date?
+    var lastCheckAt: Date?
+    var lastError: String?
 }

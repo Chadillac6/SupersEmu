@@ -20,8 +20,8 @@
     tied to a user ID, devices sign in with tokens, and every request already passes through a
     permission check (Chad's admin account passes all of them).
 - **LAN and remote access in Phase 1** for Chad's devices. On the home network the app finds the
-  server via Bonjour. Away from home it uses the same API over Chad's Tailscale network. In Phase 2,
-  friends reach it through Tailscale machine sharing (see `docs/specs/server.md`).
+  server via Bonjour. Away from home it uses the same API over public HTTPS. Invited friends use the
+  same public endpoint (see `docs/specs/server.md`).
 - **The server starts at boot** with no one logged in: a launch daemon registered with
   `SMAppService.daemon(plistName:)`.
 - **Automation-friendly:** a versioned HTTP API, a `supersemu` CLI and an OpenClaw skill that uses the
@@ -38,12 +38,11 @@
 - The client work done so far (libretro host, Snes9x, save design, controllers, touch UI) carries over
   unchanged.
 
-## Amendment: optional public HTTPS for player routes
+## Amendment: public HTTPS for player routes
 
-Public access is an opt-in alternative for invited users who cannot use Tailscale. Caddy terminates
-public HTTPS and proxies to a second HTTP listener bound only to loopback. That router serves player,
-pairing and health routes only; admin endpoints remain LAN/Tailscale-only. The feature is disabled
-by default, and the original Tailscale path remains supported.
+Remote Access uses Cloudflare DDNS and Caddy at `games.supersemu.com`. Caddy proxies to a second HTTP
+listener bound only to loopback. That router serves player, pairing and health routes only; admin
+endpoints remain available on the private server listener.
 
 ## Consequences
 - New component: a Swift server and its admin UI. More code than talking to Drive, but under our control.
@@ -51,5 +50,6 @@ by default, and the original Tailscale path remains supported.
   the device cache, and saves upload later.
 - Game files are copied onto users' devices. Chad is distributing his own library to invited friends,
   so this is his call (see legal note in `docs/specs/server.md`).
-- Remote access depends on Tailscale. Each friend installs Tailscale once.
 - Pairing, tokens and TLS become security-critical code with their own tests.
+
+Superseded: the Tailscale remote-access plan is replaced by public HTTPS via Cloudflare DDNS and Caddy.

@@ -46,12 +46,16 @@ final class BackupTests: XCTestCase {
         try write("save-v1", "users/u1/saves/rev1")
         try write("rom", "games/snes/game.sfc")
         try write("{\"theme\":\"dark\"}", "settings.json")
+        try write("sensitive-cloudflare-token", "cloudflare.token")
+        try write("{\"ip\":\"203.0.113.10\"}", "ddns-state.json")
         let backup = try await store.backups.create(now: Date(timeIntervalSince1970: 1_800_000_000))
         XCTAssertFalse(backup.includesROMs)
         let files = try BackupManager.verify(folder: URL(fileURLWithPath: backup.path)).files.map(\.path)
         XCTAssertTrue(files.contains("library.sqlite"))
         XCTAssertTrue(files.contains("users/u1/saves/rev1"))
         XCTAssertTrue(files.contains("settings.json"))
+        XCTAssertFalse(files.contains("cloudflare.token"), "Cloudflare credentials are never backed up")
+        XCTAssertFalse(files.contains("ddns-state.json"), "DDNS state is local operational data")
         XCTAssertFalse(files.contains { $0.hasPrefix("games/") }, "ROMs are left out by default")
 
         // Changes after the backup...

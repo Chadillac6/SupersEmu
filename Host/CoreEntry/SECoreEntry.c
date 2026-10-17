@@ -27,14 +27,28 @@ bool SE_CORE_UNSERIALIZE(const void *data, size_t size);
 #define SE_CORE_UNSERIALIZE retro_unserialize
 #endif
 
-// Cores with cheat support name an accessor returning how many codes they hold.
-#ifdef SE_CORE_CHEAT_COUNT
-unsigned SE_CORE_CHEAT_COUNT(void);
+// Cores with cheat support may expose a count; cores without one report Unverified.
+#if defined(SE_CORE_CHEAT_COUNT) || defined(SE_CORE_CHEATS)
+#ifdef SE_CORE_CHEAT_RESET
+void SE_CORE_CHEAT_RESET(void);
+#define SE_CHEAT_RESET SE_CORE_CHEAT_RESET
+#else
 #define SE_CHEAT_RESET retro_cheat_reset
+#endif
+#ifdef SE_CORE_CHEAT_SET
+void SE_CORE_CHEAT_SET(unsigned, bool, const char *);
+#define SE_CHEAT_SET SE_CORE_CHEAT_SET
+#else
 #define SE_CHEAT_SET retro_cheat_set
+#endif
 #else
 #define SE_CHEAT_RESET NULL
 #define SE_CHEAT_SET NULL
+#endif
+
+#ifdef SE_CORE_CHEAT_COUNT
+unsigned SE_CORE_CHEAT_COUNT(void);
+#else
 #define SE_CORE_CHEAT_COUNT NULL
 #endif
 

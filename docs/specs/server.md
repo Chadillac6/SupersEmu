@@ -1,6 +1,6 @@
 # SupersEmu Server (Mac mini)
 
-Status: **Accepted defaults (Tailscale, one Mac app with Server/Player modes, invite sign-in).** [Verified] = checked against vendor docs on 2026-10-10.
+Status: **Accepted defaults (public HTTPS, one Mac app with Server/Player modes, invite sign-in).**
 [Inference] = design judgement, to be proven in the server spike.
 
 ## Requirements (from Chad)
@@ -22,7 +22,7 @@ flowchart LR
     A["SupersEmu.app — Server mode<br/>admin UI · menu-bar status"]
     CLI["supersemu CLI"]
     OC["OpenClaw / scripts"]
-    TS1["Tailscale daemon"]
+    C["Caddy + Cloudflare DDNS"]
     D --- DB
     A -->|admin API| D
     CLI -->|API + scoped token| D
@@ -38,9 +38,9 @@ flowchart LR
     H --- C
   end
   M -->|"home Wi-Fi: Bonjour + HTTPS"| D
-  P -->|"away: HTTPS over Tailscale"| TS1 --> D
+  P -->|"away: public HTTPS"| C --> D
 ```
-Phase 1: only Chad's devices. Phase 2: friends' devices use the same paths, via Tailscale machine sharing.
+Phase 1: only Chad's devices. Phase 2: friends' devices use the same paths, via public HTTPS.
 
 ```
 Mac mini
@@ -84,7 +84,7 @@ code from Server mode, which issues a device token. Steps 1–4 below are the Ph
 built on the same pairing code.
 
 1. Chad creates an invite (admin UI or `supersemu users invite <name>`). The invite is a one-time
-   link/QR code containing the server's LAN name, its Tailscale name and the server certificate fingerprint.
+   link/QR code containing the server's LAN name, public URL and server certificate fingerprint.
 2. The friend opens it in SupersEmu, picks a display name, and the server issues a **per-device
    token** stored in the device Keychain. No password and no Google/Apple account needed.
 3. Adding another device: scan a QR from an already signed-in device, or Chad issues a new invite.
@@ -96,24 +96,16 @@ built on the same pairing code.
 | Where | How the app reaches the server |
 |---|---|
 | Home Wi-Fi | Bonjour discovery (`_supersemu._tcp`), direct HTTPS on the LAN |
-| Away | Same API over Tailscale (`<macmini>.<tailnet>.ts.net`) |
-| Public (optional) | HTTPS via Caddy on the Mac mini; player routes only |
+| Away | Public HTTPS at `games.supersemu.com`, maintained by Cloudflare DDNS |
 
-- **Tailscale** [Verified: tailscale.com/pricing and kb/1084/sharing, 2026-10-10]: the Personal plan
-  is free with up to 6 users. Machine sharing is available on all plans and gives an outside user
-  access to only the shared machine. So friends use their own free Tailscale account and Chad
-  shares just the Mac mini with them. [Inference: shared-in users don't count towards the 6 users,
-  to confirm.]
-- Tailscale remains the default remote path. Optional invite-only public HTTPS uses a loopback-only
-  HTTP listener behind Caddy; no admin route is registered there, API tokens are rejected, and
-  device-token player access remains permission-checked. See `docs/SETUP_MAC_MINI.md`.
+- Caddy terminates public HTTPS and proxies to a second HTTP listener bound only to loopback. That
+  router serves player, pairing and health routes only; admin endpoints remain private, API tokens
+  are rejected, and device-token player access remains permission-checked. See `docs/SETUP_MAC_MINI.md`.
 - TLS: the server presents its own certificate and the app pins its identity fingerprint from the
-  invite on LAN/Tailscale. For the configured public hostname, the client validates Caddy's renewed
-  certificate with system WebPKI trust and still pairs against the server identity pin.
+  invite on LAN. For the public hostname, the client validates Caddy's renewed certificate with
+  system WebPKI trust and still pairs against the server identity pin.
   [Inference] iOS needs the Local Network permission prompt for Bonjour
   (`NSLocalNetworkUsageDescription`, `NSBonjourServices`).
-- [Inference] The Mac App Store Tailscale app runs only while a user is logged in. For boot-time remote
-  access the Mac mini should use Tailscale's standalone/daemon install. Verify in the server spike.
 
 ## API (v1, JSON over HTTPS)
 ```
@@ -160,16 +152,15 @@ admin: /v1/admin/users, /invites, /permissions, /library/import, /library/publis
   `POST /v1/admin/backups/:id/verify`, `POST /v1/admin/backups/:id/restore`.
 
 ## Offline and unreachable (`ServerSession`, `ConnectionBanner`)
-- `ServerSession.connection` is `connected(.home | .tailscale | .internet)` (Internet means the
-  profile's configured public URL; Tailscale = `*.ts.net`,
-  100.64.0.0/10 or `fd7a:115c:a1e0::/48`), `connecting`, `unreachable`, `certificateMismatch` (the
+- `ServerSession.connection` is `connected(.home | .internet)` (Internet means the
+  profile's configured public URL), `connecting`, `unreachable`, `certificateMismatch` (the
   pinning delegate refused the certificate) or `signedOut(.notPaired | .revoked)` (401). The state
   machine is `SupersEmuKit.ConnectionMonitor`.
 - Unreachable and certificate mismatch retry with backoff (2, 4, 8 … 60 s; 300 s cap for a
-  mismatch). A network change (`NWPathMonitor`: Wi-Fi, leaving home, Tailscale on/off) resets the
+  mismatch). A network change (`NWPathMonitor`: Wi-Fi or leaving home) resets the
   backoff and retries at once, as do foregrounding and the banner's Retry.
-- `ConnectionBanner` above the library: "Can't reach <server>. Check that it's on, or turn on
-  Tailscale when you're away.", a certificate or signed-out message, a "via Tailscale" pill and a
+- `ConnectionBanner` above the library: "Can't reach <server>. Check that it's on and connected to
+  the internet.", a certificate or signed-out message and a
   short "Back online" after recovering. Offline, downloaded games play; games that aren't downloaded
   are unavailable (counted in the banner, "Unavailable offline" on the game page, no download
   attempt).
@@ -193,8 +184,8 @@ supersemu backup create | list [--verify] | restore <id> --yes | config [--desti
 ## Phases
 | Phase | Who | Server scope |
 |---|---|---|
-| **1** | Chad only | Daemon at boot, Server mode admin UI, import/organise on the server, Chad's admin account, pair his devices by QR, library + downloads/cache, save sync across his devices, LAN + his Tailscale network, CLI + scoped tokens (OpenClaw) |
-| **2 goal** | Chad + <10 invited friends | Invites, player role, per-user hidden-game lists, private per-user saves and history, Tailscale machine sharing to friends, revoke users/devices, users screen in admin, webhooks, server backups, "server offline" UX |
+| **1** | Chad only | Daemon at boot, Server mode admin UI, import/organise on the server, Chad's admin account, pair his devices by QR, library + downloads/cache, save sync across his devices, LAN + public HTTPS, CLI + scoped tokens (OpenClaw) |
+| **2 goal** | Chad + <10 invited friends | Invites, player role, per-user hidden-game lists, private per-user saves and history, public HTTPS access, revoke users/devices, users screen in admin, webhooks, server backups, "server offline" UX |
 
 Built in Phase 1 so Phase 2 is additive, not a rewrite:
 - A `users` table from day one, with Chad as the only admin. Saves and profiles live under `users/<id>/`.
@@ -208,9 +199,9 @@ The server only ever holds files Chad imports. Sharing copies of games with frie
 responsibility. SupersEmu ships no games or BIOS files.
 
 ## Spike at the start of M1 (needs the new Mac mini)
-- Daemon starts at boot with no user logged in. API reachable on LAN and over Tailscale from an iPhone on cellular.
+- Daemon starts at boot with no user logged in. API reachable on LAN and over public HTTPS from an iPhone on cellular.
 - Pair an iPhone from a pairing QR. Revoke it and confirm the next request fails.
-- Download a 700 MB file over Tailscale with a resume after interruption.
+- Download a large file over public HTTPS with a resume after interruption.
 
 ## Library management (M3, Server Mode)
 - **Uploads** (`admin` + `library:write`): each file streams to `Incoming/.uploads/<batch>/<path>` through a hidden

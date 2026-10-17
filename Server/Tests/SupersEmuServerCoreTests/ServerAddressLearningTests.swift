@@ -6,26 +6,26 @@ final class ServerAddressLearningTests: XCTestCase {
     func testMergePreservesAdvertisedOrderAndAppendsReachedURLOnlyWhenMissing() {
         let lan = URL(string: "https://192.168.1.20:8487")!
         let bonjour = URL(string: "https://mac-mini.local:8487")!
-        let tailscaleIP = URL(string: "https://100.101.1.2:8487")!
-        let magicDNS = URL(string: "https://mac-mini.tail1234.ts.net:8487")!
-        let advertised = [lan, bonjour, tailscaleIP, magicDNS]
+        let overlayIP = URL(string: "https://100.101.1.2:8487")!
+        let overlayDNS = URL(string: "https://mac-mini.tail1234.ts.net:8487")!
+        let advertised = [lan, bonjour, overlayIP, overlayDNS]
 
-        XCTAssertEqual(ServerAddressLearning.merged(current: [lan], advertised: advertised, reachedAt: lan), advertised)
+        XCTAssertEqual(ServerAddressLearning.merged(current: [lan], advertised: advertised, reachedAt: lan), [lan, bonjour])
 
         let reachedAt = URL(string: "https://typed-name.example:8487")!
         XCTAssertEqual(
             ServerAddressLearning.merged(current: [lan], advertised: advertised, reachedAt: reachedAt),
-            advertised + [reachedAt])
+            [lan, bonjour, reachedAt])
     }
 
     func testMergeKeepsLoopbackReachedURL() {
         let lan = URL(string: "https://192.168.1.20:8487")!
-        let tailscale = URL(string: "https://100.101.1.2:8487")!
+        let overlay = URL(string: "https://100.101.1.2:8487")!
         let loopback = URL(string: "https://127.0.0.1:8487")!
 
         XCTAssertEqual(
-            ServerAddressLearning.merged(current: [lan], advertised: [lan, tailscale], reachedAt: loopback),
-            [lan, tailscale, loopback])
+            ServerAddressLearning.merged(current: [lan], advertised: [lan, overlay], reachedAt: loopback),
+            [lan, loopback])
     }
 
     func testMergeFiltersInsecureMalformedAndLoopbackAddresses() {
@@ -47,6 +47,9 @@ final class ServerAddressLearningTests: XCTestCase {
             URL(string: "https://mac-mini.local:8487?token=secret")!,
             URL(string: "https://mac-mini.local:8487#fragment")!,
             URL(string: "https:relative")!,
+            URL(string: "https://100.101.1.2:8487")!,
+            URL(string: "https://mac-mini.tail1234.ts.net:8487")!,
+            URL(string: "https://[fd7a:115c:a1e0::1]:8487")!,
         ]
 
         XCTAssertEqual(
@@ -65,25 +68,52 @@ final class ServerAddressLearningTests: XCTestCase {
 
     func testMergeReturnsNilWhenAddressesAreUnchanged() {
         let lan = URL(string: "https://192.168.1.20:8487")!
-        let tailscale = URL(string: "https://100.101.1.2:8487")!
+        let overlay = URL(string: "https://100.101.1.2:8487")!
 
-        XCTAssertNil(ServerAddressLearning.merged(current: [lan, tailscale], advertised: [lan, tailscale], reachedAt: lan))
+        XCTAssertNil(ServerAddressLearning.merged(current: [lan], advertised: [lan, overlay], reachedAt: lan))
     }
 
     func testMergeDropsStaleCurrentAddresses() {
         let lan = URL(string: "https://192.168.1.20:8487")!
         let stale = URL(string: "https://192.168.1.21:8487")!
-        let tailscale = URL(string: "https://100.101.1.2:8487")!
+        let overlay = URL(string: "https://100.101.1.2:8487")!
 
-        XCTAssertEqual(ServerAddressLearning.merged(current: [lan, stale], advertised: [lan, tailscale], reachedAt: lan), [lan, tailscale])
+        XCTAssertEqual(ServerAddressLearning.merged(current: [lan, stale], advertised: [lan, overlay], reachedAt: lan), [lan])
     }
 
     func testMergeDeduplicatesAdvertisedAddressesInOrder() {
         let lan = URL(string: "https://192.168.1.20:8487")!
-        let tailscale = URL(string: "https://100.101.1.2:8487")!
+        let overlay = URL(string: "https://100.101.1.2:8487")!
 
         XCTAssertEqual(
-            ServerAddressLearning.merged(current: [], advertised: [lan, lan, tailscale, tailscale], reachedAt: tailscale),
-            [lan, tailscale])
+            ServerAddressLearning.merged(current: [], advertised: [lan, lan, overlay, overlay], reachedAt: overlay),
+            [lan])
+    }
+
+    func testStoredLegacyOverlayAddressesArePrunedOnHeartbeat() {
+        let lan = URL(string: "https://192.168.1.20:8487")!
+        let storedIPv4 = URL(string: "https://100.101.1.2:8487")!
+        let storedHostname = URL(string: "https://mac-mini.tail1234.ts.net:8487")!
+        XCTAssertEqual(
+            ServerAddressLearning.merged(
+                current: [lan, storedIPv4, storedHostname],
+                advertised: [lan, storedIPv4, storedHostname],
+                reachedAt: lan),
+            [lan])
+    }
+
+    func testWithoutLegacyOverlayAddressesFiltersIPv4IPv6AndHostname() {
+        let urls = [
+            URL(string: "https://192.168.1.20:8487")!,
+            URL(string: "https://100.64.0.1:8487")!,
+            URL(string: "https://100.127.255.255:8487")!,
+            URL(string: "https://100.128.0.1:8487")!,
+            URL(string: "https://mini.tail1234.ts.net:8487")!,
+            URL(string: "https://[fd7a:115c:a1e0::1]:8487")!,
+            URL(string: "https://[fd7a:115c:a1e1::1]:8487")!,
+        ]
+        XCTAssertEqual(
+            ServerAddressLearning.withoutLegacyOverlayAddresses(urls),
+            [urls[0], urls[3], urls[6]])
     }
 }

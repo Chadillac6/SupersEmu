@@ -244,7 +244,7 @@ public actor BackupManager {
     static func items(paths: ServerPaths, includeROMs: Bool) -> [String] {
         var items = ["library.sqlite", "users", "artwork", "tls", "admin.token"]
         let settings = ((try? FileManager.default.contentsOfDirectory(atPath: paths.root.path)) ?? [])
-            .filter { $0.hasSuffix(".json") && $0 != "backups.json" }
+            .filter { $0.hasSuffix(".json") && $0 != "backups.json" && $0 != "ddns-state.json" }
             .sorted()
         items += settings
         if includeROMs { items += ["games", "bios"] }

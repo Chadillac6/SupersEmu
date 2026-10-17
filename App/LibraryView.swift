@@ -2,7 +2,7 @@ import SupersEmuKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Home: console selector, featured game, Continue playing, then every game A–Z.
+/// Home: console selector, hero, Now Playing, Downloaded, then Not Downloaded.
 struct LibraryView: View {
     @Environment(GameLibrary.self) private var library
     @Environment(ServerSession.self) private var server
@@ -60,12 +60,23 @@ struct LibraryView: View {
                             if !home.currentlyPlaying.isEmpty {
                                 CurrentlyPlayingRow(items: home.currentlyPlaying, select: open)
                             }
-                            AlphabetGrid(games: home.allGames, letterAnchors: home.letterAnchors, select: open)
+                            VStack(alignment: .leading, spacing: 26) {
+                                if !home.downloaded.isEmpty {
+                                    GameGridSection(title: "Downloaded", identifier: "shelf-downloaded",
+                                                    games: home.downloaded, letterAnchors: home.letterAnchors, select: open)
+                                }
+                                if !home.notDownloaded.isEmpty {
+                                    GameGridSection(title: "Not Downloaded", identifier: "shelf-not-downloaded",
+                                                    games: home.notDownloaded, letterAnchors: home.letterAnchors, select: open)
+                                }
+                            }
+                            .accessibilityIdentifier("shelf-all")
                         }
                     }
                     .padding(.vertical, 16)
                 }
                 .overlay(alignment: .trailing) {
+                    #if os(macOS)
                     if query.isEmpty, !home.allGames.isEmpty {
                         JumpRail(available: Set(home.letterAnchors.keys)) { letter, animated in
                             if animated {
@@ -75,6 +86,7 @@ struct LibraryView: View {
                             }
                         }
                     }
+                    #endif
                 }
             }
             .background {
@@ -202,6 +214,7 @@ struct LibraryView: View {
                     }
                     .frame(width: 32, height: 32)
                     .accessibilityLabel("Profile")
+                    .accessibilityIdentifier("server-menu")
             }
         }
         .accessibilityIdentifier("profile-menu")

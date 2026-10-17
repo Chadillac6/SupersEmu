@@ -88,7 +88,7 @@ struct RootView: View {
                 Task { await server.refresh() }
             }
         }
-        // Every successful refresh (including a LAN -> Tailscale switch) retries queued saves; overlapping
+        // Every successful refresh (including a LAN -> public URL switch) retries queued saves; overlapping
         // flushes coalesce inside the engine.
         .onChange(of: server.lastRefreshed) { _, refreshed in
             if refreshed != nil { Task { await SaveSync.shared.engine.flush() } }

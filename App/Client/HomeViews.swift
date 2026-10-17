@@ -67,7 +67,7 @@ struct SystemSelectorBar: View {
     }
 }
 
-/// The featured game: wide art above the title, status and primary actions.
+/// The featured game: cover art above the title, status and primary actions.
 struct HomeHero: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -80,7 +80,7 @@ struct HomeHero: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WideArt(item: item)
+            WideArt(item: item, preferCover: true)
                 // Scaled artwork can extend beyond its clipped frame and intercept selector-chip clicks.
                 .allowsHitTesting(false)
                 .frame(height: height)
@@ -108,18 +108,18 @@ struct HomeHero: View {
                         Label(primaryTitle, systemImage: "play.fill")
                             .frame(minWidth: compact ? nil : 140)
                     }
-                        .buttonStyle(BrandPrimaryButtonStyle())
-                        .controlSize(compact ? .regular : .large)
-                        .fixedSize(horizontal: !compact, vertical: false)
-                        .accessibilityIdentifier("hero-primary")
+                    .buttonStyle(BrandPrimaryButtonStyle())
+                    .controlSize(compact ? .regular : .large)
+                    .fixedSize(horizontal: !compact, vertical: false)
+                    .accessibilityIdentifier("hero-primary")
                     Button(action: details) {
                         Label("Details", systemImage: "info.circle")
                             .frame(minWidth: compact ? nil : 140)
                     }
-                        .buttonStyle(BrandSecondaryButtonStyle())
-                        .controlSize(compact ? .regular : .large)
-                        .fixedSize(horizontal: !compact, vertical: false)
-                        .accessibilityIdentifier("hero-details")
+                    .buttonStyle(BrandSecondaryButtonStyle())
+                    .controlSize(compact ? .regular : .large)
+                    .fixedSize(horizontal: !compact, vertical: false)
+                    .accessibilityIdentifier("hero-details")
                 }
             }
             .padding(compact ? 16 : 22)
@@ -130,10 +130,15 @@ struct HomeHero: View {
             RoundedRectangle(cornerRadius: Brand.Radii.card)
                 .stroke(Brand.Colors.line, lineWidth: 1)
         }
+        .contentShape(RoundedRectangle(cornerRadius: Brand.Radii.card))
+        .onTapGesture { details() }
         .padding(.leading, 20)
         .padding(.trailing, JumpRail.inset)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home-hero")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens game details")
+        .accessibilityAction { details() }
     }
 
     private var height: CGFloat {
@@ -170,7 +175,7 @@ struct CurrentlyPlayingRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            shelfHeader(title: "Continue playing", count: items.count, id: "shelf-continue")
+            shelfHeader(title: "Now Playing", count: items.count, id: "shelf-continue")
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 16) {
                     ForEach(items) { item in
@@ -220,12 +225,14 @@ struct CurrentlyPlayingRow: View {
     }
 }
 
-/// "All Games A-Z": one continuous cover grid with letter anchors for the jump rail.
-struct AlphabetGrid: View {
+/// A sorted cover grid with letter anchors for the jump rail.
+struct GameGridSection: View {
     @Environment(DownloadCenter.self) private var downloads
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
+    let title: String
+    let identifier: String
     let games: [LibraryItem]
     let letterAnchors: [String: String]
     let select: (LibraryItem) -> Void
@@ -234,9 +241,15 @@ struct AlphabetGrid: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(spacing: 10) {
                 HStack {
-                    Text("All games A–Z").font(.title3.weight(.semibold)).foregroundStyle(Brand.Colors.ink).accessibilityIdentifier("shelf-all")
+                    Text(title)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Brand.Colors.ink)
+                        .accessibilityIdentifier(identifier)
                     Spacer()
-                    Text("\(games.count)").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.ink3)
+                    Text("\(games.count)")
+                        .font(Brand.eyebrow)
+                        .tracking(1.2)
+                        .foregroundStyle(Brand.Colors.ink3)
                 }
                 Rectangle().fill(Brand.Colors.line).frame(height: 1)
             }
@@ -276,10 +289,16 @@ struct AlphabetGrid: View {
     }
 }
 
-/// A-Z down the right edge. Click a letter on the Mac; on iOS drag along it to scrub, with a bubble showing the letter.
+/// A-Z down the right edge on Mac; drag along it to scrub, with a bubble showing the letter.
 struct JumpRail: View {
     /// Trailing space Home sections leave for the rail.
-    static let inset: CGFloat = 40
+    static var inset: CGFloat {
+        #if os(macOS)
+        40
+        #else
+        20
+        #endif
+    }
     let available: Set<String>
     /// Scrubbing jumps without animation: queued animated scrolls can stop short of the final letter.
     let jump: (_ letter: String, _ animated: Bool) -> Void

@@ -236,16 +236,18 @@ struct PlayerView: View {
                     .accessibilityIdentifier("cheats-on-badge")
             }
             if !compact { Spacer(minLength: 0) }
-            if session.supportsCheats {
-                Button { session.openCheatPicker() } label: {
-                    toolbarLabel("Cheats", systemImage: "wand.and.stars", compact: compact)
+            if !compact {
+                if session.supportsCheats {
+                    Button { session.openCheatPicker() } label: {
+                        toolbarLabel("Cheats", systemImage: "wand.and.stars", compact: compact)
+                    }
+                    .fixedSize()
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                    .disabled(session.isSyncing || session.pendingConflict != nil)
+                    .help("Cheats (Shift-Command-C)")
+                    .accessibilityLabel("Cheats")
+                    .accessibilityIdentifier("open-cheats")
                 }
-                .fixedSize()
-                .keyboardShortcut("c", modifiers: [.command, .shift])
-                .disabled(session.isSyncing || session.pendingConflict != nil)
-                .help("Cheats (Shift-Command-C)")
-                .accessibilityLabel("Cheats")
-                .accessibilityIdentifier("open-cheats")
             }
             Button { session.openMenu() } label: {
                 toolbarLabel("Menu", systemImage: "line.3.horizontal", compact: compact)
@@ -255,31 +257,33 @@ struct PlayerView: View {
             .help("In-game menu (hold Select + Start for 1 second, or hold Home on a controller)")
             .accessibilityLabel("Menu")
             .accessibilityIdentifier("open-menu")
-            Button { session.openSaveSlots(preferEmpty: true) } label: {
-                toolbarLabel("Save", systemImage: "square.and.arrow.down", compact: compact)
-            }
-            .fixedSize()
-            .disabled(session.isSyncing || session.pendingConflict != nil)
-            .accessibilityLabel("Save")
-            .accessibilityIdentifier("save-state")
-            Button { session.openSaveSlots(preferEmpty: false) } label: {
-                toolbarLabel("Load", systemImage: "arrow.counterclockwise", compact: compact)
-            }
-            .fixedSize()
-            .disabled(!session.hasManualState || session.isSyncing)
-            .accessibilityLabel("Load")
-            .accessibilityIdentifier("load-state")
-            if session.diskCount > 1 {
-                Button { session.openDiscPicker() } label: {
-                    toolbarLabel("Swap disc", systemImage: "opticaldisc", compact: compact)
+            if !compact {
+                Button { session.openSaveSlots(preferEmpty: true) } label: {
+                    toolbarLabel("Save", systemImage: "square.and.arrow.down", compact: compact)
                 }
                 .fixedSize()
-                .keyboardShortcut("d", modifiers: .command)
                 .disabled(session.isSyncing || session.pendingConflict != nil)
-                .help("Swap disc (Command-D, or L + R + Select on a controller)")
-                .accessibilityValue("Disc \(session.currentDisk + 1) of \(session.diskCount)")
-                .accessibilityLabel("Swap disc")
-                .accessibilityIdentifier("swap-disc")
+                .accessibilityLabel("Save")
+                .accessibilityIdentifier("save-state")
+                Button { session.openSaveSlots(preferEmpty: false) } label: {
+                    toolbarLabel("Load", systemImage: "arrow.counterclockwise", compact: compact)
+                }
+                .fixedSize()
+                .disabled(!session.hasManualState || session.isSyncing)
+                .accessibilityLabel("Load")
+                .accessibilityIdentifier("load-state")
+                if session.diskCount > 1 {
+                    Button { session.openDiscPicker() } label: {
+                        toolbarLabel("Swap disc", systemImage: "opticaldisc", compact: compact)
+                    }
+                    .fixedSize()
+                    .keyboardShortcut("d", modifiers: .command)
+                    .disabled(session.isSyncing || session.pendingConflict != nil)
+                    .help("Swap disc (Command-D, or L + R + Select on a controller)")
+                    .accessibilityValue("Disc \(session.currentDisk + 1) of \(session.diskCount)")
+                    .accessibilityLabel("Swap disc")
+                    .accessibilityIdentifier("swap-disc")
+                }
             }
         }
         .buttonStyle(.borderless)

@@ -127,7 +127,7 @@ final class SaveSyncEngineTests: XCTestCase {
         try await withServer { server in
             let phone = try self.device("Chad's iPhone", server: server)
             let online = await phone.provider.currentClient()
-            // Signed in, but the server is unreachable (e.g. on cellular without Tailscale).
+            // Signed in, but the server is unreachable while the device is away from home.
             phone.provider.set(APIClient(baseURL: URL(string: "http://127.0.0.1:9")!, token: online!.token))
             try phone.write(self.auto, "offline-1")
             await phone.engine.enqueueUpload(phone.file(self.auto))

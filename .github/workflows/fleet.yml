@@ -30,6 +30,10 @@ jobs:
         run: |
           scripts/test-release-p12.sh
           scripts/test-marketing-version.sh
+      - name: Test remote access scripts
+        run: |
+          scripts/test-ddns-cloudflare.sh
+          scripts/test-public-access.sh
       - name: Fetch existing homebrew test fixtures
         run: scripts/fetch-test-roms.sh
       - name: Test server

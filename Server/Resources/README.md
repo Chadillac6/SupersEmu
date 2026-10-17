@@ -24,6 +24,5 @@ Not verifiable in a VM; test on the Mac mini:
 - The one-time approval in System Settings › General › Login Items, and `SMAppService` reaching `.enabled`
   (needs a properly signed app; an ad-hoc signed debug build may report `.requiresApproval` or fail).
 - The daemon starting at boot with no one logged in, and `KeepAlive` restarts.
-- Tailscale reachability before login (depends on the Tailscale variant installed; the standalone/system
-  extension variant is needed for pre-login networking). Not claimed here.
-- iPhone/iPad pairing over LAN and over Tailscale, and the local-network permission prompt on device.
+- Public HTTPS reachability before login, with Cloudflare DDNS and Caddy.
+- iPhone/iPad pairing over LAN and public HTTPS, and the local-network permission prompt on device.

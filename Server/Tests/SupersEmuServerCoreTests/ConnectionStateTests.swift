@@ -5,15 +5,17 @@ import XCTest
 
 final class ConnectionStateTests: XCTestCase {
     let lan = URL(string: "https://192.168.1.20:8487")!
-    let tailnet = URL(string: "https://mac-mini.tail1234.ts.net:8487")!
 
     func testRouteClassification() {
         XCTAssertEqual(ConnectionRoute.of(lan), .home)
         XCTAssertEqual(ConnectionRoute.of(URL(string: "https://mac-mini.local:8487")!), .home)
-        XCTAssertEqual(ConnectionRoute.of(tailnet), .tailscale)
-        XCTAssertEqual(ConnectionRoute.of(URL(string: "https://100.101.102.103:8487")!), .tailscale)
-        XCTAssertEqual(ConnectionRoute.of(URL(string: "https://100.12.0.1:8487")!), .home, "outside 100.64.0.0/10")
-        XCTAssertEqual(ConnectionRoute.of(URL(string: "https://[fd7a:115c:a1e0::1]:8487")!), .tailscale)
+        XCTAssertEqual(ConnectionRoute.of(URL(string: "https://games.supersemu.com:8487")!), .home)
+        let publicURL = URL(string: "https://games.supersemu.com")!
+        XCTAssertEqual(ConnectionRoute.of(publicURL, publicURL: publicURL), .internet)
+    }
+
+    func testLegacyRouteDecodesAsHome() throws {
+        XCTAssertEqual(try JSONDecoder().decode(ConnectionRoute.self, from: Data(#""tailscale""#.utf8)), .home)
     }
 
     func testTransitionsAndBackoff() {
@@ -41,8 +43,9 @@ final class ConnectionStateTests: XCTestCase {
         monitor.failed(.unreachable)
         XCTAssertEqual(monitor.retryDelay, 2, "a network change restarts the backoff")
 
-        monitor.succeeded(via: tailnet)
-        XCTAssertEqual(monitor.state, .connected(.tailscale))
+        let publicURL = URL(string: "https://games.supersemu.com")!
+        monitor.succeeded(via: publicURL, publicURL: publicURL)
+        XCTAssertEqual(monitor.state, .connected(.internet))
         XCTAssertEqual(monitor.consecutiveFailures, 0)
 
         monitor.failed(.certificateMismatch)
@@ -71,7 +74,7 @@ final class ConnectionStateTests: XCTestCase {
         XCTAssertNil(ConnectionState.connected(.home).message(serverName: "Mac mini"))
         XCTAssertNil(ConnectionState.signedOut(.notPaired).message(serverName: "Mac mini"))
         let unreachable = ConnectionState.unreachable.message(serverName: "Chad's Mac mini")!
-        XCTAssertEqual(unreachable.title, "Can't reach Chad's Mac mini. Check that it's on, or turn on Tailscale when you're away.")
+        XCTAssertEqual(unreachable.title, "Can't reach Chad's Mac mini. Check that it's on and connected to the internet.")
         XCTAssertTrue(unreachable.canRetry)
         XCTAssertTrue(ConnectionState.certificateMismatch.message(serverName: "Mac mini")!.detail.contains("pair this device again"))
         XCTAssertFalse(ConnectionState.signedOut(.revoked).message(serverName: "Mac mini")!.canRetry)
