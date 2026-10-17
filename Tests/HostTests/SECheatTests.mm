@@ -161,13 +161,16 @@ static NSArray<NSNumber *> *outcomes(std::initializer_list<SECheatOutcome> list)
     XCTAssertEqual(cheatstub::calls.back(), "reset");
 }
 
-- (void)testMultiCodeOrOversizedStringsAreRejectedWithoutReachingTheCore {
+- (void)testPerCodeLimitAndMultiCodeStrings {
     SELibretroHost *host = [self stubHost:@"stub_cheat"];
     cheatstub::calls.clear();
-    NSString *huge = [@"OK" stringByPaddingToLength:200 withString:@"A" startingAtIndex:0];
-    NSArray *result = [host applyCheatCodes:@[@"OK-1+OK-2", huge, @""]];
-    XCTAssertEqualObjects(result, outcomes({SECheatOutcomeRejected, SECheatOutcomeRejected, SECheatOutcomeRejected}));
-    XCTAssertEqual(cheatstub::calls, std::vector<std::string>({"reset"}));
+    NSString *tooLong = [@"OK" stringByPaddingToLength:300 withString:@"A" startingAtIndex:0];
+    NSString *withinLimit = [@"OK" stringByPaddingToLength:200 withString:@"A" startingAtIndex:0];
+    NSArray *result = [host applyCheatCodes:@[@"OK-1+OK-2", tooLong, @"", withinLimit]];
+    XCTAssertEqualObjects(result, outcomes({SECheatOutcomeRejected, SECheatOutcomeRejected, SECheatOutcomeRejected, SECheatOutcomeApplied}));
+    XCTAssertEqual(cheatstub::calls.size(), 2u);
+    XCTAssertTrue(cheatstub::calls[0] == "reset");
+    XCTAssertTrue(cheatstub::calls[1] == std::string("set 0 on ") + [withinLimit UTF8String]);
 }
 
 - (void)testCoreWithoutCountReportsUnverified {
@@ -212,15 +215,58 @@ static NSArray<NSNumber *> *outcomes(std::initializer_list<SECheatOutcome> list)
     [host runFrames:5];
 }
 
-- (void)testPicoDriveIsNotWiredForCheatsYet {
-    NSString *path = [_fixtures stringByAppendingPathComponent:@"mega-drive-midi-interface.md"];
-    if (![NSFileManager.defaultManager fileExistsAtPath:path]) { XCTSkip(@"fixture missing"); }
-    NSError *error = nil;
-    SELibretroHost *host = [[SELibretroHost alloc] initWithCoreID:@"picodrive" romURL:[NSURL fileURLWithPath:path]
-                                                       saveRAMURL:[_directory URLByAppendingPathComponent:@"p.srm"]
-                                                  systemDirectory:_directory error:&error];
-    if (!host) { XCTSkip(@"PicoDrive did not load the fixture: %@", error); }
-    XCTAssertFalse(host.supportsCheats);
+- (void)testPicoDrive32XAcceptsGameGenieAndPARAndRejectsMalformedCodes {
+    SELibretroHost *host = [self realHost:@"picodrive" rom:@"noudar.32x"];
+    if (!host) { XCTSkip(@"noudar.32x fixture missing (scripts/fetch-test-roms.sh)"); }
+    XCTAssertTrue(host.supportsCheats);
+    NSArray *result = [host applyCheatCodes:@[@"RFAA-A6VR", @"FF0123:0063", @"RFAA-A6V"]];
+    XCTAssertEqualObjects(result, outcomes({SECheatOutcomeApplied, SECheatOutcomeApplied, SECheatOutcomeRejected}));
+    [host runFrames:5];
+    XCTAssertEqualObjects([host applyCheatCodes:@[]], @[]);
+    [host runFrames:5];
+}
+
+- (void)testGambatteGameBoyCheatsAreUnverifiedAndRun {
+    SELibretroHost *host = [self realHost:@"gambatte" rom:@"dmg-acid2.gb"];
+    if (!host) { XCTSkip(@"dmg-acid2.gb fixture missing (scripts/fetch-test-roms.sh)"); }
+    XCTAssertTrue(host.supportsCheats);
+    NSArray *result = [host applyCheatCodes:@[@"000-000", @"01001234"]];
+    XCTAssertEqualObjects(result, outcomes({SECheatOutcomeUnverified, SECheatOutcomeUnverified}));
+    [host runFrames:5];
+}
+
+- (void)testMGBAGBACheatsAreUnverifiedAndRun {
+    SELibretroHost *host = [self realHost:@"mgba" rom:@"gba-tests-hello.gba"];
+    if (!host) { XCTSkip(@"gba-tests-hello.gba fixture missing (scripts/fetch-test-roms.sh)"); }
+    XCTAssertTrue(host.supportsCheats);
+    XCTAssertEqualObjects([host applyCheatCodes:@[@"00000000 00000000"]],
+                          outcomes({SECheatOutcomeUnverified}));
+    [host runFrames:5];
+}
+
+- (void)testMupen64PlusNextCheatWrapperHandlesMultipleLinesAndLimits {
+    SELibretroHost *host = [self realHost:@"mupen64plus_next" rom:@"cube-fill-triangle.z64"];
+    if (!host) { XCTSkip(@"cube-fill-triangle.z64 fixture missing (scripts/fetch-test-roms.sh)"); }
+    XCTAssertTrue(host.supportsCheats);
+
+    NSString *threeLines = @"8009C6E4 03E7 8009C6E6 0001 8009C6E8 0002";
+    XCTAssertEqualObjects([host applyCheatCodes:@[threeLines]], outcomes({SECheatOutcomeApplied}));
+    [host runFrames:5];
+
+    XCTAssertEqualObjects([host applyCheatCodes:@[@"NOPE"]], outcomes({SECheatOutcomeRejected}));
+    [host runFrames:5];
+
+    NSMutableArray<NSString *> *pairs = [NSMutableArray array];
+    for (unsigned i = 0; i < 17; i++) {
+        [pairs addObject:[NSString stringWithFormat:@"8009C6E4 %04X", i]];
+    }
+    NSString *limitCode = [[pairs componentsJoinedByString:@" "] stringByPaddingToLength:240 withString:@" " startingAtIndex:0];
+    XCTAssertEqual(limitCode.length, 240u);
+    XCTAssertEqualObjects([host applyCheatCodes:@[limitCode]], outcomes({SECheatOutcomeApplied}));
+    [host runFrames:5];
+
+    XCTAssertEqualObjects([host applyCheatCodes:@[]], @[]);
+    [host runFrames:5];
 }
 
 @end
