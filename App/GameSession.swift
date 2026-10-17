@@ -62,6 +62,7 @@ final class GameSession {
     @ObservationIgnored private var displayLinkProxy: DisplayLinkProxy?
 #endif
     @ObservationIgnored private var lastAutosave = ContinuousClock.now
+    @ObservationIgnored private var lastSuccessfulAutosave: ContinuousClock.Instant?
     @ObservationIgnored private let sync: SaveSync
     @ObservationIgnored private var conflictChoice: CheckedContinuation<SaveConflictChoice?, Never>?
     @ObservationIgnored private var pendingDiscard: Task<Void, Never>?
@@ -77,7 +78,7 @@ final class GameSession {
     @ObservationIgnored private var pickerTimer: Timer?
     @ObservationIgnored private var pickerButtons: SEJoypadButtons = []
 
-    var timeSinceLastAutosave: Duration { .now - lastAutosave }
+    var timeSinceLastAutosave: Duration? { lastSuccessfulAutosave.map { .now - $0 } }
     /// The chord opens the picker only after it has been released since it last fired.
     @ObservationIgnored private var chordArmed = true
     @ObservationIgnored private var hotkeyHeldSince: ContinuousClock.Instant?
@@ -600,6 +601,7 @@ final class GameSession {
                 host.flushSaveRAM()
                 try host.saveState(to: stateURL)
             }
+            lastSuccessfulAutosave = .now
             diagnosticsLog?.appendEvent("save-state save auto")
             if !preservingStatus { status = "Auto-saved on this device" }
         } catch {
@@ -628,6 +630,7 @@ final class GameSession {
                 host.flushSaveRAM()
                 try host.saveState(to: stateURL)
             }
+            lastSuccessfulAutosave = .now
             diagnosticsLog?.appendEvent("save-state save auto")
             if !preservingStatus { status = "Auto-saved on this device" }
         } catch EmulationLoopError.stopped {
@@ -696,6 +699,12 @@ final class GameSession {
         case cheats = "Cheats", controls = "Controls", exit = "Exit to Library"
         var id: String { rawValue }
         var displayTitle: String { self == .exit ? "Save & Quit" : rawValue }
+    }
+
+    static func autosaveLabel(_ age: Duration?) -> String {
+        guard let age else { return "NOT AUTOSAVED YET" }
+        let seconds = max(0, age.components.seconds)
+        return seconds < 60 ? "AUTOSAVED \(seconds)S AGO" : "AUTOSAVED \(seconds / 60)M AGO"
     }
 
     var menuItems: [MenuItem] {

@@ -403,8 +403,7 @@ struct InGameMenu: View {
         .frame(width: 320)
         .brandPanel()
         .onAppear {
-            let seconds = max(0, session.timeSinceLastAutosave.components.seconds)
-            autosavedAgo = seconds < 60 ? "AUTOSAVED \(seconds)S AGO" : "AUTOSAVED \(seconds / 60)M AGO"
+            autosavedAgo = GameSession.autosaveLabel(session.timeSinceLastAutosave)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("in-game-menu")
