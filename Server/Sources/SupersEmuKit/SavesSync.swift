@@ -527,6 +527,7 @@ public actor SaveSyncEngine {
         guard Self.sha256(data) == revision.sha256 else { throw SaveSyncError.hashMismatch }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.modificationDate: revision.createdAt], ofItemAtPath: url.path)
     }
 
     // MARK: Helpers
