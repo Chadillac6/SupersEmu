@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: public-access.sh enable --host <fqdn> [--port 8489] [--data-dir <path>] [--no-launchd] [--local-test]"
+  echo "Usage: public-access.sh enable --host <fqdn> [--port 8489] [--data-dir <path>] [--cloudflare-token-file <path>] [--no-launchd] [--local-test]"
   echo "       public-access.sh disable [--data-dir <path>] [--no-launchd] [--purge]"
   echo "       public-access.sh status [--data-dir <path>]"
 }
@@ -17,12 +17,14 @@ data_dir=${SUPERSEMU_DATA_DIR:-"/Library/Application Support/SupersEmu Server"}
 no_launchd=0
 purge=0
 local_test=0
+cloudflare_token_file=
 original_args=("$action")
 while (($#)); do
   case "$1" in
     --host) (($# >= 2)) || { usage; exit 2; }; host=$2; original_args+=("$1" "$2"); shift 2 ;;
     --port) (($# >= 2)) || { usage; exit 2; }; port=$2; port_explicit=1; original_args+=("$1" "$2"); shift 2 ;;
     --data-dir) (($# >= 2)) || { usage; exit 2; }; data_dir=$2; original_args+=("$1" "$2"); shift 2 ;;
+    --cloudflare-token-file) (($# >= 2)) || { usage; exit 2; }; cloudflare_token_file=$2; original_args+=("$1" "$2"); shift 2 ;;
     --no-launchd) no_launchd=1; original_args+=("$1"); shift ;;
     --purge) purge=1; original_args+=("$1"); shift ;;
     --local-test) local_test=1; original_args+=("$1"); shift ;;
@@ -48,15 +50,27 @@ if [[ "$data_dir" == "/Library/Application Support/SupersEmu Server" && $EUID -n
 fi
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
-template="$script_dir/../Server/Resources/Caddyfile.template"
+template="$script_dir/Caddyfile.template"
+[[ -f "$template" ]] || template="$script_dir/../Server/Resources/Caddyfile.template"
 caddy_dir="$data_dir/caddy"
 config_file="$data_dir/public-access.json"
 caddyfile="$caddy_dir/Caddyfile"
 label="com.chadillac6.supersemu.caddy"
 plist="/Library/LaunchDaemons/$label.plist"
+ddns_label="com.chadillac6.supersemu.ddns"
+ddns_plist="/Library/LaunchDaemons/$ddns_label.plist"
+ddns_script="$data_dir/bin/ddns-cloudflare.sh"
+token_file="$data_dir/cloudflare.token"
 server_label="system/com.chadillac6.supersemu.server"
 
-caddy_bin=$(command -v caddy || true)
+find_caddy() {
+  command -v caddy 2>/dev/null || {
+    [[ ! -x /opt/homebrew/bin/caddy ]] || { printf '%s\n' /opt/homebrew/bin/caddy; return; }
+    [[ ! -x /usr/local/bin/caddy ]] || { printf '%s\n' /usr/local/bin/caddy; return; }
+    return 1
+  }
+}
+caddy_bin=$(find_caddy || true)
 if [[ "$action" != status ]]; then
   mkdir -p "$caddy_dir"
   chmod 700 "$caddy_dir"
@@ -109,8 +123,12 @@ launchctl_cmd() {
 }
 
 rollback_enable() {
-  local status=$?
+  local status=${1:-$?}
   trap - ERR
+  if ((ddns_started)); then
+    launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
+    rm -f "$ddns_plist"
+  fi
   if ((caddy_started)); then
     if ((no_launchd)); then
       if [[ -n "$started_caddy_pid" ]]; then
@@ -131,6 +149,14 @@ rollback_enable() {
     fi
   fi
   [[ -z "$previous_config_backup" ]] || rm -f "$previous_config_backup"
+  if ((new_token_written)); then
+    if ((previous_token_existed)); then
+      mv -f "$previous_token_backup" "$token_file" || true
+    else
+      rm -f "$token_file"
+    fi
+  fi
+  [[ -z "$previous_token_backup" ]] || rm -f "$previous_token_backup"
   exit "$status"
 }
 
@@ -138,15 +164,46 @@ case "$action" in
   enable)
     if [[ -z "$caddy_bin" ]]; then
       echo "Caddy is required. Install it with: brew install caddy"
-      exit 1
+      exit 5
     fi
     [[ -f "$template" ]] || { echo "Missing Caddy template: $template"; exit 1; }
     caddy_started=0
     config_write_attempted=0
     previous_config_existed=0
     previous_config_backup=
+    new_token_written=0
+    previous_token_existed=0
+    previous_token_backup=
+    ddns_started=0
     started_caddy_pid=
     trap 'rollback_enable' ERR
+    if [[ -n "$cloudflare_token_file" ]]; then
+      [[ -f "$cloudflare_token_file" ]] || { echo "Cloudflare token file does not exist."; false; }
+      if [[ -f "$token_file" ]]; then
+        previous_token_backup=$(mktemp "$data_dir/cloudflare-token.XXXXXX")
+        cp -p "$token_file" "$previous_token_backup"
+        previous_token_existed=1
+      fi
+      install -m 600 "$cloudflare_token_file" "$token_file"
+      new_token_written=1
+    fi
+    if [[ -f "$token_file" ]]; then
+      mkdir -p "$data_dir/bin"
+      install -m 755 "$script_dir/ddns-cloudflare.sh" "$ddns_script"
+      if "$ddns_script" --host "$host" --data-dir "$data_dir"; then
+        :
+      else
+        ddns_status=$?
+        if ((ddns_status == 3)); then
+          echo "Cloudflare token was rejected."
+          rollback_enable 3
+        fi
+        echo "Cloudflare DNS update failed."
+        rollback_enable 4
+      fi
+    else
+      echo "Warning: no Cloudflare token; DNS will not be kept up to date." >&2
+    fi
     if [[ -f "$config_file" ]]; then
       previous_config_backup=$(mktemp "$caddy_dir/public-access.XXXXXX")
       cp -p "$config_file" "$previous_config_backup"
@@ -186,6 +243,30 @@ case "$action" in
         sleep 0.1
       done
     else
+      if [[ -f "$token_file" ]]; then
+        python3 - "$ddns_plist" "$ddns_script" "$host" "$data_dir" <<'PY'
+import os
+import plistlib
+import sys
+
+path, script, host, data = sys.argv[1:]
+value = {
+    "Label": "com.chadillac6.supersemu.ddns",
+    "ProgramArguments": [script, "--host", host, "--data-dir", data],
+    "RunAtLoad": False,
+    "StartInterval": 300,
+    "StandardOutPath": os.path.join(data, "ddns.log"),
+    "StandardErrorPath": os.path.join(data, "ddns.log"),
+}
+with open(path, "wb") as stream:
+    plistlib.dump(value, stream)
+os.chmod(path, 0o644)
+PY
+        chmod 644 "$ddns_plist"
+        launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
+        launchctl_cmd bootstrap system "$ddns_plist"
+        ddns_started=1
+      fi
       python3 - "$plist" "$caddy_bin" "$caddyfile" "$caddy_dir" "$host" "$port" <<'PY'
 import os
 import plistlib
@@ -234,9 +315,14 @@ PY
     else
       launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
       rm -f "$plist"
+      launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
+      rm -f "$ddns_plist"
       launchctl_cmd kickstart -k "$server_label" >/dev/null 2>&1 || true
     fi
-    if ((purge)); then rm -rf "$caddy_dir"; fi
+    if ((purge)); then
+      rm -rf "$caddy_dir" "$data_dir/bin"
+      rm -f "$token_file" "$data_dir/ddns-state.json"
+    fi
     echo "Public access disabled. Existing server and Caddy certificates are retained unless --purge is used."
     ;;
   status)
@@ -255,6 +341,10 @@ PY
     fi
     if [[ ! -f "$config_file" ]]; then echo "Public access config: absent (disabled)"; exit 0; fi
     cat "$config_file"
+    if [[ -f "$data_dir/ddns-state.json" ]]; then
+      echo "DDNS state:"
+      cat "$data_dir/ddns-state.json"
+    fi
     public_url=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["publicURL"])' "$config_file")
     public_port=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["listenPort"])' "$config_file")
     echo "Loopback listener:"

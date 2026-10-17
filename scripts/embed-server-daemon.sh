@@ -25,6 +25,9 @@ lipo -create "${slices[@]}" -output "$app/Contents/MacOS/supersemu-server"
 chmod 755 "$app/Contents/MacOS/supersemu-server"
 mkdir -p "$app/Contents/Library/LaunchDaemons"
 install -m 644 "${SRCROOT}/Server/Resources/com.chadillac6.supersemu.server.plist" "$app/Contents/Library/LaunchDaemons/"
+mkdir -p "$app/Contents/Resources"
+install -m 755 "${SRCROOT}/scripts/public-access.sh" "${SRCROOT}/scripts/ddns-cloudflare.sh" "$app/Contents/Resources/"
+install -m 644 "${SRCROOT}/Server/Resources/Caddyfile.template" "$app/Contents/Resources/"
 identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
 sign=(--force --sign "$identity" --timestamp=none)
 # Release signing (scripts/release-mac.sh): notarization needs a secure timestamp and the hardened runtime.
