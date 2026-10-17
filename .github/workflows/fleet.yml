@@ -30,6 +30,7 @@ jobs:
         run: |
           scripts/test-release-p12.sh
           scripts/test-marketing-version.sh
+          scripts/test-mac-release-notes.sh
       - name: Test remote access scripts
         run: |
           scripts/test-ddns-cloudflare.sh
@@ -65,6 +66,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Prepare isolated signing keychain
         env:
           MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}

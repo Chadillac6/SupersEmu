@@ -13,8 +13,10 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     @Published private(set) var canCheckForUpdates = false
     @Published private(set) var isConfigured = false
     @Published private(set) var serverRestartPending = false
+    @Published private(set) var status: UpdateStatus = .notConfigured
     private var controller: SPUStandardUpdaterController!
     private var observation: AnyCancellable?
+    private var immediateInstallationBlock: (() -> Void)?
 
     private override init() {
         super.init()
@@ -29,6 +31,16 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         observation = controller.updater.publisher(for: \.canCheckForUpdates)
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.canCheckForUpdates = $0 }
+        status = UpdateStatus.initial(
+            isDebugBuild: _isDebugAssertConfiguration(),
+            isConfigured: isConfigured,
+            lastCheckDate: controller.updater.lastUpdateCheckDate
+        )
+        #if DEBUG
+        if let preview = UpdateStatus.preview(arguments: ProcessInfo.processInfo.arguments) {
+            status = preview
+        }
+        #endif
         // Source builds are for live iteration. They must never replace themselves with a published release.
         #if !DEBUG
         if isConfigured { controller.startUpdater() }
@@ -42,8 +54,12 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         alert.informativeText = "The installed release app checks for signed updates automatically. This source build stays available for local testing."
         alert.runModal()
         #else
-        if isConfigured { controller.checkForUpdates(nil) }
+        if isConfigured {
+            status = .checking
+            controller.checkForUpdates(nil)
+        }
         else {
+            status = .notConfigured
             let alert = NSAlert()
             alert.messageText = "Update signing is not configured"
             alert.informativeText = "Install a release built with the update signing public key."
@@ -53,10 +69,46 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+        UpdateNoticeStore.save(
+            version: item.displayVersionString,
+            build: item.versionString,
+            notes: UpdateNoticeStore.plainTextNotes(item.itemDescription, format: item.itemDescriptionFormat)
+        )
         let daemon = SMAppService.daemon(plistName: "com.chadillac6.supersemu.server.plist")
         if daemon.status == .enabled {
             UserDefaults.standard.set(item.versionString, forKey: Self.pendingServerVersionKey)
         }
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        status = .available(version: item.displayVersionString)
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        status = .upToDate(checkedAt: Date())
+    }
+
+    func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem, immediateInstallationBlock: @escaping () -> Void) -> Bool {
+        status = .readyToInstall(version: item.displayVersionString)
+        self.immediateInstallationBlock = immediateInstallationBlock
+        return true
+    }
+
+    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+        let updateError = error as NSError
+        guard updateError.code != Int(SUError.noUpdateError.rawValue) else { return }
+        status = .failed(message: updateError.localizedDescription, checkedAt: updater.lastUpdateCheckDate)
+    }
+
+    var versionLabel: String { UpdateStatusPresentation.currentVersionLabel }
+
+    func installNow() {
+        immediateInstallationBlock?()
+    }
+
+    func consumePendingUpdateNotice() -> PendingUpdateNotice? {
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        return UpdateNoticeStore.consume(forRunningBuild: build)
     }
 
     func finishServerUpdateIfNeeded() {
@@ -90,6 +142,12 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 struct UpdateMenu: View {
     @ObservedObject var updater: AppUpdater
     var body: some View {
+        Text(updater.versionLabel).disabled(true)
+        Text(UpdateStatusPresentation.menuText(for: updater.status)).disabled(true)
+        if case .readyToInstall(let version) = updater.status {
+            Button("Restart and Install \(version)") { updater.installNow() }
+        }
+        Divider()
         Button("Check for Updates…") { updater.checkForUpdates() }
         #if !DEBUG
             .disabled(updater.isConfigured && !updater.canCheckForUpdates)
