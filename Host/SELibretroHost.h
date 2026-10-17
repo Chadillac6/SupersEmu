@@ -86,6 +86,9 @@ typedef NS_ENUM(NSInteger, SECheatOutcome) {
 @property (nonatomic, readonly) uint64_t audioUnderrunFrames;  // output pulled frames the ring didn't have (zero-filled)
 @property (nonatomic, readonly) uint64_t audioOverflowFrames;  // oldest frames dropped because the ring was full
 @property (nonatomic, readonly) NSInteger audioBufferedFrames;
+@property (nonatomic, readonly) NSInteger audioCapacityFrames;
+@property (nonatomic, readonly) uint64_t audioRenderCallbackCount;
+@property (nonatomic, readonly) BOOL audioEngineRunning;
 /// "software", "gl-iosurface", "gl-readback" (IOSurface failed; glReadPixels each frame) or "gl-pending" before the first HW frame.
 @property (nonatomic, readonly, copy) NSString *renderPath;
 /// GL_RENDERER + GL_VERSION captured when the hardware context is created; nil for software cores.
@@ -107,6 +110,9 @@ typedef NS_ENUM(NSInteger, SECheatOutcome) {
 - (void)setAnalogStick:(SEAnalogStick)stick x:(int16_t)x y:(int16_t)y forPort:(NSInteger)port NS_SWIFT_NAME(setAnalog(_:x:y:port:));
 /// Starts/stops AVAudioEngine output. Off by default (tests run silent).
 @property (nonatomic) BOOL audioEnabled;
+@property (nonatomic, copy, nullable) void (^audioEventHandler)(NSString *event);
+- (void)startAudioEngineIfNeeded;
+- (void)recoverStalledAudio;
 
 - (void)runFrame;
 - (void)runFrames:(NSInteger)count;

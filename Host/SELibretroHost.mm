@@ -108,6 +108,8 @@ struct HostState {
     std::string systemDirectory, saveDirectory;
     AudioRing audio;
     std::atomic<bool> audioEnabled{false};
+    std::atomic<uint64_t> audioRenderCallbackCount{0};
+    std::atomic<bool> audioEngineRunning{false};
     bool active = false;
     const SECoreAPI *core = nullptr;
     /// Fields of the legacy interface are a prefix of the EXT one; unset callbacks stay null.
@@ -632,6 +634,7 @@ static __weak SELibretroHost *gActiveHost;
     AVAudioEngine *_engine;
     AVAudioSourceNode *_sourceNode;
     NSArray<id> *_audioObservers;
+    void (^_audioEventHandler)(NSString *);
 }
 
 + (SELibretroHost *)activeHost { return gActiveHost; }
@@ -811,6 +814,16 @@ static __weak SELibretroHost *gActiveHost;
     os_unfair_lock_unlock(&g.audio.lock);
     return frames;
 }
+- (NSInteger)audioCapacityFrames {
+    os_unfair_lock_lock(&g.audio.lock);
+    NSInteger frames = NSInteger(g.audio.capacity);
+    os_unfair_lock_unlock(&g.audio.lock);
+    return frames;
+}
+- (uint64_t)audioRenderCallbackCount { return g.audioRenderCallbackCount.load(); }
+- (BOOL)audioEngineRunning { return g.audioEngineRunning.load(); }
+- (void (^)(NSString *))audioEventHandler { return [_audioEventHandler copy]; }
+- (void)setAudioEventHandler:(void (^)(NSString *))handler { _audioEventHandler = [handler copy]; }
 - (NSString *)renderPath {
     if (!g.hw.requested) return @"software";
     if (g.hw.surfaceUnavailable) return @"gl-readback";
@@ -1027,29 +1040,38 @@ static __weak SELibretroHost *gActiveHost;
     }
 }
 
-#if TARGET_OS_IOS
 - (void)activateAudioSession {
+#if TARGET_OS_IOS
     NSError *error = nil;
     if (![AVAudioSession.sharedInstance setActive:YES error:&error]) {
         NSLog(@"SupersEmu: audio session activation error: %@", error.localizedDescription);
     }
+#endif
 }
 
 - (void)startAudioEngineIfNeeded {
     if (!_audioEnabled || !_loaded || !g.audioEnabled.load() || !_engine) return;
+#if TARGET_OS_IOS
     [self activateAudioSession];
-    if (_engine.isRunning) return;
+#endif
+    if (_engine.isRunning) {
+        g.audioEngineRunning = true;
+        return;
+    }
     NSError *error = nil;
     if (![_engine startAndReturnError:&error]) {
+        g.audioEngineRunning = false;
         NSLog(@"SupersEmu: audio unavailable: %@", error.localizedDescription);
     } else {
+        g.audioEngineRunning = true;
         NSLog(@"SupersEmu: audio engine started");
     }
 }
 
-- (void)restartAudioEngine {
+- (void)recoverStalledAudio {
     if (!_audioEnabled || !_loaded || !g.audioEnabled.load() || !_engine) return;
     [_engine stop];
+    g.audioEngineRunning = false;
     [self startAudioEngineIfNeeded];
 }
 
@@ -1057,10 +1079,13 @@ static __weak SELibretroHost *gActiveHost;
     if (_audioObservers.count > 0) return;
 
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+#if TARGET_OS_IOS
     AVAudioSession *session = AVAudioSession.sharedInstance;
+#endif
     __weak SELibretroHost *weakSelf = self;
     NSMutableArray<id> *observers = [NSMutableArray array];
 
+#if TARGET_OS_IOS
     id interruptionObserver = [center addObserverForName:AVAudioSessionInterruptionNotification
                                                    object:session
                                                     queue:[NSOperationQueue mainQueue]
@@ -1068,9 +1093,11 @@ static __weak SELibretroHost *gActiveHost;
         SELibretroHost *host = weakSelf;
         if (!host || !host->_audioEnabled || !host->_loaded || !g.audioEnabled.load()) return;
         AVAudioSessionInterruptionType type = (AVAudioSessionInterruptionType)[notification.userInfo[AVAudioSessionInterruptionTypeKey] integerValue];
+        if (host->_audioEventHandler) host->_audioEventHandler(type == AVAudioSessionInterruptionTypeEnded ? @"audio interruption ended" : @"audio interruption began");
         if (type == AVAudioSessionInterruptionTypeEnded) [host startAudioEngineIfNeeded];
     }];
     [observers addObject:interruptionObserver];
+#endif
 
     id configurationObserver = [center addObserverForName:AVAudioEngineConfigurationChangeNotification
                                                      object:_engine
@@ -1078,30 +1105,32 @@ static __weak SELibretroHost *gActiveHost;
                                                  usingBlock:^(NSNotification *notification) {
         SELibretroHost *host = weakSelf;
         if (!host || !host->_audioEnabled || !host->_loaded || !g.audioEnabled.load() || notification.object != host->_engine) return;
-        [host restartAudioEngine];
+        if (host->_audioEventHandler) host->_audioEventHandler(@"audio engine configuration changed");
+        [host recoverStalledAudio];
     }];
     [observers addObject:configurationObserver];
 
+#if TARGET_OS_IOS
     id resetObserver = [center addObserverForName:AVAudioSessionMediaServicesWereResetNotification
                                             object:nil
                                              queue:[NSOperationQueue mainQueue]
                                         usingBlock:^(NSNotification *notification) {
         SELibretroHost *host = weakSelf;
         if (!host || !host->_audioEnabled || !host->_loaded || !g.audioEnabled.load()) return;
+        if (host->_audioEventHandler) host->_audioEventHandler(@"audio media services reset");
         [host stopAudioDeactivatingSession:NO];
         if (host->_audioEnabled && host->_loaded && g.audioEnabled.load()) [host startAudio];
     }];
     [observers addObject:resetObserver];
+#endif
     _audioObservers = [observers copy];
 }
-#endif
 
 - (void)stopAudioDeactivatingSession:(BOOL)deactivateSession {
-#if TARGET_OS_IOS
     for (id observer in _audioObservers) [NSNotificationCenter.defaultCenter removeObserver:observer];
     _audioObservers = nil;
-#endif
     [_engine stop];
+    g.audioEngineRunning = false;
     _engine = nil;
     _sourceNode = nil;
 #if TARGET_OS_IOS
@@ -1131,6 +1160,7 @@ static __weak SELibretroHost *gActiveHost;
 #endif
     AVAudioFormat *format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:_avInfo.timing.sample_rate channels:2];
     _sourceNode = [[AVAudioSourceNode alloc] initWithFormat:format renderBlock:^OSStatus(BOOL *isSilence, const AudioTimeStamp *timestamp, AVAudioFrameCount frameCount, AudioBufferList *buffers) {
+        g.audioRenderCallbackCount.fetch_add(1);
         float *left = static_cast<float *>(buffers->mBuffers[0].mData);
         float *right = buffers->mNumberBuffers > 1 ? static_cast<float *>(buffers->mBuffers[1].mData) : left;
         g.audio.pop(left, right, frameCount);
@@ -1139,16 +1169,20 @@ static __weak SELibretroHost *gActiveHost;
     _engine = [[AVAudioEngine alloc] init];
     [_engine attachNode:_sourceNode];
     [_engine connect:_sourceNode to:_engine.mainMixerNode format:format];
-#if TARGET_OS_IOS
     [self installAudioObservers];
-#endif
     NSError *error = nil;
     if (![_engine startAndReturnError:&error]) {
+        g.audioEngineRunning = false;
         NSLog(@"SupersEmu: audio unavailable: %@", error.localizedDescription);
     }
 #if TARGET_OS_IOS
     else {
+        g.audioEngineRunning = true;
         NSLog(@"SupersEmu: audio engine started");
+    }
+#else
+    else {
+        g.audioEngineRunning = true;
     }
 #endif
 }

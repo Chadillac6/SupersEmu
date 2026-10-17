@@ -4,6 +4,15 @@ import QuartzCore
 import Darwin
 import SupersEmuKit
 
+#if os(iOS)
+@MainActor
+private final class DisplayLinkProxy: NSObject {
+    let action: () -> Void
+    init(action: @escaping () -> Void) { self.action = action }
+    @objc func tick() { action() }
+}
+#endif
+
 @MainActor
 @Observable
 final class GameSession {
@@ -46,7 +55,12 @@ final class GameSession {
     @ObservationIgnored let input = GameInput()
     @ObservationIgnored weak var displayLayer: CALayer?
     @ObservationIgnored private var host: SELibretroHost?
+    @ObservationIgnored private var emulationLoop: EmulationLoop?
     @ObservationIgnored private var timer: Timer?
+#if os(iOS)
+    @ObservationIgnored private var displayLink: CADisplayLink?
+    @ObservationIgnored private var displayLinkProxy: DisplayLinkProxy?
+#endif
     @ObservationIgnored private var lastAutosave = ContinuousClock.now
     @ObservationIgnored private let sync: SaveSync
     @ObservationIgnored private var conflictChoice: CheckedContinuation<SaveConflictChoice?, Never>?
@@ -55,7 +69,6 @@ final class GameSession {
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var core: SaveCore?
     @ObservationIgnored private var performanceStats = PerformanceStats()
-    @ObservationIgnored private var lastPerformanceSummaryAt: TimeInterval?
     @ObservationIgnored private var diagnosticsLog: DiagnosticsLog?
     @ObservationIgnored private var hasRecordedRenderPath = false
     @ObservationIgnored private var lastLayoutDescription = ""
@@ -78,6 +91,14 @@ final class GameSession {
 
     private var slotStore: SaveSlotStore {
         SaveSlotStore(directory: AppPaths.stateDirectory(for: game.id))
+    }
+
+    private var isPresentationRunning: Bool {
+#if os(iOS)
+        displayLink != nil
+#else
+        timer != nil
+#endif
     }
 
     init(game: Game, startFresh: Bool = false, sync: SaveSync? = nil) {
@@ -126,15 +147,32 @@ final class GameSession {
             diagnosticsLog = try? DiagnosticsLog(title: game.title)
         }
         installCoreLogHandler()
+        let loop = EmulationLoop(
+            performanceStats: performanceStats,
+            diagnosticsLog: diagnosticsLog,
+            logsFrameTime: Self.logsFrameTime,
+            requestAudioRestart: { [weak self] host in
+                DispatchQueue.main.async { [weak self, weak host] in
+                    guard let self, let host, self.host === host else { return }
+                    host.recoverStalledAudio()
+                }
+            })
+        self.emulationLoop = loop
         let host: SELibretroHost
+        let romURL = game.fileURL
+        let gameID = game.id
         do {
             SELibretroHost.pendingCoreOptionOverrides = n64Preset?.coreOptionOverrides ?? [:]
-            host = try SELibretroHost(
-                coreID: coreID,
-                romURL: game.fileURL,
-                saveRAMURL: AppPaths.saveRAM(for: game.id),
-                systemDirectory: AppPaths.system)
+            host = try await loop.createHost {
+                try SELibretroHost(
+                    coreID: coreID,
+                    romURL: romURL,
+                    saveRAMURL: AppPaths.saveRAM(for: gameID),
+                    systemDirectory: AppPaths.system)
+            }
         } catch {
+            loop.stop()
+            emulationLoop = nil
             SELibretroHost.logHandler = nil
             diagnosticsLog?.appendEvent("start failed")
             diagnosticsLog?.stop()
@@ -144,16 +182,45 @@ final class GameSession {
             startTask = nil
             return
         }
+        guard !Task.isCancelled else { return }
         self.host = host
-        startDiagnostics(host: host, n64Preset: n64Preset)
-        coreSupportsCheats = host.supportsCheats && CheatCodec.supportsCheats(systemID)
+        let hostInfo: (Bool, Int, Int, String, String, String, Double, Double, [String: String])? = loop.perform { host in
+            guard let host else { return nil }
+            return (
+                host.supportsCheats,
+                host.diskCount,
+                host.currentDisk,
+                host.coreID,
+                host.coreVersion,
+                host.coreName,
+                host.sampleRate,
+                host.framesPerSecond,
+                host.coreOptions)
+        }
+        guard let hostInfo else {
+            loop.stop()
+            emulationLoop = nil
+            self.host = nil
+            isSyncing = false
+            startTask = nil
+            return
+        }
+        loop.setFramesPerSecond(hostInfo.7)
+        startDiagnostics(
+            coreName: hostInfo.5,
+            coreVersion: hostInfo.4,
+            sampleRate: hostInfo.6,
+            framesPerSecond: hostInfo.7,
+            coreOptions: hostInfo.8,
+            n64Preset: n64Preset)
+        coreSupportsCheats = hostInfo.0 && CheatCodec.supportsCheats(systemID)
         if coreSupportsCheats { cheats = await CheatLibrary.shared.load(game.id) }
-        diskCount = host.diskCount
-        currentDisk = host.currentDisk
+        diskCount = hostInfo.1
+        currentDisk = hostInfo.2
         #if DEBUG
         if diskCount < 2, let stub = Self.debugDiscCount { diskCount = stub }
         #endif
-        let core = SaveCore(id: host.coreID, version: host.coreVersion)
+        let core = SaveCore(id: hostInfo.3, version: hostInfo.4)
         self.core = core
         let stateFiles = SaveSlotStore.slots.map { SaveSync.manualFile(for: game.id, slot: $0, core: core) }
         let pulled = await pull(startFresh
@@ -167,7 +234,8 @@ final class GameSession {
                 try AutoStateCheckpoint.moveAside(autoState)
             } catch {
                 diagnosticsLog?.appendEvent("stop")
-                host.shutdown()
+                loop.stop()
+                emulationLoop = nil
                 self.host = nil
                 SELibretroHost.logHandler = nil
                 diagnosticsLog?.stop()
@@ -184,7 +252,7 @@ final class GameSession {
             let autoState = AppPaths.autoState(for: game.id)
             if FileManager.default.fileExists(atPath: autoState.path) {
                 do {
-                    try host.loadState(from: autoState)
+                try loop.perform { try $0?.loadState(from: autoState) }
                     diagnosticsLog?.appendEvent("save-state load auto")
                     status = pulled ?? "Resumed where you left off"
                 } catch {
@@ -194,7 +262,10 @@ final class GameSession {
             }
         }
         applyCheats()
-        host.audioEnabled = true
+        loop.perform { $0?.audioEventHandler = { [weak self] event in
+            DispatchQueue.main.async { self?.recordEvent(event) }
+        } }
+        loop.perform { $0?.audioEnabled = true }
         lastAutosave = .now
         hasStarted = true
         resume()
@@ -210,7 +281,7 @@ final class GameSession {
     /// Sends every enabled, valid cheat to the core (clearing the old set first). Called after load, a state load,
     /// a restart and every toggle, so the core always holds exactly the enabled list.
     private func applyCheats() {
-        guard let host, coreSupportsCheats else { return }
+        guard host != nil, coreSupportsCheats else { return }
         var states: [UUID: CheatRunState] = [:]
         var sent: [CheatRecord] = []
         for cheat in cheats {
@@ -223,7 +294,7 @@ final class GameSession {
             normalized.code = code
             sent.append(normalized)
         }
-        let outcomes = host.applyCheats(sent.map(\.code))
+        let outcomes = emulationLoop?.perform { $0?.applyCheats(sent.map(\.code)) } ?? []
         for (cheat, outcome) in zip(sent, outcomes) {
             switch CheatOutcome(rawValue: outcome.intValue) {
             case .applied: states[cheat.id] = .applied
@@ -332,21 +403,38 @@ final class GameSession {
 
     func resume() {
         // Never run frames while saves are still syncing or a conflict is waiting for an answer.
-        guard let host, hasStarted, timer == nil, !isChoosingDisc, !isChoosingCheat, !isShowingSaveSlots, !isMenuOpen, disconnectedController == nil else { return }
+        guard let host, hasStarted, !isPresentationRunning, !isChoosingDisc, !isChoosingCheat, !isShowingSaveSlots, !isMenuOpen, disconnectedController == nil else { return }
         performanceStats.resetBaseline()
-        lastPerformanceSummaryAt = ProcessInfo.processInfo.systemUptime
+        emulationLoop?.setRunning(true)
+        host.startAudioEngineIfNeeded()
         diagnosticsLog?.appendEvent("resume")
-        let timer = Timer(timeInterval: 1.0 / max(host.framesPerSecond, 1), repeats: true) { [weak self] _ in
+#if os(iOS)
+        let proxy = DisplayLinkProxy { [weak self] in self?.tick() }
+        let link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        displayLinkProxy = proxy
+        displayLink = link
+#else
+        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+#endif
     }
 
     func pause() {
-        let wasRunning = timer != nil
+        var wasRunning = timer != nil
         timer?.invalidate()
         timer = nil
+#if os(iOS)
+        wasRunning = displayLink != nil
+        displayLink?.invalidate()
+        displayLink = nil
+        displayLinkProxy = nil
+#endif
+        emulationLoop?.setRunning(false)
         if wasRunning { diagnosticsLog?.appendEvent("pause") }
         #if os(macOS)
         input.releaseAll()
@@ -377,38 +465,16 @@ final class GameSession {
             host.setAnalog(.left, x: output.leftStick.x, y: output.leftStick.y, port: port)
             host.setAnalog(.right, x: output.rightStick.x, y: output.rightStick.y, port: port)
         }
-        let tickTimestamp = ProcessInfo.processInfo.systemUptime
-        let frameStart = ProcessInfo.processInfo.systemUptime
-        host.runFrame()
-        let runDuration = ProcessInfo.processInfo.systemUptime - frameStart
-        let presentStart = ProcessInfo.processInfo.systemUptime
-        if let image = host.copyFrameImage() {
+        if let image = emulationLoop?.takeFrameImage() {
             displayLayer?.contents = image
         }
-        let presentDuration = ProcessInfo.processInfo.systemUptime - presentStart
-        performanceStats.record(
-            runDuration: runDuration,
-            presentDuration: presentDuration,
-            timestamp: tickTimestamp,
-            framesPerSecond: host.framesPerSecond,
-            sampleRate: host.sampleRate,
-            audioUnderrunFrames: host.audioUnderrunFrames,
-            audioOverflowFrames: host.audioOverflowFrames,
-            bufferedAudioFrames: host.audioBufferedFrames)
-        if !hasRecordedRenderPath, host.frameWidth > 0 {
+        let renderInfo: (String, String?)? = emulationLoop?.perform { host in
+               guard let host, host.frameWidth > 0 else { return nil }
+               return (host.renderPath, host.graphicsRenderer)
+           }
+        if !hasRecordedRenderPath, let renderInfo {
             hasRecordedRenderPath = true
-            diagnosticsLog?.appendEvent(
-                "renderPath=\(host.renderPath) graphicsRenderer=\(host.graphicsRenderer ?? "nil")")
-        }
-        if let lastPerformanceSummaryAt, tickTimestamp - lastPerformanceSummaryAt >= 5 {
-            let summary = performanceStats.summary(framesPerSecond: host.framesPerSecond, sampleRate: host.sampleRate)
-            let thermalState = Self.thermalStateName
-            diagnosticsLog?.appendPerformance(summary, thermalState: thermalState)
-            if Self.logsFrameTime {
-                print(summary.performanceLine(thermalState: thermalState))
-                fflush(stdout)
-            }
-            self.lastPerformanceSummaryAt = tickTimestamp
+            diagnosticsLog?.appendEvent("renderPath=\(renderInfo.0) graphicsRenderer=\(renderInfo.1 ?? "nil")")
         }
         if needsFreshCheckpoint {
             needsFreshCheckpoint = false
@@ -422,9 +488,8 @@ final class GameSession {
     private static let logsFrameTime = ProcessInfo.processInfo.environment["SUPERSEMU_LOG_FRAME_TIME"] == "1"
 
     var performanceOverlayText: String {
-        let summary = performanceStats.summary(
-            framesPerSecond: host?.framesPerSecond ?? 60,
-            sampleRate: host?.sampleRate ?? 48_000)
+        let metrics = emulationLoop?.perform { ($0?.framesPerSecond ?? 60, $0?.sampleRate ?? 48_000) } ?? (60, 48_000)
+        let summary = performanceStats.summary(framesPerSecond: metrics.0, sampleRate: metrics.1)
         return String(
             format: "%.0f%% · %.1f ms · gaps %.0f ms",
             locale: Locale(identifier: "en_US_POSIX"),
@@ -456,9 +521,17 @@ final class GameSession {
 
     func appDidBecomeActive() {
         recordEvent("app foreground")
+        host?.startAudioEngineIfNeeded()
     }
 
-    private func startDiagnostics(host: SELibretroHost, n64Preset: N64Preset?) {
+    private func startDiagnostics(
+        coreName: String,
+        coreVersion: String,
+        sampleRate: Double,
+        framesPerSecond: Double,
+        coreOptions: [String: String],
+        n64Preset: N64Preset?
+    ) {
         guard let diagnosticsLog else {
             SELibretroHost.logHandler = nil
             return
@@ -473,12 +546,12 @@ final class GameSession {
             gameTitle: game.title,
             gameID: game.id,
             system: Self.system(for: game),
-            coreName: host.coreName,
-            coreVersion: host.coreVersion,
-            sampleRate: host.sampleRate,
-            framesPerSecond: host.framesPerSecond,
+            coreName: coreName,
+            coreVersion: coreVersion,
+            sampleRate: sampleRate,
+            framesPerSecond: framesPerSecond,
             n64Preset: n64Preset?.rawValue ?? "n/a",
-            coreOptions: host.coreOptions))
+            coreOptions: coreOptions))
         diagnosticsLog.appendEvent("start")
         for event in pendingDiagnosticsEvents {
             diagnosticsLog.appendEvent(event)
@@ -508,23 +581,17 @@ final class GameSession {
         }
     }
 
-    private static var thermalStateName: String {
-        switch ProcessInfo.processInfo.thermalState {
-        case .nominal: "nominal"
-        case .fair: "fair"
-        case .serious: "serious"
-        case .critical: "critical"
-        @unknown default: "unknown"
-        }
-    }
-
     func autosave(preservingStatus: Bool = false) {
         lastAutosave = .now
         // Before the game has started (still syncing) there's nothing new to save, and a fresh state would replace the resume point.
-        guard let host, hasStarted else { return }
-        host.flushSaveRAM()
+        guard host != nil, let loop = emulationLoop, hasStarted else { return }
+        let stateURL = AppPaths.autoState(for: game.id)
         do {
-            try host.saveState(to: AppPaths.autoState(for: game.id))
+            try loop.perform { host in
+                guard let host else { throw CocoaError(.fileNoSuchFile) }
+                host.flushSaveRAM()
+                try host.saveState(to: stateURL)
+            }
             diagnosticsLog?.appendEvent("save-state save auto")
             if !preservingStatus { status = "Auto-saved on this device" }
         } catch {
@@ -563,23 +630,25 @@ final class GameSession {
     }
 
     func restart() {
-        guard let host, hasStarted else { return }
+        guard host != nil, let loop = emulationLoop, hasStarted else { return }
         #if os(macOS)
         input.releaseAll()
         #endif
-        host.reset()
+        loop.perform { $0?.reset() }
         applyCheats()
         status = "Restarted"
     }
 
-    func discLabel(_ index: Int) -> String? { host?.label(forDisk: index) }
+    func discLabel(_ index: Int) -> String? {
+        emulationLoop?.perform { $0?.label(forDisk: index) ?? nil }
+    }
 
     private func clearHostInput() {
-        guard let host else { return }
+        guard emulationLoop != nil else { return }
         for port in 0..<SEInputPortCount {
-            host.setButtons([], port: port)
-            host.setAnalog(.left, x: 0, y: 0, port: port)
-            host.setAnalog(.right, x: 0, y: 0, port: port)
+            host?.setButtons([], port: port)
+            host?.setAnalog(.left, x: 0, y: 0, port: port)
+            host?.setAnalog(.right, x: 0, y: 0, port: port)
         }
     }
 
@@ -700,20 +769,26 @@ final class GameSession {
         }
         switch command {
         case .save(let slot), .overwrite(let slot):
-            guard let host, hasStarted else {
+            guard host != nil, hasStarted else {
                 status = "Save failed: Game is not running"
                 return
             }
             do {
-                let screenshot = host.copyFrameImage().flatMap(SaveSlotStore.pngData(from:))
-                let writeState: (URL) throws -> Void = { try host.saveState(to: $0) }
+                guard let loop = emulationLoop else { throw CocoaError(.fileNoSuchFile) }
+                let screenshot = loop.perform { $0?.copyFrameImage() }.flatMap(SaveSlotStore.pngData(from:))
+                let writeState: (URL) throws -> Void = { url in
+                    try loop.perform { host in
+                        guard let host else { throw CocoaError(.fileNoSuchFile) }
+                        try host.saveState(to: url)
+                    }
+                }
                 if case .save = command {
                     try slotStore.save(into: slot, savedAt: Date(), screenshotPNG: screenshot, writeState: writeState)
                 } else {
                     try slotStore.overwrite(slot, savedAt: Date(), screenshotPNG: screenshot, writeState: writeState)
                 }
                 diagnosticsLog?.appendEvent("save-state save slot=\(slot)")
-                host.flushSaveRAM()
+                loop.perform { $0?.flushSaveRAM() }
                 refreshSaveSlots()
                 let saved = "Saved to Slot \(slot)"
                 status = saved
@@ -727,12 +802,16 @@ final class GameSession {
                 status = "Save failed: \(error.localizedDescription)"
             }
         case .load(let slot):
-            guard let host, hasStarted else {
+            guard host != nil, let loop = emulationLoop, hasStarted else {
                 status = "Load failed: Game is not running"
                 return
             }
             do {
-                try host.loadState(from: slotStore.stateURL(slot))
+                let stateURL = slotStore.stateURL(slot)
+                try loop.perform { host in
+                    guard let host else { throw CocoaError(.fileNoSuchFile) }
+                    try host.loadState(from: stateURL)
+                }
                 applyCheats()
                 diagnosticsLog?.appendEvent("save-state load slot=\(slot)")
                 refreshSaveSlots()
@@ -924,21 +1003,24 @@ final class GameSession {
     }
 
     private func insert(_ disc: Int) {
-        #if DEBUG
-        if host?.diskCount ?? 0 < 2, Self.debugDiscCount != nil {
+#if DEBUG
+        if (emulationLoop?.perform { $0?.diskCount ?? 0 } ?? 0) < 2, Self.debugDiscCount != nil {
             currentDisk = disc
             status = "Inserted disc \(disc + 1)"
             return
         }
         #endif
-        guard let host else { return }
+        guard host != nil, let loop = emulationLoop else { return }
         do {
-            try host.insertDisk(disc)
+            try loop.perform { host in
+                guard let host else { throw CocoaError(.fileNoSuchFile) }
+                try host.insertDisk(disc)
+            }
             status = "Inserted disc \(disc + 1)"
         } catch {
             status = error.localizedDescription
         }
-        currentDisk = host.currentDisk
+        currentDisk = loop.perform { $0?.currentDisk ?? 0 }
     }
 
     #if DEBUG
@@ -970,7 +1052,8 @@ final class GameSession {
         disconnectedController = nil
         controllerObservers.forEach { NotificationCenter.default.removeObserver($0) }
         controllerObservers = []
-        host?.shutdown()
+        emulationLoop?.stop()
+        emulationLoop = nil
         host = nil
         SELibretroHost.logHandler = nil
         diagnosticsLog?.stop()
