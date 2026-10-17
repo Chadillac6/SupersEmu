@@ -30,20 +30,12 @@ public enum CandidateRacer {
         return await withTaskGroup(of: CandidateRaceEvent<Value>.self) { group in
             var startedOthers = false
             var sawCertificateMismatch = false
-            var headStartTimer: Task<Void, Never>?
 
             if let primary {
                 group.addTask { .attempt(primary, await attempt(primary)) }
                 if !candidates.isEmpty {
-                    let timer = Task<Void, Never> {
-                        do {
-                            try await Task.sleep(for: headStart)
-                        } catch {
-                        }
-                    }
-                    headStartTimer = timer
                     group.addTask {
-                        await timer.value
+                        try? await Task.sleep(for: headStart)
                         return .startOthers
                     }
                 }
@@ -71,7 +63,6 @@ public enum CandidateRacer {
                 case .attempt(let url, .failure(.certificateMismatch)):
                     sawCertificateMismatch = true
                     if url == primary, !startedOthers {
-                        headStartTimer?.cancel()
                         startedOthers = true
                         for candidate in candidates {
                             group.addTask { .attempt(candidate, await attempt(candidate)) }
@@ -79,7 +70,6 @@ public enum CandidateRacer {
                     }
                 case .attempt(let url, .failure(.unreachable)):
                     if url == primary, !startedOthers {
-                        headStartTimer?.cancel()
                         startedOthers = true
                         for candidate in candidates {
                             group.addTask { .attempt(candidate, await attempt(candidate)) }

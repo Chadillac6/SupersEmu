@@ -392,11 +392,11 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
                 process.standardError = stderrPipe?.fileHandleForWriting ?? FileHandle.nullDevice
                 do {
                     try process.run()
-                    process.waitUntilExit()
                     stderrPipe?.fileHandleForWriting.closeFile()
                     let errorText = stderrPipe.flatMap {
                         String(data: $0.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
                     } ?? ""
+                    process.waitUntilExit()
                     continuation.resume(returning: ProcessResult(status: Int(process.terminationStatus), stdout: "", stderr: errorText))
                 } catch {
                     continuation.resume(returning: ProcessResult(status: -1, stdout: "", stderr: error.localizedDescription))

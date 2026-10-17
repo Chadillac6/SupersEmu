@@ -32,6 +32,32 @@ final class CandidateRacerTests: XCTestCase {
         XCTAssertEqual(result.successValue, primary.absoluteString)
     }
 
+    func testFastPrimarySuccessCancelsHeadStart() async {
+        let primary = Self.primary
+        let other = Self.other
+        let clock = ContinuousClock()
+        let start = clock.now
+        let result = await CandidateRacer.race(primary: primary, others: [other], headStart: .seconds(2)) { url -> CandidateAttempt<String> in
+            try? await Task.sleep(for: .milliseconds(10))
+            return url == primary ? .success(url.absoluteString) : .failure(.unreachable)
+        }
+        XCTAssertEqual(result.successURL, primary)
+        XCTAssertLessThan(start.duration(to: clock.now), .milliseconds(500))
+    }
+
+    func testPrimarySignedOutCancelsHeadStart() async {
+        let primary = Self.primary
+        let other = Self.other
+        let clock = ContinuousClock()
+        let start = clock.now
+        let result = await CandidateRacer.race(primary: primary, others: [other], headStart: .seconds(2)) { url -> CandidateAttempt<String> in
+            try? await Task.sleep(for: .milliseconds(10))
+            return url == primary ? .failure(.signedOut) : .failure(.unreachable)
+        }
+        XCTAssertEqual(result.failure, .signedOut)
+        XCTAssertLessThan(start.duration(to: clock.now), .milliseconds(500))
+    }
+
     func testFastOtherWinsAfterHeadStart() async {
         let primary = Self.primary
         let other = Self.other
