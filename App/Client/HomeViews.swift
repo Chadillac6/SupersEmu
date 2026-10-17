@@ -60,7 +60,7 @@ struct SystemSelectorBar: View {
     }
 }
 
-/// The featured game: wide art, logo or title, and Resume.
+/// The featured game: cover art, logo or title, and its primary action.
 struct HomeHero: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -72,7 +72,7 @@ struct HomeHero: View {
     let details: () -> Void
 
     var body: some View {
-        WideArt(item: item)
+        WideArt(item: item, preferCover: true)
             // Scaled artwork can extend beyond its clipped frame and intercept selector clicks.
             .allowsHitTesting(false)
             .frame(height: height)
@@ -83,38 +83,39 @@ struct HomeHero: View {
                     .allowsHitTesting(false)
             }
             .overlay(alignment: .bottomLeading) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(item.lastPlayed != nil ? "CONTINUE PLAYING" : "IN YOUR LIBRARY")
-                        .font(.caption.bold()).tracking(1.5).foregroundStyle(theme.accent)
-                    let title = Text(item.title).font(.system(size: compact ? 26 : 32, weight: .heavy)).lineLimit(2)
-                    if let logo = item.logoPath {
-                        RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit) { title }
-                            .frame(maxWidth: 320, maxHeight: compact ? 64 : 90, alignment: .leading)
-                            .accessibilityLabel(item.title)
-                    } else {
-                        title
-                    }
-                    Text(subtitle).font(.callout).foregroundStyle(.white.opacity(0.8))
-                    HStack(spacing: 10) {
+                GeometryReader { geometry in
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(item.lastPlayed != nil ? "CONTINUE PLAYING" : "IN YOUR LIBRARY")
+                            .font(.caption.bold()).tracking(1.5).foregroundStyle(theme.accent)
+                        let title = Text(item.title).font(.system(size: compact ? 26 : 32, weight: .heavy)).lineLimit(2)
+                        if let logo = item.logoPath {
+                            RemoteArtwork(gameID: item.id, path: logo, contentMode: .fit) { title }
+                                .frame(maxWidth: 320, maxHeight: compact ? 64 : 90, alignment: .leading)
+                                .accessibilityLabel(item.title)
+                        } else {
+                            title
+                        }
+                        Text(subtitle).font(.callout).foregroundStyle(.white.opacity(0.8))
                         Button(action: primary) { Label(primaryTitle, systemImage: "play.fill").padding(.horizontal, 6) }
                             .buttonStyle(.borderedProminent)
                             .controlSize(compact ? .regular : .large)
                             .accessibilityIdentifier("hero-primary")
-                        Button(action: details) { Label("Details", systemImage: "info.circle") }
-                            .buttonStyle(.bordered)
-                            .controlSize(compact ? .regular : .large)
-                            .accessibilityIdentifier("hero-details")
                     }
+                    .foregroundStyle(.white)
+                    .padding(compact ? 16 : 24)
+                    .frame(maxWidth: compact ? geometry.size.width * 0.6 : 480, maxHeight: .infinity, alignment: .bottomLeading)
                 }
-                .foregroundStyle(.white)
-                .padding(compact ? 16 : 24)
             }
             .clipShape(RoundedRectangle(cornerRadius: 22))
             .contentShape(RoundedRectangle(cornerRadius: 22))
+            .onTapGesture { details() }
             .padding(.leading, 20)
             .padding(.trailing, JumpRail.inset)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("home-hero")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Opens game details")
+            .accessibilityAction { details() }
     }
 
     private var height: CGFloat {
@@ -151,7 +152,7 @@ struct CurrentlyPlayingRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Currently Playing").font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier("shelf-continue")
+            Text("Now Playing").font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier("shelf-continue")
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 16) {
                     ForEach(items) { item in
@@ -197,19 +198,21 @@ struct CurrentlyPlayingRow: View {
     }
 }
 
-/// "All Games A-Z": one continuous cover grid with letter anchors for the jump rail.
-struct AlphabetGrid: View {
+/// A sorted cover grid with letter anchors for the jump rail.
+struct GameGridSection: View {
     @Environment(DownloadCenter.self) private var downloads
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
+    let title: String
+    let identifier: String
     let games: [LibraryItem]
     let letterAnchors: [String: String]
     let select: (LibraryItem) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("All Games A–Z").font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier("shelf-all")
+            Text(title).font(.title3.bold()).padding(.horizontal, 20).accessibilityIdentifier(identifier)
             LazyVGrid(columns: GameGridLayout.columns(compact: compact),
                       spacing: GameGridLayout.rowSpacing(compact: compact)) {
                 ForEach(games) { item in
@@ -245,10 +248,16 @@ struct AlphabetGrid: View {
     }
 }
 
-/// A-Z down the right edge. Click a letter on the Mac; on iOS drag along it to scrub, with a bubble showing the letter.
+/// A-Z down the right edge on Mac; drag along it to scrub, with a bubble showing the letter.
 struct JumpRail: View {
     /// Trailing space Home sections leave for the rail.
-    static let inset: CGFloat = 40
+    static var inset: CGFloat {
+        #if os(macOS)
+        40
+        #else
+        20
+        #endif
+    }
     let available: Set<String>
     /// Scrubbing jumps without animation: queued animated scrolls can stop short of the final letter.
     let jump: (_ letter: String, _ animated: Bool) -> Void

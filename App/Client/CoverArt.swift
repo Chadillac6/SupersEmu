@@ -60,6 +60,7 @@ struct CoverArt: View {
 struct WideArt: View {
     @Environment(ServerSession.self) private var server
     let item: LibraryItem
+    var preferCover = false
     @State private var hero: Image?
     @State private var cover: Image?
 
@@ -79,8 +80,12 @@ struct WideArt: View {
             .clipped()
             // Clipping the pixels alone does not clip SwiftUI mouse hit testing.
             .contentShape(Rectangle())
-            .task(id: ArtworkCache.taskID(item.heroPath ?? item.coverPath, server)) {
-                await ArtworkCache.load(item.heroPath, key: ArtworkCache.key(item.id, item.heroPath), server: server) { hero = $0 }
+            .task(id: ArtworkCache.taskID(preferCover ? item.coverPath : item.heroPath ?? item.coverPath, server)) {
+                hero = nil
+                cover = nil
+                if !preferCover {
+                    await ArtworkCache.load(item.heroPath, key: ArtworkCache.key(item.id, item.heroPath), server: server) { hero = $0 }
+                }
                 if hero == nil { await ArtworkCache.load(item.coverPath, key: item.id, server: server) { cover = $0 } }
             }
     }
