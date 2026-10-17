@@ -871,6 +871,9 @@ targets:
     sources:
       - Tests/HostTests
       - App/ServerMode/ServerMenuStatus.swift
+      - App/Diagnostics/PerformanceStats.swift
+      - App/Diagnostics/DiagnosticsLog.swift
+      - App/Diagnostics/N64Preset.swift
       - Host/SELibretroHost.h
       - Host/SELibretroHost.mm
     dependencies:
@@ -907,6 +910,7 @@ targets:
       - App/Input/HIDReport.swift
       - App/Input/HIDPresets.swift
       - App/Input/PlayerChrome.swift
+      - App/Input/TouchControlSizing.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

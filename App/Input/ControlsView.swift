@@ -9,6 +9,7 @@ struct ControlsView: View {
     var fixedSystem: String?
     var gameID: String?
     var gameTitle: String?
+    var game: Game?
 
     @State private var store = InputMappingStore.shared
     @State private var hub = ControllerHub.shared
@@ -88,6 +89,16 @@ struct ControlsView: View {
                 }
                 .accessibilityIdentifier("controls-reset")
             }
+            #if os(iOS)
+            Section("Diagnostics") {
+                NavigationLink {
+                    DiagnosticsView(game: game)
+                } label: {
+                    Label("Diagnostics", systemImage: "waveform.path.ecg")
+                }
+                .accessibilityIdentifier("controls-diagnostics")
+            }
+            #endif
         }
         .formStyle(.grouped)
         .navigationTitle("Controls")

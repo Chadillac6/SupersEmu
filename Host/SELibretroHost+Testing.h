@@ -3,6 +3,16 @@
 #include "libretro.h"
 #include "SECoreAPI.h"
 
+#ifdef __OBJC__
+#import "SELibretroHost.h"
+
+@interface SELibretroHost (Testing)
+- (void)_testResetAudioRing:(NSInteger)capacity;
+- (void)_testPushSilentAudioFrames:(NSInteger)frames;
+- (void)_testPopAudioFrames:(NSInteger)frames;
+@end
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

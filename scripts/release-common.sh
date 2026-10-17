@@ -193,3 +193,193 @@ release_prepare_key() {
 release_build_number() {
   if [ -n "${SUPERSEMU_BUILD_NUMBER:-}" ]; then echo "$SUPERSEMU_BUILD_NUMBER"; else date -u +%Y%m%d.%H%M%S; fi
 }
+
+release_next_marketing_version() {
+  local floor="${1:-}"
+  python3 -c '
+import re
+import sys
+
+def parse(version):
+    match = re.fullmatch(r"([0-9]+)\.([0-9]+)(?:\.([0-9]+))?", version.strip())
+    if not match:
+        raise ValueError(f"invalid numeric marketing version: {version!r}")
+    return int(match.group(1)), int(match.group(2)), int(match.group(3) or 0)
+
+try:
+    floor = parse(sys.argv[1])
+    versions = [parse(line) for line in sys.stdin if line.strip()]
+    if versions:
+        latest = max(versions)
+        bumped = latest[0], latest[1], latest[2] + 1
+        result = max(bumped, floor)
+    else:
+        result = floor
+except (IndexError, ValueError) as error:
+    print(f"error: {error}", file=sys.stderr)
+    sys.exit(2)
+
+print(".".join(str(part) for part in result))
+' "$floor"
+}
+
+release_marketing_version() {
+  if [ "${SUPERSEMU_MARKETING_VERSION+x}" = x ]; then
+    if [ -z "$SUPERSEMU_MARKETING_VERSION" ]; then
+      echo "error: SUPERSEMU_MARKETING_VERSION is set but empty" >&2
+      return 2
+    fi
+    echo "Using SUPERSEMU_MARKETING_VERSION override: $SUPERSEMU_MARKETING_VERSION" >&2
+    printf '%s\n' "$SUPERSEMU_MARKETING_VERSION"
+    return 0
+  fi
+
+  if [ -z "${ASC_KEY_FILE:-}" ] || [ -z "${ASC_KEY_ID:-}" ] ||
+     [ -z "${ASC_ISSUER_ID:-}" ] || [ -z "${RELEASE_TMP:-}" ]; then
+    echo "error: release_prepare_key must run before release_marketing_version" >&2
+    return 2
+  fi
+
+  local script_dir project_file floor auth_header versions_file marketing_version
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  project_file="$script_dir/../project.yml"
+  floor="$(awk '
+    /^settings:[[:space:]]*$/ { in_settings=1; next }
+    in_settings && /^[^[:space:]]/ { in_settings=0; in_base=0 }
+    in_settings && /^  base:[[:space:]]*$/ { in_base=1; next }
+    in_base && /^    MARKETING_VERSION:[[:space:]]*/ {
+      value=$2
+      gsub(/"/, "", value)
+      print value
+      exit
+    }
+  ' "$project_file")"
+  if [ -z "$floor" ]; then
+    echo "error: could not read settings.base.MARKETING_VERSION from $project_file" >&2
+    return 2
+  fi
+
+  auth_header="$RELEASE_TMP/asc-marketing-auth-header"
+  if ! python3 - "$ASC_KEY_FILE" "$auth_header" <<'PY'
+import base64
+import json
+import os
+import subprocess
+import sys
+import time
+
+key_path, header_path = sys.argv[1:]
+def b64url(value):
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+def read_len(value, index):
+    length = value[index]
+    if length < 0x80:
+        return length, index + 1
+    count = length & 0x7f
+    return int.from_bytes(value[index + 1:index + 1 + count], "big"), index + 1 + count
+
+header = {"alg": "ES256", "kid": os.environ["ASC_KEY_ID"], "typ": "JWT"}
+payload = {
+    "iss": os.environ["ASC_ISSUER_ID"],
+    "iat": int(time.time()),
+    "exp": int(time.time()) + 1200,
+    "aud": "appstoreconnect-v1",
+}
+unsigned = b64url(json.dumps(header, separators=(",", ":")).encode()) + "." + b64url(
+    json.dumps(payload, separators=(",", ":")).encode()
+)
+signature = subprocess.check_output(
+    ["openssl", "dgst", "-sha256", "-sign", key_path], input=unsigned.encode()
+)
+if signature[0] != 0x30:
+    raise ValueError("unexpected App Store Connect signature format")
+_, offset = read_len(signature, 1)
+if signature[offset] != 0x02:
+    raise ValueError("unexpected App Store Connect signature format")
+r_length, offset = read_len(signature, offset + 1)
+r = signature[offset:offset + r_length]
+offset += r_length
+if signature[offset] != 0x02:
+    raise ValueError("unexpected App Store Connect signature format")
+s_length, offset = read_len(signature, offset + 1)
+s = signature[offset:offset + s_length]
+token = unsigned + "." + b64url(r[-32:].rjust(32, b"\0") + s[-32:].rjust(32, b"\0"))
+fd = os.open(header_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as output:
+    output.write("Authorization: Bearer " + token + "\n")
+PY
+  then
+    echo "error: could not create App Store Connect authorization for marketing version lookup" >&2
+    return 1
+  fi
+
+  versions_file="$RELEASE_TMP/ios-prerelease-versions.txt"
+  if ! python3 - "$auth_header" "$versions_file" <<'PY'
+import json
+import subprocess
+import sys
+from urllib.parse import urljoin, urlsplit
+
+auth_header, versions_path = sys.argv[1:]
+base = "https://api.appstoreconnect.apple.com/v1"
+
+def get_json(url):
+    response = subprocess.run(
+        ["curl", "--silent", "--show-error", "--fail", "-H", f"@{auth_header}", url],
+        capture_output=True,
+        text=True,
+    )
+    if response.returncode:
+        detail = response.stderr.strip() or f"curl exited {response.returncode}"
+        raise RuntimeError(detail)
+    return json.loads(response.stdout)
+
+try:
+    apps = get_json(
+        base + "/apps?filter%5BbundleId%5D=com.chadillac6.supersemu&limit=200"
+    ).get("data", [])
+    if len(apps) != 1:
+        raise RuntimeError(f"expected one app for com.chadillac6.supersemu, found {len(apps)}")
+    app_id = apps[0]["id"]
+    next_url = (
+        base + "/preReleaseVersions?filter%5Bapp%5D=" + app_id
+        + "&filter%5Bplatform%5D=IOS&limit=200"
+    )
+    versions = []
+    seen = set()
+    while next_url:
+        if next_url in seen:
+            raise RuntimeError("App Store Connect returned a repeated pagination URL")
+        seen.add(next_url)
+        page = get_json(next_url)
+        versions.extend(
+            item["attributes"]["version"]
+            for item in page.get("data", [])
+            if item.get("attributes", {}).get("version")
+        )
+        next_link = page.get("links", {}).get("next")
+        if not next_link:
+            next_url = None
+        else:
+            next_url = urljoin(next_url, next_link)
+            parsed = urlsplit(next_url)
+            if parsed.scheme != "https" or parsed.netloc != "api.appstoreconnect.apple.com":
+                raise RuntimeError("App Store Connect returned an unexpected pagination host")
+    with open(versions_path, "w", encoding="utf-8") as output:
+        output.write("".join(version + "\n" for version in versions))
+except Exception as error:
+    print(f"error: App Store Connect marketing version lookup failed: {error}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    echo "error: could not retrieve iOS pre-release versions from App Store Connect" >&2
+    return 1
+  fi
+
+  if ! marketing_version="$(release_next_marketing_version "$floor" < "$versions_file")"; then
+    echo "error: could not calculate the next iOS marketing version" >&2
+    return 1
+  fi
+  echo "Using project.yml marketing version floor $floor; selected $marketing_version" >&2
+  printf '%s\n' "$marketing_version"
+}

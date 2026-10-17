@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
+#include <stdint.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -81,6 +82,20 @@ typedef NS_ENUM(NSInteger, SECheatOutcome) {
 @property (nonatomic, readonly) double sampleRate;
 @property (nonatomic, readonly) NSInteger frameWidth;
 @property (nonatomic, readonly) NSInteger frameHeight;
+/// Cumulative since the game loaded; frames = stereo sample pairs.
+@property (nonatomic, readonly) uint64_t audioUnderrunFrames;  // output pulled frames the ring didn't have (zero-filled)
+@property (nonatomic, readonly) uint64_t audioOverflowFrames;  // oldest frames dropped because the ring was full
+@property (nonatomic, readonly) NSInteger audioBufferedFrames;
+/// "software", "gl-iosurface", "gl-readback" (IOSurface failed; glReadPixels each frame) or "gl-pending" before the first HW frame.
+@property (nonatomic, readonly, copy) NSString *renderPath;
+/// GL_RENDERER + GL_VERSION captured when the hardware context is created; nil for software cores.
+@property (nonatomic, readonly, copy, nullable) NSString *graphicsRenderer;
+/// Effective value of every option the core declared.
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, NSString *> *coreOptions;
+/// Overrides used by hosts created after this is set; keys the core does not declare are ignored.
+@property (class, nonatomic, copy) NSDictionary<NSString *, NSString *> *pendingCoreOptionOverrides;
+/// Every libretro log line (level = retro_log_level, 0 debug ... 3 error), called on the core thread.
+@property (class, nonatomic, copy, nullable) void (^logHandler)(NSInteger level, NSString *message);
 
 /// Player 1 joypad state, read by the core during the next frame.
 @property (atomic) SEJoypadButtons buttons;

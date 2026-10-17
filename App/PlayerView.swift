@@ -1,3 +1,4 @@
+import Foundation
 import SupersEmuKit
 import SwiftUI
 
@@ -7,8 +8,12 @@ struct PlayerView: View {
     @Environment(\.scenePhase) private var scenePhase
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @AppStorage(PlayerChrome.hideTouchControlsKey) private var hideTouchControls = true
+    @AppStorage("diagnostics.showPerformanceOverlay") private var showPerformanceOverlay = false
     @State private var hub = ControllerHub.shared
+    @State private var performanceOverlayText = ""
+    @State private var playerWidth: CGFloat = 0
     #endif
     @State private var topBarAutoHide = TopBarAutoHide()
 
@@ -31,12 +36,26 @@ struct PlayerView: View {
                     .accessibilityIdentifier("emulator-screen")
                     #if os(iOS)
                     .ignoresSafeArea(edges: chrome.isFullScreen ? .all : [])
+                    .overlay(alignment: .topLeading) {
+                        if showPerformanceOverlay {
+                            Text(performanceOverlayText)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .background(.black.opacity(0.58), in: Capsule())
+                                .accessibilityIdentifier("performance-overlay")
+                                .padding(.top, 8)
+                                .padding(.leading, 8)
+                                .allowsHitTesting(false)
+                        }
+                    }
                     .contentShape(Rectangle())
                     .onTapGesture { if chrome.isFullScreen { topBarAutoHide.toggle() } }
                     #endif
                 #if os(iOS)
                 if chrome.showsTouchControls {
-                    TouchControls(input: session.input)
+                    TouchControls(input: session.input, availableWidth: playerWidth > 0 ? playerWidth : 375)
                         .containerRelativeFrame(.horizontal)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -83,7 +102,27 @@ struct PlayerView: View {
             }
         }
         .foregroundStyle(.white)
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear {
+                        session.recordLayout(width: geometry.size.width, height: geometry.size.height)
+                    }
+                    .onChange(of: geometry.size) { _, size in
+                        session.recordLayout(width: size.width, height: size.height)
+                    }
+            }
+        }
         #if os(iOS)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            playerWidth = width
+            let requiredWidth = TouchControlSizing.requiredPortraitWidth(system: session.input.layout.system)
+            let isCompactPortrait = horizontalSizeClass == .compact && verticalSizeClass != .compact
+            let scale = isCompactPortrait
+                ? TouchControlSizing.portraitScale(availableWidth: width, requiredWidth: requiredWidth)
+                : 1
+            session.recordEvent("touch-controls width=\(Int(width)) scale=\(String(format: "%.2f", scale))")
+        }
         .defersSystemGestures(on: .all)
         .persistentSystemOverlays(.hidden)
         .statusBarHidden(chrome.isFullScreen)
@@ -91,18 +130,43 @@ struct PlayerView: View {
         .animation(.easeInOut(duration: 0.25), value: chrome)
         .animation(.easeInOut(duration: 0.25), value: topBarAutoHide.isRevealed)
         .onChange(of: chrome.isFullScreen) { _, fullScreen in
+            session.recordEvent("PlayerChrome full-screen \(fullScreen ? "on" : "off")")
             if fullScreen {
                 topBarAutoHide.reveal()
             } else {
                 topBarAutoHide.hide()
             }
         }
+        #if os(iOS)
+        .onChange(of: hub.controllers.count) { oldCount, newCount in
+            let event = newCount > oldCount ? "controller connected" : "controller disconnected"
+            session.recordEvent("\(event) count=\(newCount)")
+        }
+        .task(id: showPerformanceOverlay) {
+            guard showPerformanceOverlay else {
+                performanceOverlayText = ""
+                return
+            }
+            while !Task.isCancelled {
+                performanceOverlayText = session.performanceOverlayText
+                do {
+                    try await Task.sleep(for: .milliseconds(500))
+                } catch {
+                    break
+                }
+            }
+        }
+        #endif
         .onChange(of: chrome.showsTouchControls) { _, shows in
             if !shows { session.input.touchState = PadState() }
         }
         .sheet(isPresented: $session.isShowingControls) {
             NavigationStack {
-                ControlsView(fixedSystem: session.input.layout.system, gameID: session.game.id, gameTitle: session.game.title)
+                ControlsView(
+                    fixedSystem: session.input.layout.system,
+                    gameID: session.game.id,
+                    gameTitle: session.game.title,
+                    game: session.game)
             }
             .preferredColorScheme(.dark)
         }
@@ -114,6 +178,7 @@ struct PlayerView: View {
         }
         .onAppear {
             session.start()
+            session.recordEvent("PlayerChrome full-screen \(chrome.isFullScreen ? "on" : "off")")
             if chrome.isFullScreen { topBarAutoHide.reveal() }
         }
         .onDisappear { session.stop() }
@@ -122,7 +187,9 @@ struct PlayerView: View {
             case .background:
                 session.autosave()
                 session.pause()
+                session.appDidEnterBackground()
             case .active:
+                session.appDidBecomeActive()
                 session.resume()
             default:
                 break

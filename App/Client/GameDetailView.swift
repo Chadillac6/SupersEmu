@@ -6,6 +6,9 @@ struct GameDetailView: View {
     @Environment(DownloadCenter.self) private var downloads
     @Environment(BIOSCenter.self) private var bios
     @Environment(\.dismiss) private var dismiss
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
     let item: LibraryItem
     let onPlay: (Game) -> Void
     let onStartFresh: (Game) -> Void
@@ -208,49 +211,95 @@ struct GameDetailView: View {
         return count == 0 ? "Cheats" : "Cheats (\(count))"
     }
 
+    /// iPhone: Play spans the width with the other actions sharing a row below, however many there are.
+    private var stacksActions: Bool {
+        #if os(iOS)
+        horizontalSizeClass == .compact
+        #else
+        false
+        #endif
+    }
+
+    private func stackedActions(_ game: Game) -> some View {
+        VStack(spacing: 10) {
+            playButton(game, fill: true)
+            HStack(spacing: 10) { secondaryActions(game, fill: true) }
+        }
+    }
+
+    private var playIsDisabled: Bool {
+        bios.isMissing(item.system) || bios.isSyncing && item.system?.requiresBIOS == true
+    }
+
+    private func playButton(_ game: Game, fill: Bool) -> some View {
+        Button {
+            dismiss()
+            onPlay(game)
+        } label: {
+            Label(game.hasResumePoint ? "Resume" : "Play", systemImage: "play.fill")
+                .lineLimit(1)
+                .frame(minWidth: fill ? nil : 140, maxWidth: fill ? .infinity : nil)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(playIsDisabled)
+        .accessibilityIdentifier("detail-play")
+    }
+
+    @ViewBuilder private func secondaryActions(_ game: Game, fill: Bool) -> some View {
+        if game.hasResumePoint {
+            Button {
+                isConfirmingStartOver = true
+            } label: {
+                Label("Start Over", systemImage: "arrow.counterclockwise")
+                    .lineLimit(1)
+                    .frame(minWidth: fill ? nil : 140, maxWidth: fill ? .infinity : nil)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(playIsDisabled)
+            .accessibilityIdentifier("detail-start-over")
+        }
+
+        if let system = item.system, CheatCodec.supportsCheats(system) {
+            Button {
+                isShowingCheats = true
+            } label: {
+                Label(cheatsTitle, systemImage: "wand.and.stars")
+                    .lineLimit(1)
+                    .frame(minWidth: fill ? nil : 110, maxWidth: fill ? .infinity : nil)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .keyboardShortcut("c", modifiers: [.command, .shift])
+            .help("Cheats (Shift-Command-C)")
+            .accessibilityIdentifier("detail-cheats")
+        }
+    }
+
     @ViewBuilder private var actions: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let game = playableGame {
-                HStack(spacing: 10) {
-                    Button {
-                        dismiss()
-                        onPlay(game)
-                    } label: {
-                        Label(game.hasResumePoint ? "Resume" : "Play", systemImage: "play.fill").frame(minWidth: 140)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(bios.isMissing(item.system) || bios.isSyncing && item.system?.requiresBIOS == true)
-                    .accessibilityIdentifier("detail-play")
-
-                    if game.hasResumePoint {
-                        Button {
-                            isConfirmingStartOver = true
-                        } label: {
-                            Label("Start Over", systemImage: "arrow.counterclockwise").frame(minWidth: 140)
+                Group {
+                    if stacksActions {
+                        stackedActions(game)
+                    } else {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 10) {
+                                playButton(game, fill: false)
+                                secondaryActions(game, fill: false)
+                            }
+                            stackedActions(game)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
-                        .disabled(bios.isMissing(item.system) || bios.isSyncing && item.system?.requiresBIOS == true)
-                        .accessibilityIdentifier("detail-start-over")
                     }
-
-                    if let system = item.system, CheatCodec.supportsCheats(system) {
-                        Button {
-                            isShowingCheats = true
-                        } label: {
-                            Label(cheatsTitle, systemImage: "wand.and.stars").frame(minWidth: 110)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
-                        .keyboardShortcut("c", modifiers: [.command, .shift])
-                        .help("Cheats (Shift-Command-C)")
-                        .accessibilityIdentifier("detail-cheats")
-                        .sheet(isPresented: $isShowingCheats) {
-                            CheatsView(gameID: item.id, title: item.title, system: system)
-                        }
-                        .task { await CheatLibrary.shared.load(item.id) }
+                }
+                .sheet(isPresented: $isShowingCheats) {
+                    if let system = item.system {
+                        CheatsView(gameID: item.id, title: item.title, system: system)
                     }
+                }
+                .task {
+                    if let system = item.system, CheatCodec.supportsCheats(system) { await CheatLibrary.shared.load(item.id) }
                 }
                 .confirmationDialog("Start over from the beginning?", isPresented: $isConfirmingStartOver, titleVisibility: .visible) {
                     Button("Start Over", role: .destructive) {

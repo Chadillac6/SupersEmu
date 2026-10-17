@@ -86,7 +86,7 @@ If a variable is missing, both scripts stop before building and print the missin
 4. Notarize the app with `xcrun notarytool submit --key/--key-id/--issuer --wait`, using the same API key, and staple it.
 5. Build a `.dmg`, sign it, notarize it, staple it, and check it with `spctl`.
 
-Bump the user-visible version by changing `MARKETING_VERSION` in `project.yml`.
+For iOS TestFlight uploads, the release script automatically selects the next patch version above the latest iOS TestFlight version. `MARKETING_VERSION` in `project.yml` is the minimum version floor; set `SUPERSEMU_MARKETING_VERSION` to override the automatic selection. The Mac release continues to use `MARKETING_VERSION` from `project.yml`.
 
 ## Why the Mac app isn't on TestFlight or the Mac App Store
 

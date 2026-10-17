@@ -1,11 +1,13 @@
 #import <XCTest/XCTest.h>
 #import "SELibretroHost.h"
+#import "SELibretroHost+Testing.h"
 
 @interface SELibretroHostTests : XCTestCase
 @end
 
 @implementation SELibretroHostTests {
     NSURL *_romURL;
+    NSURL *_n64ROMURL;
     NSURL *_tempDirectory;
 }
 
@@ -17,12 +19,17 @@
                     stringByAppendingPathComponent:@"Fixtures/local"];
     }
     _romURL = [NSURL fileURLWithPath:[fixtures stringByAppendingPathComponent:@"HelloWorld.sfc"]];
+    _n64ROMURL = [NSURL fileURLWithPath:[fixtures stringByAppendingPathComponent:@"cube-fill-triangle.z64"]];
     _tempDirectory = [NSFileManager.defaultManager.temporaryDirectory
                       URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
+    SELibretroHost.pendingCoreOptionOverrides = @{};
+    SELibretroHost.logHandler = nil;
 }
 
 - (void)tearDown {
     [SELibretroHost.activeHost shutdown];
+    SELibretroHost.pendingCoreOptionOverrides = @{};
+    SELibretroHost.logHandler = nil;
     [NSFileManager.defaultManager removeItemAtURL:_tempDirectory error:nil];
 }
 
@@ -36,8 +43,23 @@
     return host;
 }
 
+- (SELibretroHost *)makeHostWithCoreID:(NSString *)coreID romURL:(NSURL *)romURL {
+    NSError *error = nil;
+    SELibretroHost *host = [[SELibretroHost alloc] initWithCoreID:coreID
+                                                          romURL:romURL
+                                                      saveRAMURL:[_tempDirectory URLByAppendingPathComponent:@"Saves/test.srm"]
+                                                 systemDirectory:[_tempDirectory URLByAppendingPathComponent:@"System"]
+                                                           error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    return host;
+}
+
 - (BOOL)fixtureMissing {
     return ![NSFileManager.defaultManager fileExistsAtPath:_romURL.path];
+}
+
+- (BOOL)n64FixtureMissing {
+    return ![NSFileManager.defaultManager fileExistsAtPath:_n64ROMURL.path];
 }
 
 - (void)testLoadsSnes9xAndReportsTiming {
@@ -127,6 +149,63 @@
     XCTAssertNil(second);
     XCTAssertNotNil(error);
     XCTAssertEqual(SELibretroHost.activeHost, host);
+}
+
+- (void)testN64OverridesAreAppliedAndUnknownOptionsAreIgnored {
+    if ([self n64FixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    SELibretroHost.pendingCoreOptionOverrides = @{
+        @"mupen64plus-43screensize": @"320x240",
+        @"bogus-key": @"x",
+    };
+    SELibretroHost *host = [self makeHostWithCoreID:SECoreIDMupen64PlusNext romURL:_n64ROMURL];
+    [host runFrames:3];
+    XCTAssertEqualObjects(host.coreOptions[@"mupen64plus-43screensize"], @"320x240");
+    XCTAssertNil(host.coreOptions[@"bogus-key"]);
+    XCTAssertEqualObjects(host.coreOptions[@"mupen64plus-cpucore"], @"cached_interpreter");
+    XCTAssertEqual(host.frameWidth, 320);
+
+    [host shutdown];
+    SELibretroHost.pendingCoreOptionOverrides = @{};
+    host = [self makeHostWithCoreID:SECoreIDMupen64PlusNext romURL:_n64ROMURL];
+    [host runFrames:3];
+    XCTAssertEqual(host.frameWidth, 640);
+}
+
+- (void)testRenderPathReportsSoftwareAndIOSurfaceForN64 {
+    if ([self fixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    SELibretroHost *snes = [self makeHost];
+    XCTAssertEqualObjects(snes.renderPath, @"software");
+    [snes shutdown];
+
+    if ([self n64FixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    SELibretroHost *n64 = [self makeHostWithCoreID:SECoreIDMupen64PlusNext romURL:_n64ROMURL];
+    [n64 runFrames:3];
+    XCTAssertEqualObjects(n64.renderPath, @"gl-iosurface");
+}
+
+- (void)testAudioRingTestingHooksTrackOverflowUnderrunAndBuffering {
+    SELibretroHost *host = [self makeHost];
+    [host _testResetAudioRing:100];
+    [host _testPushSilentAudioFrames:150];
+    XCTAssertEqual(host.audioOverflowFrames, 50u);
+    XCTAssertEqual(host.audioBufferedFrames, 100);
+    [host _testPopAudioFrames:120];
+    XCTAssertEqual(host.audioUnderrunFrames, 20u);
+    XCTAssertEqual(host.audioBufferedFrames, 0);
+    [host _testResetAudioRing:100];
+    XCTAssertEqual(host.audioOverflowFrames, 0u);
+    XCTAssertEqual(host.audioUnderrunFrames, 0u);
+}
+
+- (void)testLogHandlerReceivesN64CoreMessagesDuringLoad {
+    if ([self n64FixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    NSMutableArray<NSString *> *messages = [NSMutableArray array];
+    SELibretroHost.logHandler = ^(NSInteger level, NSString *message) {
+        [messages addObject:message];
+    };
+    SELibretroHost *host = [self makeHostWithCoreID:SECoreIDMupen64PlusNext romURL:_n64ROMURL];
+    [host runFrames:3];
+    XCTAssertGreaterThan(messages.count, 0u);
 }
 
 @end
