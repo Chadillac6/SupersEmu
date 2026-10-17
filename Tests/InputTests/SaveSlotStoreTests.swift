@@ -159,6 +159,30 @@ final class SaveSlotStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("slot3.png").path))
     }
 
+    func testLatestScreenshotURLChoosesNewestValidScreenshot() throws {
+        let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
+        try store.save(into: 1, savedAt: baseDate, screenshotPNG: try makePNG()) {
+            try Data("old".utf8).write(to: $0)
+        }
+        try store.save(into: 2, savedAt: baseDate.addingTimeInterval(120), screenshotPNG: try makePNG(color: (0, 1, 0, 1))) {
+            try Data("invalid".utf8).write(to: $0)
+        }
+        try store.save(into: 3, savedAt: baseDate.addingTimeInterval(60), screenshotPNG: try makePNG(color: (0, 0, 1, 1))) {
+            try Data("newest valid".utf8).write(to: $0)
+        }
+        try Data("changed screenshot".utf8).write(to: directory.appendingPathComponent("slot2.png"), options: .atomic)
+
+        XCTAssertEqual(store.latestScreenshotURL(), directory.appendingPathComponent("slot3.png"))
+    }
+
+    func testLatestScreenshotURLReturnsNilWithoutValidScreenshot() throws {
+        try store.save(into: 1, savedAt: Date(), screenshotPNG: nil) {
+            try Data("state".utf8).write(to: $0)
+        }
+
+        XCTAssertNil(store.latestScreenshotURL())
+    }
+
     func testDeleteClearsStateMetadataScreenshot() throws {
         try store.save(into: 1, savedAt: Date(), screenshotPNG: try makePNG()) {
             try Data("state".utf8).write(to: $0)
