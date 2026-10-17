@@ -127,6 +127,12 @@ final class MetadataProviderTests: XCTestCase {
             ["Sonic the Hedgehog (character)", "Sonic the Hedgehog", "Sonic the Hedgehog (1991 video game)", "Sonic Mania"],
             title: "Sonic the Hedgehog"),
             ["Sonic the Hedgehog (1991 video game)", "Sonic the Hedgehog", "Sonic the Hedgehog (character)"])
+        XCTAssertEqual(WikipediaMetadataProvider.candidates(
+            ["MediEvil (2019 video game)", "MediEvil (1998 video game)"], title: "MediEvil", year: 1998),
+            ["MediEvil (1998 video game)"])
+        XCTAssertEqual(WikipediaMetadataProvider.candidates(
+            ["MediEvil (2019 video game)"], title: "MediEvil"),
+            ["MediEvil (2019 video game)"])
         XCTAssertNil(WikipediaMetadataProvider.reception(in: "Intro.\n\n== Plot ==\nStuff."))
         XCTAssertEqual(WikipediaMetadataProvider.year("1991 platform video game"), 1991)
         XCTAssertNil(WikipediaMetadataProvider.year("Video game series"))
@@ -166,6 +172,71 @@ final class MetadataProviderTests: XCTestCase {
         XCTAssertTrue(fetcher.requests[1].url!.absoluteString.contains("Super%20Metroid"))
         _ = await metadata.enrichPending()
         XCTAssertEqual(fetcher.requests.count, 3)
+    }
+
+    func testMatchedWikipediaGameIsResearchedWhenCanonicalTitleChanges() async throws {
+        let id = try await importROM("Super Metroid.sfc")
+        let oldSearch = WikipediaMetadataProvider.searchURL(title: "Super Metroid", system: .snes)
+        let newSearch = WikipediaMetadataProvider.searchURL(title: "Super Metroid Zero Mission", system: .snes)
+        let oldSummary = try XCTUnwrap(WikipediaMetadataProvider.summaryURL("Super Metroid"))
+        let newSummary = try XCTUnwrap(WikipediaMetadataProvider.summaryURL("Super Metroid Zero Mission"))
+        let fetcher = RequestStub { request in
+            let url = request.url!
+            if url == oldSearch {
+                return self.json(["query": ["search": [["title": "Super Metroid"]]]])
+            }
+            if url == newSearch {
+                return self.json(["query": ["search": [["title": "Super Metroid Zero Mission"]]]])
+            }
+            if url == oldSummary {
+                return self.json(["type": "standard", "title": "Super Metroid", "description": "1994 video game"])
+            }
+            if url == newSummary {
+                return self.json(["type": "standard", "title": "Super Metroid Zero Mission", "description": "2004 video game"])
+            }
+            return nil
+        }
+        let metadata = service(fetcher) { [WikipediaMetadataProvider(http: $0)] }
+        let firstPass = await metadata.enrichPending()
+        XCTAssertEqual(firstPass, 1)
+        try await store.db.write { db in
+            try MetadataRecord(provider: "libretro", title: "Super Metroid Zero Mission").save(gameID: id, db: db)
+        }
+        let secondPass = await metadata.enrichPending()
+        XCTAssertEqual(secondPass, 1)
+        XCTAssertTrue(fetcher.requests.contains { $0.url == newSearch })
+        let ref = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT provider_ref FROM game_metadata WHERE game_id = ? AND provider = 'wikipedia'", arguments: [id])
+        }
+        XCTAssertEqual(ref, "Super Metroid Zero Mission")
+    }
+
+    func testWikipediaRejectsSummaryWithConflictingKnownYear() async throws {
+        let id = try await importROM("Filename Name.sfc")
+        try await store.db.write { db in
+            try MetadataRecord(provider: "libretro", year: 1990).save(gameID: id, db: db)
+            try MetadataRecord(provider: "igdb", title: "MediEvil").save(gameID: id, db: db)
+        }
+        let search = WikipediaMetadataProvider.searchURL(title: "MediEvil", system: .snes)
+        let summary = try XCTUnwrap(WikipediaMetadataProvider.summaryURL("MediEvil"))
+        let fetcher = RequestStub { request in
+            if request.url == search { return self.json(["query": ["search": [["title": "MediEvil"]]]]) }
+            if request.url == summary {
+                return self.json(["type": "standard", "title": "MediEvil", "description": "2013 video game"])
+            }
+            return nil
+        }
+        let changed = await service(fetcher) { [WikipediaMetadataProvider(http: $0)] }.enrichPending()
+        XCTAssertEqual(changed, 1)
+        XCTAssertEqual(fetcher.requests.map(\.url), [search, summary])
+        let record = try await store.db.read {
+            try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM game_metadata WHERE game_id = ? AND provider = 'wikipedia'", arguments: [id]) ?? 0
+        }
+        XCTAssertEqual(record, 0)
+        let status = try await store.db.read {
+            try String.fetchOne($0, sql: "SELECT match_status FROM metadata_jobs WHERE game_id = ? AND provider = 'wikipedia'", arguments: [id])
+        }
+        XCTAssertEqual(status, "unmatched")
     }
 
     func testWikipediaReceptionFailureKeepsIntroAndRetries() async throws {
@@ -379,6 +450,33 @@ final class MetadataProviderTests: XCTestCase {
             try record.save(gameID: "g1", db: db)
             let loaded = try Row.fetchOne(db, sql: "SELECT * FROM game_metadata WHERE provider = 'steamgriddb'").map(MetadataRecord.init(row:))
             XCTAssertEqual(loaded, record)
+        }
+    }
+
+    func testLibretroUnmatchedRecoveryMigrationResetsOnlyLibretroUnmatchedJobs() throws {
+        let queue = try DatabaseQueue()
+        let migrator = ServerMigrations.migrator
+        try migrator.migrate(queue, upTo: "v10_cheat_revisions")
+        try queue.write { db in
+            for id in ["unmatched-libretro", "matched-libretro", "unmatched-wikipedia"] {
+                try db.execute(sql: "INSERT INTO games (id, title, system, created_at) VALUES (?, 'Game', 'snes', ?)",
+                               arguments: [id, Date()])
+            }
+            try db.execute(sql: """
+                INSERT INTO metadata_jobs (game_id, provider, match_status, updated_at) VALUES
+                    ('unmatched-libretro', 'libretro', 'unmatched', ?),
+                    ('matched-libretro', 'libretro', 'matched', ?),
+                    ('unmatched-wikipedia', 'wikipedia', 'unmatched', ?)
+                """, arguments: [Date(), Date(), Date()])
+        }
+        try migrator.migrate(queue)
+        try queue.read { db in
+            let statuses = try Dictionary(uniqueKeysWithValues: Row.fetchAll(
+                db, sql: "SELECT game_id, match_status FROM metadata_jobs"
+            ).map { ($0["game_id"] as String, $0["match_status"] as String?) })
+            XCTAssertNil(statuses["unmatched-libretro"] ?? nil)
+            XCTAssertEqual(statuses["matched-libretro"] ?? nil, "matched")
+            XCTAssertEqual(statuses["unmatched-wikipedia"] ?? nil, "unmatched")
         }
     }
 }

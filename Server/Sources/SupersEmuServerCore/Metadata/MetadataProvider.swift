@@ -70,8 +70,18 @@ public struct MetadataLookup: Sendable {
     public var system: SystemID
     /// The best title known so far: another provider's canonical title, else the imported one.
     public var title: String
-    /// ROM, or the data tracks of the first disc, resolved under the store root.
+    /// Release year another provider found, if any.
+    public var year: Int?
+    /// ROM, or the data tracks of the first disc, resolved under the library root.
     public var files: [URL]
+
+    public init(gameID: String, system: SystemID, title: String, year: Int? = nil, files: [URL]) {
+        self.gameID = gameID
+        self.system = system
+        self.title = title
+        self.year = year
+        self.files = files
+    }
 }
 
 /// One artwork slot and the URLs to try for it, in order.
@@ -95,6 +105,8 @@ public protocol MetadataProvider: Sendable {
     var id: String { get }
     /// False when the provider needs a key that isn't set; the pass skips it and its games stay pending.
     var isEnabled: Bool { get }
+    /// True when lookup depends on hashing the game's ROM files.
+    var matchesByFileHash: Bool { get }
     /// Bump to rematch every game (e.g. a new pinned dataset).
     var version: String { get }
     func lookup(_ game: MetadataLookup) async throws -> MetadataLookupResult
@@ -105,5 +117,6 @@ public protocol MetadataProvider: Sendable {
 
 public extension MetadataProvider {
     var isEnabled: Bool { true }
+    var matchesByFileHash: Bool { false }
     func artworkVersion(system: SystemID) -> String { version }
 }

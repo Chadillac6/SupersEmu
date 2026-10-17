@@ -19,6 +19,7 @@ extension CLIEndToEndTests {
             XCTAssertEqual(report.imported.map(\.title), ["Hello World"])
             XCTAssertEqual(report.needsReview.map(\.filename), ["Mystery.bin"])
             XCTAssertEqual(report.unsupported, [], "readme.txt is skipped")
+            let gameID = try XCTUnwrap(report.imported.first?.id)
 
             try await self.expectExit(0, ["library", "import", sources.path] + auth)
             XCTAssertEqual(self.capture.out.last, "Imported 0, 1 already in library, 1 need review, 0 unsupported")
@@ -26,6 +27,17 @@ extension CLIEndToEndTests {
             try await self.expectExit(0, ["library", "list"] + auth)
             XCTAssertEqual(self.capture.out.first?.hasPrefix("ID"), true)
             XCTAssertTrue(self.capture.out.contains { $0.hasSuffix("Hello World") })
+
+            try await self.expectExit(64, ["library", "rematch"] + auth)
+            XCTAssertTrue(self.capture.err.joined().contains("Provide game IDs or --all"))
+            try await self.expectExit(64, ["library", "rematch", String(gameID.prefix(12)), "--all"] + auth)
+            XCTAssertTrue(self.capture.err.joined().contains("but not both"))
+            try await self.expectExit(64, ["library", "rematch", "unknown-prefix"] + auth)
+            XCTAssertTrue(self.capture.err.joined().contains("No game matches ID prefix"))
+            try await self.expectExit(0, ["library", "rematch", String(gameID.prefix(12)), "--json"] + auth)
+            XCTAssertEqual(try SupersEmuJSON.decoder().decode(MetadataRematchResponse.self, from: self.stdout).queued, 1)
+            try await self.expectExit(0, ["library", "rematch", "--all"] + auth)
+            XCTAssertEqual(self.capture.out.last, "Queued 2 game(s) for a metadata rematch.")
 
             try await self.expectExit(0, ["library", "review", "--json"] + auth)
             XCTAssertEqual(try SupersEmuJSON.decoder().decode([ReviewItem].self, from: self.stdout).map(\.filename), ["Mystery.bin"])

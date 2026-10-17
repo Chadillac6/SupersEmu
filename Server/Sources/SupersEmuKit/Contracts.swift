@@ -144,6 +144,17 @@ public struct ImportRequest: Codable, Sendable, Equatable {
     public init(paths: [String]) { self.paths = paths }
 }
 
+public struct MetadataRematchRequest: Codable, Sendable, Equatable {
+    /// Specific game IDs to reset, or nil to queue every game.
+    public var gameIDs: [String]?
+    public init(gameIDs: [String]?) { self.gameIDs = gameIDs }
+}
+
+public struct MetadataRematchResponse: Codable, Sendable, Equatable {
+    public var queued: Int
+    public init(queued: Int) { self.queued = queued }
+}
+
 public struct ReviewItem: Codable, Sendable, Equatable, Identifiable {
     public var id: String
     public var filename: String

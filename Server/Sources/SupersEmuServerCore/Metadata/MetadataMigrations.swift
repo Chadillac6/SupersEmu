@@ -84,4 +84,11 @@ enum MetadataMigrations {
                 """)
         }
     }
+
+    static func registerLibretroUnmatchedRecovery(_ migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v11_metadata_libretro_unmatched_recovery") { db in
+            // These jobs were permanently unmatched because moved-library ROM paths were treated as unreadable.
+            try db.execute(sql: "UPDATE metadata_jobs SET match_status = NULL WHERE provider = 'libretro' AND match_status = 'unmatched'")
+        }
+    }
 }

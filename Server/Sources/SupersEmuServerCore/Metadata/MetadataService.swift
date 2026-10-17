@@ -148,6 +148,10 @@ public actor MetadataService {
     }
 
     private func enrich(with provider: any MetadataProvider) async throws -> Int {
+        if provider.matchesByFileHash, !store.paths.storage.isAvailable {
+            logger.warning("\(provider.id) skipped: library storage is unavailable")
+            return 0
+        }
         let pending: [PendingMetadataJob] = try await store.db.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT g.id, g.system, g.title, j.match_status, j.dataset_version, j.artwork_status, j.artwork_version,
@@ -166,11 +170,34 @@ public actor MetadataService {
             guard let system = SystemID(rawValue: row.system), !unavailable.contains(system) else { continue }
             let status: String? = row.matchStatus
             let previousRef: String? = row.providerRef
-            let title = try await knownTitle(gameID: id, excluding: provider.id) ?? row.title
-            let betterTitle = status == "unmatched" && row.searchTitle != title
-            if status == nil || status == "partial" || row.datasetVersion != provider.version || betterTitle {
-                let game = MetadataLookup(gameID: id, system: system, title: title, files: try candidateFiles(gameID: id))
-                let result = (try? await provider.lookup(game)) ?? .unavailable
+            let knownMetadata = try await knownMetadata(gameID: id, excluding: provider.id)
+            let title = knownMetadata.title ?? row.title
+            let titleChanged = row.searchTitle != title
+            let betterTitle = status == "unmatched" && titleChanged
+            let changedSearchTitle = !provider.matchesByFileHash && status == "matched" && titleChanged
+            if status == nil || status == "partial" || row.datasetVersion != provider.version || betterTitle || changedSearchTitle {
+                let files = try candidateFiles(gameID: id)
+                if provider.matchesByFileHash {
+                    guard !files.isEmpty else {
+                        logger.warning("\(provider.id) skipped \(id.prefix(12)): ROM not readable at no files under library root")
+                        continue
+                    }
+                    if let unreadable = files.first(where: { !FileManager.default.isReadableFile(atPath: $0.path) }) {
+                        logger.warning("\(provider.id) skipped \(id.prefix(12)): ROM not readable at \(unreadable.path)")
+                        continue
+                    }
+                }
+                let game = MetadataLookup(gameID: id, system: system, title: title, year: knownMetadata.year, files: files)
+                let result: MetadataLookupResult
+                do {
+                    result = try await provider.lookup(game)
+                } catch {
+                    if provider.matchesByFileHash {
+                        logger.warning("\(provider.id) skipped \(id.prefix(12)): ROM hashing failed: \(error)")
+                        continue
+                    }
+                    result = .unavailable
+                }
                 switch result {
                 case .unavailable:
                     unavailable.insert(system)
@@ -202,12 +229,20 @@ public actor MetadataService {
         return changed
     }
 
-    /// The highest-precedence title another provider found, so name-searching providers search the canonical title.
-    private func knownTitle(gameID: String, excluding provider: String) async throws -> String? {
+    /// The highest-precedence title and year other providers found, independently for each field.
+    private func knownMetadata(gameID: String, excluding provider: String) async throws -> (title: String?, year: Int?) {
         try await store.db.read { db in
-            try Row.fetchAll(db, sql: "SELECT provider, title FROM game_metadata WHERE game_id = ? AND provider != ? AND title IS NOT NULL",
-                             arguments: [gameID, provider])
-                .min { MetadataMerge.rank($0["provider"]) < MetadataMerge.rank($1["provider"]) }?["title"]
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT provider, title, year FROM game_metadata
+                WHERE game_id = ? AND provider != ? AND (title IS NOT NULL OR year IS NOT NULL)
+                """, arguments: [gameID, provider])
+            let title: String? = rows.filter { ($0["title"] as String?) != nil }
+                .min { MetadataMerge.rank($0["provider"]) < MetadataMerge.rank($1["provider"]) }
+                .flatMap { row -> String? in row["title"] }
+            let year: Int? = rows.filter { ($0["year"] as Int?) != nil }
+                .min { MetadataMerge.rank($0["provider"]) < MetadataMerge.rank($1["provider"]) }
+                .flatMap { row -> Int? in row["year"] }
+            return (title, year)
         }
     }
 
@@ -299,7 +334,7 @@ public actor MetadataService {
         return nil
     }
 
-    /// ROM, or every track of the first disc (lookup stops at the first match), resolved and contained under the store root.
+    /// ROM, or every track of the first disc (lookup stops at the first match), resolved and contained under the library root.
     private func candidateFiles(gameID: String) throws -> [URL] {
         let rows = try store.db.read { db in
             try Row.fetchAll(db, sql: """
@@ -308,10 +343,10 @@ public actor MetadataService {
                 """, arguments: [gameID])
         }
         let firstDisc: Int? = rows.first?["disc_number"]
-        let root = store.paths.root.resolvingSymlinksInPath().standardizedFileURL.path
+        let root = store.paths.libraryRoot.resolvingSymlinksInPath().standardizedFileURL.path
         return rows.filter { ($0["disc_number"] as Int?) == firstDisc }.compactMap { row in
             let path: String = row["stored_path"]
-            let url = store.paths.root.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
+            let url = store.paths.libraryFile(path).resolvingSymlinksInPath().standardizedFileURL
             return url.path.hasPrefix(root + "/") ? url : nil
         }
     }

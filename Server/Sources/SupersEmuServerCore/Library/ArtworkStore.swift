@@ -97,7 +97,7 @@ public struct ArtworkStore: Sendable {
             }
             let root = store.paths.artwork.standardizedFileURL.path + "/"
             for path in orphans {
-                let url = store.paths.root.appendingPathComponent(path).standardizedFileURL
+                let url = store.paths.libraryFile(path).standardizedFileURL
                 if url.path.hasPrefix(root) { try? FileManager.default.removeItem(at: url) }
             }
         }

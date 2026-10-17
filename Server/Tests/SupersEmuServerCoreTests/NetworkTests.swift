@@ -60,6 +60,27 @@ final class NetworkTests: XCTestCase {
         XCTAssertEqual(keyMode, 0o600)
     }
 
+    func testExecutableReplacementIdentityDetection() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("se-executable-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("server")
+        let replacement = directory.appendingPathComponent("server.new")
+        try Data("old executable".utf8).write(to: executable)
+        let original = try XCTUnwrap(ServerLauncher.executableIdentity(at: executable))
+        XCTAssertFalse(ServerLauncher.executableWasReplaced(
+            original: original, current: ServerLauncher.executableIdentity(at: executable)))
+
+        try Data("replacement executable with a different size".utf8).write(to: replacement)
+        _ = try FileManager.default.replaceItemAt(executable, withItemAt: replacement)
+        XCTAssertTrue(ServerLauncher.executableWasReplaced(
+            original: original, current: ServerLauncher.executableIdentity(at: executable)))
+
+        try FileManager.default.removeItem(at: executable)
+        XCTAssertFalse(ServerLauncher.executableWasReplaced(
+            original: original, current: ServerLauncher.executableIdentity(at: executable)))
+    }
+
     /// End to end over real HTTPS: pair through `ServerConnection` with the pin from the QR payload, then a
     /// session pinned to a different certificate can't connect.
     func testHTTPSPairingWithPinnedCertificate() async throws {
