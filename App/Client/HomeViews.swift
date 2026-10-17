@@ -81,6 +81,8 @@ struct HomeHero: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             WideArt(item: item)
+                // Scaled artwork can extend beyond its clipped frame and intercept selector-chip clicks.
+                .allowsHitTesting(false)
                 .frame(height: height)
                 .overlay(alignment: .topLeading) {
                     if let logo = item.logoPath {
@@ -105,10 +107,14 @@ struct HomeHero: View {
                     Button(action: primary) { Label(primaryTitle, systemImage: "play.fill") }
                         .buttonStyle(BrandPrimaryButtonStyle())
                         .controlSize(compact ? .regular : .large)
+                        .fixedSize(horizontal: !compact, vertical: false)
+                        .frame(minWidth: compact ? 0 : 160, alignment: .leading)
                         .accessibilityIdentifier("hero-primary")
                     Button(action: details) { Label("Details", systemImage: "info.circle") }
                         .buttonStyle(BrandSecondaryButtonStyle())
                         .controlSize(compact ? .regular : .large)
+                        .fixedSize(horizontal: !compact, vertical: false)
+                        .frame(minWidth: compact ? 0 : 160, alignment: .leading)
                         .accessibilityIdentifier("hero-details")
                 }
             }
@@ -128,9 +134,9 @@ struct HomeHero: View {
 
     private var height: CGFloat {
         #if os(iOS)
-        compact ? 240 : 400
+        compact ? 240 : 260
         #else
-        400
+        260
         #endif
     }
 

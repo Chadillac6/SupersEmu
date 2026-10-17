@@ -209,12 +209,16 @@ struct LibraryView: View {
     }
 
     private func homeStatusLine(_ count: Int) -> String {
-        guard server.isPaired else { return "\(count) GAMES · OFFLINE" }
+        if server.status == .connecting {
+            return "\(count) GAMES · \(server.serverName.uppercased()) · CONNECTING"
+        }
+        guard server.isPaired else { return "\(count) GAMES · ON THIS DEVICE" }
         return "\(count) GAMES · \(server.serverName.uppercased()) · \(server.isOnline ? "CONNECTED" : "OFFLINE")"
     }
 
     private var statusText: String {
-        server.isPaired ? "\(server.serverName) · \(server.isOnline ? "Connected" : "Offline")" : "Not connected"
+        if server.status == .connecting { return "\(server.serverName) · Connecting" }
+        return server.isPaired ? "\(server.serverName) · \(server.isOnline ? "Connected" : "Offline")" : "Not connected"
     }
 
     private var searchResults: some View {

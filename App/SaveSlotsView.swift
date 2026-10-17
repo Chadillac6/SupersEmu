@@ -191,18 +191,30 @@ struct SaveSlotsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button("Cancel") { session.slotNavigator.cancelConfirmation() }
-                        .buttonStyle(.bordered)
-                        .keyboardShortcut(.cancelAction)
-                        .padding(4)
-                        .background(!confirmation.confirmFocused ? Brand.Colors.red : .clear,
-                                    in: RoundedRectangle(cornerRadius: 8))
-                        .accessibilityIdentifier("save-slot-cancel")
+                    Button {
+                        session.slotNavigator.cancelConfirmation()
+                    } label: {
+                        if !confirmation.confirmFocused {
+                            Text("Cancel").foregroundStyle(.white)
+                        } else {
+                            Text("Cancel")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
+                    .padding(4)
+                    .background(!confirmation.confirmFocused ? Brand.Colors.red : .clear,
+                                in: RoundedRectangle(cornerRadius: 8))
+                    .accessibilityIdentifier("save-slot-cancel")
                     Spacer()
                     Button(role: destructive ? .destructive : nil) {
                         if let command = session.slotNavigator.confirm() { session.perform(command) }
                     } label: {
-                        Text(confirmLabel)
+                        if confirmation.confirmFocused {
+                            Text(confirmLabel).foregroundStyle(.white)
+                        } else {
+                            Text(confirmLabel)
+                        }
                     }
                     .buttonStyle(.bordered)
                     .padding(4)

@@ -253,7 +253,7 @@ struct GameDetailView: View {
             Button {
                 isConfirmingStartOver = true
             } label: {
-            Label("Start over", systemImage: "arrow.counterclockwise")
+                Label("Start over", systemImage: "arrow.counterclockwise")
                     .lineLimit(1)
                     .frame(minWidth: fill ? nil : 140, maxWidth: fill ? .infinity : nil)
             }
