@@ -179,7 +179,7 @@ public actor MetadataService {
                 let files = try candidateFiles(gameID: id)
                 if provider.matchesByFileHash {
                     guard !files.isEmpty else {
-                        logger.warning("\(provider.id) skipped \(id.prefix(12)): ROM not readable at no files under library root")
+                        logger.warning("\(provider.id) skipped \(id.prefix(12)): no ROM files under the library root")
                         continue
                     }
                     if let unreadable = files.first(where: { !FileManager.default.isReadableFile(atPath: $0.path) }) {
