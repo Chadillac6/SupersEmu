@@ -9,6 +9,7 @@ source scripts/release-common.sh
 
 release_require_env
 release_prepare_key
+marketing_version="$(release_marketing_version)"
 build_number="$(release_build_number)"
 out="build/release-ios/$build_number"
 archive="$out/SupersEmu-iOS.xcarchive"
@@ -18,11 +19,13 @@ git submodule update --init --depth 1
 git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
 xcodegen generate
 
+echo "Version $marketing_version (build $build_number)"
 echo "Archiving SupersEmu-iOS build $build_number for team $SUPERSEMU_TEAM_ID"
 xcodebuild archive -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "$archive" -derivedDataPath build/release-ios/DerivedData \
   -allowProvisioningUpdates "${ASC_AUTH_ARGS[@]}" \
-  SUPERSEMU_TEAM_ID="$SUPERSEMU_TEAM_ID" CURRENT_PROJECT_VERSION="$build_number"
+  SUPERSEMU_TEAM_ID="$SUPERSEMU_TEAM_ID" CURRENT_PROJECT_VERSION="$build_number" \
+  MARKETING_VERSION="$marketing_version"
 
 cat > "$RELEASE_TMP/ExportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
