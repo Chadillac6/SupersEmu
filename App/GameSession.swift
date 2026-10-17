@@ -269,8 +269,11 @@ final class GameSession {
             let autoState = AppPaths.autoState(for: game.id)
             if FileManager.default.fileExists(atPath: autoState.path) {
                 do {
-                try loop.perform { try $0?.loadState(from: autoState) }
+                    try loop.perform { try $0?.loadState(from: autoState) }
                     diagnosticsLog?.appendEvent("save-state load auto")
+                    if let modified = try? autoState.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate {
+                        lastSuccessfulAutosave = .now - .seconds(max(0, Date().timeIntervalSince(modified)))
+                    }
                     status = pulled ?? "Resumed where you left off"
                 } catch {
                     preserveIncompatibleState(at: autoState)
