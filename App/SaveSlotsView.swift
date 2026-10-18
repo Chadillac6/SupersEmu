@@ -33,136 +33,157 @@ struct SaveSlotsView: View {
 
     private func card(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: compact ? 12 : 14) {
-            Text("Save States")
-                .font(.title3.bold())
-                .lineLimit(1)
+            HStack {
+                Text("Save States")
+                    .font(.title2.bold())
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Button { session.closeSaveSlots() } label: {
+                    Image(systemName: "xmark")
+                        .font(.headline)
+                        .frame(width: 44, height: 44)
+                        .background(Color.white.opacity(0.12), in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("Close")
+                .accessibilityIdentifier("save-slots-close")
+            }
 
-            VStack(spacing: 8) {
-                ForEach(session.saveSlots) { slot in
-                    slotRow(slot, compact: compact)
-                        .accessibilityIdentifier("save-slot-\(slot.slot)")
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ForEach(session.saveSlots) { slot in
+                            slotCard(slot, compact: compact)
+                                .id(slot.slot)
+                                .accessibilityIdentifier("save-slot-\(slot.slot)")
+                        }
+                    }
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .onChange(of: session.slotNavigator.row) { _, row in
+                    withAnimation { proxy.scrollTo(row + 1) }
                 }
             }
 
-            HStack(spacing: 8) {
-                Text("↑↓ slot · ←→ action · A select · B close")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Spacer(minLength: 0)
-                Button("Close") { session.closeSaveSlots() }
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityIdentifier("save-slots-close")
-            }
+            Text("↑↓ slot · ←→ action · A select · B close")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
-        .padding(compact ? 16 : 22)
+        .padding(compact ? 16 : 20)
         .frame(maxWidth: .infinity)
         .brandPanel()
         .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
-    private func slotRow(_ slot: SaveSlotInfo, compact: Bool) -> some View {
-        let selected = session.slotNavigator.row == slot.slot - 1
+    private func slotCard(_ slot: SaveSlotInfo, compact: Bool) -> some View {
+        let focusedRow = session.slotNavigator.row == slot.slot - 1
+        let column = session.slotNavigator.column
         if slot.isEmpty {
-            Button {
-                session.activateSlot(slot.slot, .save)
-            } label: {
-                HStack(spacing: 8) {
-                    SaveSlotThumbnail(url: nil, empty: true, compact: compact)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Slot \(slot.slot)").font(.callout.bold())
-                        Text("Empty").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 4)
-                    Label("Save", systemImage: "square.and.arrow.down")
-                        .font(.caption)
-                        .labelStyle(.titleAndIcon)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Slot \(slot.slot)").font(.headline)
+                    Text("Empty").font(.subheadline).foregroundStyle(.secondary)
                 }
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(rowBackground(selected && session.slotNavigator.column == 0),
-                            in: RoundedRectangle(cornerRadius: 10))
-                .contentShape(RoundedRectangle(cornerRadius: 10))
+                Spacer(minLength: 8)
+                bigButton("Save Here", systemImage: "square.and.arrow.down", primary: true,
+                          focused: focusedRow && column == 0, id: "save-slot-\(slot.slot)-save") {
+                    session.activateSlot(slot.slot, .save)
+                }
+                .accessibilityLabel("Save to Slot \(slot.slot)")
+                .frame(maxWidth: 180)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Save to Slot \(slot.slot)")
-            .accessibilityIdentifier("save-slot-\(slot.slot)-save")
+            .padding(12)
+            .background(Brand.Colors.card, in: RoundedRectangle(cornerRadius: 18))
+            .accessibilityElement(children: .contain)
         } else {
-            HStack(spacing: 8) {
-                SaveSlotThumbnail(url: slot.screenshotURL, empty: false, compact: compact)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text("Slot \(slot.slot)")
-                            .font(.callout.bold())
-                            .lineLimit(1)
-                        if slot.isNew {
-                            Text("NEW")
-                                .font(.caption2.bold())
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Brand.Colors.red, in: Capsule())
-                                .accessibilityIdentifier("save-slot-\(slot.slot)-new")
+            VStack(alignment: .leading, spacing: 10) {
+                SaveSlotThumbnail(url: slot.screenshotURL, height: compact ? 150 : 180)
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("Slot \(slot.slot)").font(.headline).lineLimit(1)
+                            if slot.isNew {
+                                Text("NEW")
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Brand.Colors.red, in: Capsule())
+                                    .accessibilityIdentifier("save-slot-\(slot.slot)-new")
+                            }
                         }
-                    }
-                    Label(slot.deviceName ?? "This \(SaveDevice.thisDevice)",
-                          systemImage: slot.deviceName.map { SaveDevice.symbol(for: $0) } ?? SaveDevice.symbol(for: SaveDevice.thisDevice))
-                        .font(.caption)
+                        HStack(spacing: 4) {
+                            Label(slot.deviceName ?? "This \(SaveDevice.thisDevice)",
+                                  systemImage: SaveDevice.symbol(for: slot.deviceName ?? SaveDevice.thisDevice))
+                                .accessibilityIdentifier("save-slot-\(slot.slot)-device")
+                            if let savedAt = slot.savedAt {
+                                Text("· \(savedAt.formatted(date: .abbreviated, time: .shortened))")
+                            }
+                        }
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .accessibilityIdentifier("save-slot-\(slot.slot)-device")
-                    if let savedAt = slot.savedAt {
-                        Text(savedAt.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.75)
                     }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(spacing: 3) {
-                    actionButton(slot, .load, label: "Load", column: 0)
-                    actionButton(slot, .overwrite, label: "Overwrite", column: 1)
-                    Button {
-                        session.activateSlot(slot.slot, .delete)
+                    Menu {
+                        Button("Delete Save", systemImage: "trash", role: .destructive) {
+                            session.activateSlot(slot.slot, .delete)
+                        }
+                        .accessibilityIdentifier("save-slot-\(slot.slot)-delete")
                     } label: {
-                        Image(systemName: "trash")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 3)
-                            .background(rowBackground(selected && session.slotNavigator.column == 2),
-                                        in: RoundedRectangle(cornerRadius: 6))
+                        Image(systemName: "ellipsis")
+                            .font(.headline)
+                            .frame(width: 44, height: 44)
+                            .background(Color.white.opacity(0.12), in: Circle())
+                            .overlay { if focusedRow && column == 2 { Circle().strokeBorder(.white, lineWidth: 3) } }
+                            .contentShape(Circle())
                     }
+                    .menuStyle(.button)
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Delete")
-                    .accessibilityIdentifier("save-slot-\(slot.slot)-delete")
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .accessibilityLabel("More for Slot \(slot.slot)")
+                    .accessibilityIdentifier("save-slot-\(slot.slot)-more")
                 }
-                .font(.caption)
-                .frame(minWidth: compact ? 58 : 72)
+                HStack(spacing: 10) {
+                    bigButton("Load", systemImage: "play.fill", primary: true,
+                              focused: focusedRow && column == 0, id: "save-slot-\(slot.slot)-load") {
+                        session.activateSlot(slot.slot, .load)
+                    }
+                    bigButton("Save Here", systemImage: "square.and.arrow.down", primary: false,
+                              focused: focusedRow && column == 1, id: "save-slot-\(slot.slot)-overwrite") {
+                        session.activateSlot(slot.slot, .overwrite)
+                    }
+                }
             }
-            .padding(8)
-            .background(rowBackground(selected), in: RoundedRectangle(cornerRadius: 10))
+            .padding(12)
+            .background(Brand.Colors.card, in: RoundedRectangle(cornerRadius: 18))
             .accessibilityElement(children: .contain)
         }
     }
 
-    private func actionButton(_ slot: SaveSlotInfo, _ action: SaveSlotAction, label: String, column: Int) -> some View {
-        Button {
-            session.activateSlot(slot.slot, action)
-        } label: {
-            Text(label)
+    private func bigButton(_ title: String, systemImage: String, primary: Bool, focused: Bool, id: String,
+                           action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 3)
-                .background(rowBackground(session.slotNavigator.row == slot.slot - 1
-                                          && session.slotNavigator.column == column),
-                            in: RoundedRectangle(cornerRadius: 6))
+                .frame(maxWidth: .infinity, minHeight: 50)
+                .background(primary ? Brand.Colors.red : Color.white.opacity(0.14),
+                            in: RoundedRectangle(cornerRadius: 14))
+                .overlay {
+                    if focused { RoundedRectangle(cornerRadius: 14).strokeBorder(.white, lineWidth: 3) }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("save-slot-\(slot.slot)-\(label.lowercased())")
+        .accessibilityIdentifier(id)
     }
 
     private func confirmationOverlay(_ confirmation: SaveSlotConfirmation, compact: Bool) -> some View {
@@ -254,8 +275,7 @@ struct SaveSlotsView: View {
 
 private struct SaveSlotThumbnail: View {
     let url: URL?
-    let empty: Bool
-    let compact: Bool
+    let height: CGFloat
 
     private var image: CGImage? {
         guard let url, let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
@@ -263,22 +283,20 @@ private struct SaveSlotThumbnail: View {
     }
 
     var body: some View {
-        Group {
-            if let image {
-                Image(decorative: image, scale: 1)
-                    .resizable()
-                    .interpolation(.none)
-                    .aspectRatio(contentMode: .fit)
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(0.08))
-                    .overlay {
-                        if !empty { Image(systemName: "photo").foregroundStyle(.secondary) }
-                    }
+        Color.white.opacity(0.08)
+            .overlay {
+                if let image {
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .interpolation(.none)
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    Image(systemName: "photo").font(.title2).foregroundStyle(.secondary)
+                }
             }
-        }
-        .frame(width: compact ? 84 : 96, height: compact ? 63 : 72)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .accessibilityHidden(true)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .accessibilityHidden(true)
     }
 }
