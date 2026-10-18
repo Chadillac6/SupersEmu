@@ -10,9 +10,10 @@ interval="${SUPERSEMU_WAIT_INTERVAL:-30}"
 timeout="${SUPERSEMU_WAIT_TIMEOUT:-5400}"
 start=$SECONDS
 while :; do
-  # filter=latest keeps a job that passed in an earlier attempt when only failed jobs are re-run.
-  if state="$(gh api "repos/$repo/actions/runs/$run_id/jobs?filter=latest&per_page=100" \
-      --jq ".jobs[] | select(.name == \"$job\") | \"\(.status) \(.conclusion // \"none\")\"" | tail -n 1)"; then
+  # filter=all, newest attempt of the job: "Re-run failed jobs" leaves a passed check in an earlier attempt.
+  if state="$(gh api "repos/$repo/actions/runs/$run_id/jobs?filter=all&per_page=100" \
+      --jq "[.jobs[] | select(.name == \"$job\")] | sort_by(.run_attempt) | last
+        | select(. != null) | \"\(.status) \(.conclusion // \"none\")\"")"; then
     case "$state" in
       'completed success') echo "$job passed."; exit 0 ;;
       completed\ *) echo "error: $job finished with '${state#completed }'; not publishing." >&2; exit 1 ;;

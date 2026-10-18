@@ -7,8 +7,9 @@ trap 'rm -rf "$temp_dir"' EXIT
 fake_bin="$temp_dir/fakebin"
 mkdir -p "$fake_bin"
 
-# Each call prints the next line of $GH_STATES (status conclusion), "error" fails the call,
-# "missing" prints nothing (job not listed yet).
+# Each call answers with the next line of $GH_STATES, run through the script's real --jq filter:
+# "status conclusion" is that one job in attempt 1, a line starting with "{" is a raw jobs response,
+# "error" fails the call and "missing" lists no jobs (not started yet).
 cat > "$fake_bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -16,16 +17,16 @@ calls=0
 [ -f "$GH_CALLS" ] && IFS= read -r calls < "$GH_CALLS"
 calls=$((calls + 1))
 printf '%s\n' "$calls" > "$GH_CALLS"
-case "$*" in
-  "api repos/owner/repo/actions/runs/42/jobs?filter=latest&per_page=100 --jq "*'"Mac and server checks"'*) ;;
-  *) echo "unexpected gh call: $*" >&2; exit 64 ;;
-esac
+[ "$1 $2 $3" = "api repos/owner/repo/actions/runs/42/jobs?filter=all&per_page=100 --jq" ] \
+  || { echo "unexpected gh call: $*" >&2; exit 64; }
 line="$(sed -n "${calls}p" "$GH_STATES")"
 case "$line" in
   error) exit 1 ;;
-  missing) ;;
-  *) printf '%s\n' "$line" ;;
+  missing) json='{"jobs":[]}' ;;
+  '{'*) json="$line" ;;
+  *) json="{\"jobs\":[{\"name\":\"Mac and server checks\",\"run_attempt\":1,\"status\":\"${line% *}\",\"conclusion\":$( [ "${line#* }" = none ] && echo null || echo "\"${line#* }\"")}]}" ;;
 esac
+jq -r "$4" <<< "$json"
 STUB
 chmod +x "$fake_bin/gh"
 
@@ -51,3 +52,8 @@ run_case 'waits through queued, running and API errors, then passes' 0 5 60 \
 run_case 'failed checks block publishing' 1 2 60 'in_progress none' 'completed failure'
 run_case 'cancelled checks block publishing' 1 1 60 'completed cancelled'
 run_case 'gives up after the timeout' 1 1 0 'in_progress none'
+run_case 'publishes a release-only rerun after checks passed in an earlier attempt' 0 1 60 \
+  '{"jobs":[{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"},{"name":"Upload iOS build to TestFlight","run_attempt":2,"status":"in_progress","conclusion":null}]}'
+run_case 'uses the newest attempt of the checks' 1 2 60 \
+  '{"jobs":[{"name":"Mac and server checks","run_attempt":2,"status":"in_progress","conclusion":null},{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"}]}' \
+  '{"jobs":[{"name":"Mac and server checks","run_attempt":2,"status":"completed","conclusion":"failure"},{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"}]}'
