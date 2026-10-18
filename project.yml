@@ -511,6 +511,7 @@ targets:
       - path: Host/CoreEntry/Mupen64PlusNext/glsym.c
       - path: Host/CoreEntry/Mupen64PlusNext/se_lifecycle.c
       - path: Host/CoreEntry/Mupen64PlusNext/se_cheats.c
+      - path: Host/CoreEntry/Mupen64PlusNext/GLideN64/opengl_BufferedDrawer.cpp
       - path: Vendor/cores/mupen64plus_next
         includes:
           - "GLideN64/src/3DMath.cpp"
@@ -579,7 +580,6 @@ targets:
           - "GLideN64/src/Graphics/OpenGLContext/mupen64plus/mupen64plus_DisplayWindow.cpp"
           - "GLideN64/src/Graphics/OpenGLContext/opengl_Attributes.cpp"
           - "GLideN64/src/Graphics/OpenGLContext/opengl_BufferManipulationObjectFactory.cpp"
-          - "GLideN64/src/Graphics/OpenGLContext/opengl_BufferedDrawer.cpp"
           - "GLideN64/src/Graphics/OpenGLContext/opengl_CachedFunctions.cpp"
           - "GLideN64/src/Graphics/OpenGLContext/opengl_ColorBufferReaderWithBufferStorage.cpp"
           - "GLideN64/src/Graphics/OpenGLContext/opengl_ColorBufferReaderWithEGLImage.cpp"
@@ -782,6 +782,7 @@ targets:
           - "$(SRCROOT)/Vendor/cores/mupen64plus_next/custom/android/include"
           - "$(SRCROOT)/Vendor/cores/mupen64plus_next/custom/GLideN64"
           - "$(SRCROOT)/Vendor/cores/mupen64plus_next/GLideN64/src"
+          - "$(SRCROOT)/Vendor/cores/mupen64plus_next/GLideN64/src/Graphics/OpenGLContext"
           - "$(SRCROOT)/Vendor/cores/mupen64plus_next/GLideN64/src/osal"
           - "$(SRCROOT)/Vendor/cores/mupen64plus_next/mupen64plus-core/src"
           - "$(SRCROOT)/Vendor/cores/mupen64plus_next/mupen64plus-core/src/api"
