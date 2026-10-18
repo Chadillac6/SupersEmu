@@ -908,6 +908,7 @@ targets:
     platform: macOS
     sources:
       - Tests/InputTests
+      - App/Diagnostics/AppLog.swift
       - App/Input/AutoStateCheckpoint.swift
       - App/Input/PadInput.swift
       - App/Saves/SaveSlotStore.swift
@@ -919,7 +920,6 @@ targets:
       - App/Input/HIDPresets.swift
       - App/Input/PlayerChrome.swift
       - App/Input/TouchControlSizing.swift
-      - App/Diagnostics/AppLog.swift
     dependencies:
       - package: SupersEmuServer
         product: SupersEmuKit
