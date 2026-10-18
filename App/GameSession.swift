@@ -664,7 +664,7 @@ final class GameSession {
         do {
             saveRAMError = try loop.perform { try Self.writeAutosave($0, to: stateURL) }
         } catch {
-            autosaveFailed()
+            autosaveFailed(error)
             return
         }
         autosaveSucceeded(preservingStatus: preservingStatus, force: force, saveRAMError: saveRAMError)
@@ -687,10 +687,16 @@ final class GameSession {
             // The session stopped while this was queued; stop() runs its own final autosave.
             return
         } catch {
-            autosaveFailed()
+            autosaveFailed(error)
             return
         }
         autosaveSucceeded(preservingStatus: preservingStatus, force: force, saveRAMError: saveRAMError)
+    }
+
+    /// A failed auto-state write, carrying any battery-save failure from the same autosave.
+    private struct AutosaveWriteError: Error {
+        let state: Error
+        let saveRAM: Error?
     }
 
     /// Runs on the emulation thread. A failed battery save doesn't stop the state save; it's returned instead.
@@ -702,7 +708,11 @@ final class GameSession {
         } catch {
             saveRAMError = error
         }
-        try host.saveState(to: stateURL)
+        do {
+            try host.saveState(to: stateURL)
+        } catch {
+            throw AutosaveWriteError(state: error, saveRAM: saveRAMError)
+        }
         return saveRAMError
     }
 
@@ -719,9 +729,12 @@ final class GameSession {
                saved: "Auto-saved")
     }
 
-    private func autosaveFailed() {
+    private func autosaveFailed(_ error: Error) {
+        if let saveRAMError = (error as? AutosaveWriteError)?.saveRAM {
+            reportSaveRAMFailure(saveRAMError, updatingStatus: false)
+        }
         status = "Auto-save failed"
-        // The battery save was flushed before the state save failed; sync it on its own.
+        // The battery save is written before the state save; sync it on its own.
         upload([SaveSync.nativeFile(for: game.id)], saved: "Auto-save failed")
     }
 
@@ -1025,6 +1038,7 @@ final class GameSession {
                     try loop.perform { try $0?.flushSaveRAM() }
                 } catch {
                     reportSaveRAMFailure(error, updatingStatus: false)
+                    saved += " (battery save failed)"
                 }
                 refreshSaveSlots()
                 status = saved
