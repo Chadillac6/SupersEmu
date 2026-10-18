@@ -524,4 +524,59 @@ final class SaveSyncEngineTests: XCTestCase {
         }
     }
 
+    func offlineDevice(_ name: String) throws -> Device {
+        let root = scratch.appendingPathComponent(name, isDirectory: true)
+        let saves = root.appendingPathComponent("saves", isDirectory: true)
+        try FileManager.default.createDirectory(at: saves, withIntermediateDirectories: true)
+        let provider = TestProvider(APIClient(baseURL: URL(string: "http://127.0.0.1:9")!, token: "offline"))
+        return Device(name: name, provider: provider,
+                      engine: SaveSyncEngine(directory: root.appendingPathComponent("sync", isDirectory: true), provider: provider), saves: saves)
+    }
+
+    func testEnqueueReportsNotQueuedWhenTheQueueCannotBeSaved() async throws {
+        let phone = try offlineDevice("blocked")
+        try phone.write(auto, "level-1")
+        let blocker = phone.engine.directory.appendingPathComponent("sync-state.json", isDirectory: true)
+        try FileManager.default.createDirectory(at: blocker, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: blocker.appendingPathComponent("keep"))
+
+        let queued = await phone.engine.enqueueUpload(phone.file(auto))
+        XCTAssertFalse(queued)
+        let pending = await phone.engine.pendingCount
+        XCTAssertEqual(pending, 0)
+        let status = await phone.engine.status(of: auto)
+        XCTAssertEqual(status, .savedLocally)
+        let blobs = try FileManager.default.contentsOfDirectory(
+            atPath: phone.engine.directory.appendingPathComponent("pending", isDirectory: true).path)
+        XCTAssertTrue(blobs.isEmpty, "no orphaned copy left behind")
+
+        // Once the state file can be written again, the same save queues normally.
+        try FileManager.default.removeItem(at: blocker)
+        let retried = await phone.engine.enqueueUpload(phone.file(auto))
+        XCTAssertTrue(retried)
+        let relaunched = SaveSyncEngine(directory: phone.engine.directory, provider: phone.provider)
+        let relaunchedPending = await relaunched.pendingCount
+        XCTAssertEqual(relaunchedPending, 1)
+    }
+
+    func testStateFileUsesSharedJSONAndOlderFilesStillLoad() async throws {
+        let phone = try offlineDevice("legacy")
+        try phone.write(auto, "level-1")
+        await phone.engine.enqueueUpload(phone.file(auto))
+        let url = phone.engine.directory.appendingPathComponent("sync-state.json")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var queue = try XCTUnwrap(json["queue"] as? [[String: Any]])
+        let enqueuedAt = try XCTUnwrap(queue.first?["enqueuedAt"] as? String, "dates are ISO-8601 like other sync state")
+        XCTAssertNotNil(ISO8601DateFormatter().date(from: enqueuedAt))
+
+        // Builds before the shared format wrote dates as seconds since 2001.
+        queue[0]["enqueuedAt"] = 782_000_000.5
+        json["queue"] = queue
+        try JSONSerialization.data(withJSONObject: json).write(to: url)
+        let relaunched = SaveSyncEngine(directory: phone.engine.directory, provider: phone.provider)
+        let pending = await relaunched.pendingCount
+        XCTAssertEqual(pending, 1)
+        let status = await relaunched.status(of: auto)
+        XCTAssertEqual(status, .waitingToUpload)
+    }
 }
