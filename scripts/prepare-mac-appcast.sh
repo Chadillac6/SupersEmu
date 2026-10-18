@@ -9,6 +9,8 @@ release_ref="${3:-${GITHUB_SHA:-HEAD}}"
 [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid release tag' >&2; exit 2; }
 # shellcheck source=scripts/mac-release-notes.sh
 source scripts/mac-release-notes.sh
+# shellcheck source=scripts/release-common.sh
+source scripts/release-common.sh
 tool="${SPARKLE_GENERATE_APPCAST:-build/mac/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast}"
 [ -x "$tool" ] || { echo 'Resolve the Sparkle package before generating the appcast.' >&2; exit 2; }
 shopt -s nullglob
@@ -17,7 +19,7 @@ archives=("$out"/SupersEmu-*.zip)
 app="$out/export/SupersEmu.app"
 [ -d "$app" ] || { echo 'Missing exported release app.' >&2; exit 2; }
 /usr/bin/codesign --verify --deep --strict "$app"
-/usr/sbin/spctl --assess --type execute "$app"
+release_gatekeeper_check "$app" --type execute
 key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")"
 [ -n "$key" ] || { echo 'App has no Sparkle public signing key.' >&2; exit 2; }
 updates="$out/updates"

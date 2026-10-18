@@ -116,13 +116,8 @@ ln -s /Applications "$staging/Applications"
 hdiutil create -volname SupersEmu -srcfolder "$staging" -format UDZO -ov "$out/$name.dmg" >/dev/null
 codesign --sign "$identity" --timestamp "$out/$name.dmg"
 notarize "$out/$name.dmg"
-if staple_with_retry "$out/$name.dmg"; then
-  spctl --assess --type open --context context:primary-signature -v "$out/$name.dmg"
-else
-  stapled=no
-  spctl --assess --type open --context context:primary-signature -v "$out/$name.dmg" ||
-    echo "warning: spctl could not confirm the unstapled DMG (it needs Apple's ticket server too)" >&2
-fi
+staple_with_retry "$out/$name.dmg" || stapled=no
+release_gatekeeper_check "$out/$name.dmg" --type open --context context:primary-signature
 
 [ "$stapled" = yes ] && state='notarized and stapled' || state='notarized; not all stapled, see warnings'
 echo "Done: $out/$name.dmg and $out/$name.zip ($state); Version $marketing_version (build $build_number)"
