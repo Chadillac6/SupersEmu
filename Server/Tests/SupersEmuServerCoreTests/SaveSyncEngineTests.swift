@@ -188,6 +188,37 @@ final class SaveSyncEngineTests: XCTestCase {
         }
     }
 
+    func testUseRemoteKeepsLocalSaveWhenItsCopyCannotBeQueued() async throws {
+        try await withServer { server in
+            let phone = try self.device("Chad's iPhone", server: server)
+            let mac = try self.device("Chad's Mac", server: server)
+            try phone.write(self.auto, "shared")
+            await phone.engine.enqueueUpload(phone.file(self.auto))
+            await phone.engine.flush()
+            _ = await mac.engine.prepare([mac.file(self.auto)])
+            try phone.write(self.auto, "phone-progress")
+            await phone.engine.enqueueUpload(phone.file(self.auto))
+            await phone.engine.flush()
+            try mac.write(self.auto, "mac-progress")
+            let outcomes = await mac.engine.prepare([mac.file(self.auto)])
+            guard case .conflict(let conflict) = outcomes[self.auto.key] else { return XCTFail("\(outcomes)") }
+
+            let blocker = mac.engine.directory.appendingPathComponent("sync-state.json", isDirectory: true)
+            try FileManager.default.removeItem(at: blocker)
+            try FileManager.default.createDirectory(at: blocker, withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: blocker.appendingPathComponent("keep"))
+            do {
+                try await mac.engine.resolve(conflict, choice: .useRemote, file: mac.file(self.auto))
+                XCTFail("replaced the local save without keeping a copy")
+            } catch let error as SaveSyncError {
+                XCTAssertEqual(error, .couldNotKeepLocalCopy)
+            }
+            XCTAssertEqual(mac.read(self.auto), "mac-progress")
+            let status = await mac.engine.status(of: self.auto)
+            XCTAssertEqual(status, .conflict, "asks again next time")
+        }
+    }
+
     func testKeepLocalMakesThisDeviceNewest() async throws {
         try await withServer { server in
             let phone = try self.device("Chad's iPhone", server: server)

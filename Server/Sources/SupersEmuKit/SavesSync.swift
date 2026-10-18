@@ -529,8 +529,8 @@ public actor SaveSyncEngine {
             // Preserve this device's copy as a branch before replacing it locally.
             if let localSHA = (try? Data(contentsOf: file.url)).map(Self.sha256), localSHA != state.lines[key]?.baseSHA256 || hasPending(key) {
                 let base = state.lines[key]?.baseRevisionID
+                guard enqueue(file, detachedFrom: .some(base)) else { throw SaveSyncError.couldNotKeepLocalCopy }
                 dropAttachedPending(key)
-                enqueue(file, detachedFrom: .some(base))
             }
             try await download(conflict.remote, to: file.url, client: client)
             guard epoch == self.epoch else { throw SaveSyncError.noServer }
@@ -592,12 +592,13 @@ public actor SaveSyncEngine {
 }
 
 public enum SaveSyncError: Error, Equatable, CustomStringConvertible {
-    case noServer, hashMismatch, incompatibleCore
+    case noServer, hashMismatch, incompatibleCore, couldNotKeepLocalCopy
     public var description: String {
         switch self {
         case .noServer: return "Not connected to a SupersEmu Server"
         case .hashMismatch: return "Downloaded save failed its integrity check"
         case .incompatibleCore: return "That save needs a different core version"
+        case .couldNotKeepLocalCopy: return "Couldn't keep a copy of this device's save"
         }
     }
 }
