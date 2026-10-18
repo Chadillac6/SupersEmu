@@ -28,6 +28,7 @@ jobs:
           xcodegen generate
       - name: Test release signing scripts
         run: |
+          scripts/test-release-mac-staple-retry.sh
           scripts/test-release-p12.sh
           scripts/test-marketing-version.sh
           scripts/test-mac-release-notes.sh
