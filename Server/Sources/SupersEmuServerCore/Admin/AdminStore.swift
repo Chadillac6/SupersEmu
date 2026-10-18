@@ -7,11 +7,27 @@ import SupersEmuKit
 import SwiftASN1
 import X509
 
+/// Where `/v1/admin/remote-access` gets the public-access state it reports.
+public enum RemoteAccessSource: Sendable {
+    /// `public-access.json` as saved. For routers not started by `ServerLauncher`.
+    case storedFile
+    /// What the running public listener serves, command-line overrides included. Nil when it isn't running.
+    case listener(PublicAccessConfiguration?)
+}
+
 /// Queries behind the users/devices/tokens admin API. Never exposes token hashes.
 extension ServerStore {
-    public func remoteAccessStatus() async -> RemoteAccessStatusResponse {
+    public func remoteAccessStatus(source: RemoteAccessSource = .storedFile) async -> RemoteAccessStatusResponse {
         // Same reader as the launcher, so an invalid file shows as off here just as the listener treats it.
-        let config = (try? PublicAccessConfiguration.stored(root: paths.root)) ?? nil
+        let stored = (try? PublicAccessConfiguration.stored(root: paths.root)) ?? nil
+        let config: PublicAccessConfiguration?
+        switch source {
+        case .storedFile:
+            config = stored
+        case .listener(let active):
+            // Off keeps the saved URL so the app can show and re-enable it.
+            config = active ?? stored.map { var off = $0; off.enabled = false; return off }
+        }
         let publicURL = config?.publicURL
         let ddnsURL = paths.root.appendingPathComponent("ddns-state.json")
         let ddns = (try? Data(contentsOf: ddnsURL)).flatMap {

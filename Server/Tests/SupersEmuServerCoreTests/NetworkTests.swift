@@ -305,6 +305,22 @@ final class NetworkTests: XCTestCase {
         XCTAssertEqual(live, 0)
     }
 
+    func testFailedTokenRotationKeepsPreviousTokenFile() throws {
+        let store = try ServerStore.inMemory()
+        let (admin, _) = try ServerBootstrap.ensureAdmin(store: store, displayName: "Chad")
+        let token = try String(contentsOf: store.paths.adminToken, encoding: .utf8)
+        let directory = store.paths.adminToken.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path) }
+        XCTAssertThrowsError(try ServerBootstrap.ensureAdmin(store: store, displayName: "Chad", rotateToken: true))
+        XCTAssertEqual(try String(contentsOf: store.paths.adminToken, encoding: .utf8), token)
+        XCTAssertEqual(try store.authenticate(token: token)?.user, admin)
+        let live = try store.db.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM api_tokens WHERE revoked_at IS NULL")
+        }
+        XCTAssertEqual(live, 1)
+    }
+
     func testKeychainTokenStore() throws {
         let store = KeychainTokenStore(service: "com.chadillac6.supersemu.tests.\(UUID().uuidString)")
         do {

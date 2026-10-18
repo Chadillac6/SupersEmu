@@ -57,7 +57,8 @@ public enum ServerLauncher {
         metadata?.startPeriodicRetry()
         let application = Application(
             router: buildRouter(store: store, metadata: metadata, certificateSHA256: pin,
-                                 publicURL: publicAccess?.publicURL, pairing: pairing), server: server,
+                                 publicURL: publicAccess?.publicURL, pairing: pairing,
+                                 remoteAccess: .listener(publicAccess)), server: server,
             configuration: .init(address: .hostname(options.hostname, port: options.port), serverName: "SupersEmu"),
             onServerRunning: onServerRunning)
         let publicApplication = publicAccess.map { access in
@@ -230,18 +231,19 @@ public enum ServerBootstrap {
         guard rotateToken || !FileManager.default.fileExists(atPath: url.path) else { return (admin, false) }
         let (tokenID, token) = try store.createAPIToken(ownerUserID: admin.id, name: "local-cli", scopes: Scope.allCases)
         let runningAsRoot = getuid() == 0
+        // Prepared beside the real file and renamed over it, so a failed rotation keeps the old token file.
+        let staged = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
         do {
-            try? FileManager.default.removeItem(at: url)
-            guard FileManager.default.createFile(atPath: url.path, contents: Data(token.utf8),
+            guard FileManager.default.createFile(atPath: staged.path, contents: Data(token.utf8),
                                                  attributes: [.posixPermissions: runningAsRoot ? 0o640 : 0o600]) else {
                 throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
             }
-            if runningAsRoot, chown(url.path, 0, 80) != 0 { // gid 80 = admin
-                let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EPERM)
-                try? FileManager.default.removeItem(at: url)
-                throw error
+            if runningAsRoot, chown(staged.path, 0, 80) != 0 { // gid 80 = admin
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EPERM)
             }
+            guard rename(staged.path, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         } catch {
+            try? FileManager.default.removeItem(at: staged)
             // Never leave a live all-scope token behind that no file holds.
             try? store.revokeAPIToken(tokenID)
             throw error

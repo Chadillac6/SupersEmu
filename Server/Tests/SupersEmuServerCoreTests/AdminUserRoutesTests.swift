@@ -2,6 +2,7 @@ import Foundation
 import GRDB
 import Hummingbird
 import HummingbirdTesting
+import Logging
 import SupersEmuKit
 @testable import SupersEmuServerCore
 import XCTest
@@ -112,6 +113,24 @@ final class AdminUserRoutesTests: XCTestCase {
                 XCTAssertNil(status.publicURL)
             }
         }
+    }
+
+    func testRemoteAccessStatusReportsListenerStartedByOverride() async throws {
+        let saved = try PublicAccessConfiguration(enabled: false, publicURL: URL(string: "https://games.supersemu.com")!)
+        try JSONEncoder().encode(saved).write(to: store.paths.root.appendingPathComponent(PublicAccessConfiguration.fileName))
+        var options = ServerRunOptions()
+        options.publicURL = URL(string: "https://override.supersemu.com")
+        let resolved = ServerLauncher.resolvePublicAccess(
+            root: store.paths.root, options: options, logger: Logger(label: "test"))
+        XCTAssertNotNil(resolved.publicAccess)
+
+        let active = await store.remoteAccessStatus(source: .listener(resolved.publicAccess))
+        XCTAssertTrue(active.enabled)
+        XCTAssertEqual(active.publicURL?.absoluteString, "https://override.supersemu.com")
+
+        let off = await store.remoteAccessStatus(source: .listener(nil))
+        XCTAssertFalse(off.enabled)
+        XCTAssertEqual(off.publicURL?.absoluteString, "https://games.supersemu.com")
     }
 
     func testRemoteAccessStatusTokenAbsentAndPublicRouterHidesAdminRoute() async throws {
