@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import GRDB
+import Logging
 import SupersEmuKit
 
 public enum BackupError: Error, CustomStringConvertible, Equatable {
@@ -54,6 +55,7 @@ public actor BackupManager {
     private let serverName: String
     private var busy = false
     private var restoreHandler: (@Sendable (BackupInfo) async -> Void)?
+    private let logger = Logger(label: "supersemu-backups")
 
     static let folderPrefix = "SupersEmu-"
     static let manifestName = "manifest.json"
@@ -80,8 +82,13 @@ public actor BackupManager {
         return state
     }
 
-    private func save(_ state: State) {
-        try? Self.encoder.encode(state).write(to: stateURL, options: .atomic)
+    private func save(_ state: State) throws {
+        try Self.encoder.encode(state).write(to: stateURL, options: .atomic)
+    }
+
+    /// Run history is informational: a failed write is logged, never turned into a failed backup.
+    private func saveRunHistory(_ state: State) {
+        do { try save(state) } catch { logger.error("Couldn't record the backup run in \(stateURL.path): \(error)") }
     }
 
     public func config() -> BackupConfig { loadState().config }
@@ -107,7 +114,7 @@ public actor BackupManager {
         }
         if let includeROMs = update.includeROMs { state.config.includeROMs = includeROMs }
         if let enabled = update.scheduleEnabled { state.config.scheduleEnabled = enabled }
-        save(state)
+        try save(state)
         return state.config
     }
 
@@ -171,13 +178,13 @@ public actor BackupManager {
             state = loadState()
             state.last = BackupRunResult(at: now, trigger: trigger, ok: true, backupID: info.id)
             state.lastSuccessAt = now
-            save(state)
+            saveRunHistory(state)
             prune(keep: state.config.keep, in: destination(for: state.config))
             return info
         } catch {
             state = loadState()
             state.last = BackupRunResult(at: now, trigger: trigger, ok: false, error: "\(error)")
-            save(state)
+            saveRunHistory(state)
             throw error
         }
     }
@@ -240,11 +247,19 @@ public actor BackupManager {
         }
     }
 
+    /// Top-level `.json` files that are local state, not settings: never backed up, and left alone by a restore.
+    static let unmanagedStateFiles: Set<String> = ["backups.json", "ddns-state.json"]
+
+    /// A top-level settings file that backups copy and restores replace.
+    static func isSettingsFile(_ name: String) -> Bool {
+        name.hasSuffix(".json") && !unmanagedStateFiles.contains(name)
+    }
+
     /// Top-level entries of the data directory that go into a backup.
     static func items(paths: ServerPaths, includeROMs: Bool) -> [String] {
         var items = ["library.sqlite", "users", "artwork", "tls", "admin.token"]
         let settings = ((try? FileManager.default.contentsOfDirectory(atPath: paths.root.path)) ?? [])
-            .filter { $0.hasSuffix(".json") && $0 != "backups.json" && $0 != "ddns-state.json" }
+            .filter(isSettingsFile)
             .sorted()
         items += settings
         if includeROMs { items += ["games", "bios"] }
@@ -358,8 +373,8 @@ public actor BackupManager {
         let dataItems = backedUp.subtracting(libraryItems)
         var replaced = ["library.sqlite", "library.sqlite-wal", "library.sqlite-shm", "users", "tls", "admin.token"]
         // Settings files added after the backup go too, so the restored server has the backup's settings.
-        let live = ((try? fm.contentsOfDirectory(atPath: paths.root.path)) ?? []).filter { $0.hasSuffix(".json") && $0 != "backups.json" }
-        replaced += Set(live).union(dataItems.filter { $0.hasSuffix(".json") }).sorted()
+        let live = ((try? fm.contentsOfDirectory(atPath: paths.root.path)) ?? []).filter(isSettingsFile)
+        replaced += Set(live).union(dataItems.filter(isSettingsFile)).sorted()
         var record = RestoreRecord(safety: safety)
         do {
             func keep(_ live: URL, in kept: URL) throws {

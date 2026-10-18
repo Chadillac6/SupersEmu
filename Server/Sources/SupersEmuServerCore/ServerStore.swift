@@ -112,14 +112,21 @@ public final class ServerStore: @unchecked Sendable {
 
     /// Issues a device token for `userID`. The plaintext token is returned once; only its hash is stored.
     public func createDeviceToken(userID: String, deviceName: String) throws -> (deviceID: String, token: String) {
-        let token = Self.newToken(prefix: "sed_")
+        try db.write { db in try Self.insertDevice(db, userID: userID, name: deviceName, at: Date()) }
+    }
+
+    /// Inserts a device row inside an existing write transaction. The plaintext token is returned once.
+    static func insertDevice(_ db: Database, userID: String, name: String, at: Date) throws -> (deviceID: String, token: String) {
+        let token = newToken(prefix: "sed_")
         let deviceID = UUID().uuidString.lowercased()
-        try db.write { db in
-            try db.execute(sql: """
-                INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)
-                """, arguments: [deviceID, userID, deviceName, Self.hash(token), Date()])
-        }
+        try db.execute(sql: "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+                       arguments: [deviceID, userID, name, hash(token), at])
         return (deviceID, token)
+    }
+
+    /// The user with `id`, unless they don't exist or were removed.
+    static func activeUser(id: String, in db: Database) throws -> UserInfo? {
+        try Row.fetchOne(db, sql: "SELECT * FROM users WHERE id = ? AND revoked_at IS NULL", arguments: [id]).map(user(from:))
     }
 
     /// Issues a scoped API token (bots, scripts, OpenClaw) acting on behalf of `ownerUserID`.
@@ -175,8 +182,13 @@ public final class ServerStore: @unchecked Sendable {
     }
 
     func audit(_ auth: AuthContext?, action: String, detail: String? = nil, in db: Database) throws {
+        try Self.insertAudit(db, auth, action: action, detail: detail)
+    }
+
+    /// The one place that writes an `audit_log` row, inside an existing write transaction.
+    static func insertAudit(_ db: Database, _ auth: AuthContext?, action: String, detail: String?, at: Date = Date()) throws {
         try db.execute(sql: "INSERT INTO audit_log (at, actor_user_id, actor_credential, action, detail) VALUES (?, ?, ?, ?, ?)",
-                       arguments: [Date(), auth?.user.id, auth?.credentialID, action, detail])
+                       arguments: [at, auth?.user.id, auth?.credentialID, action, detail])
     }
 
     static func user(from row: Row) -> UserInfo {

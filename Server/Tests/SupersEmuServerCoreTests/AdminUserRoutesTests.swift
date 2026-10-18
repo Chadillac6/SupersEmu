@@ -331,6 +331,10 @@ final class AdminUserRoutesTests: XCTestCase {
             }
             try await client.execute(uri: "/v1/admin/users", method: .post, headers: headers,
                                      body: try self.json(CreateUserRequest(displayName: ""))) { XCTAssertEqual($0.status, .badRequest) }
+            try await client.execute(uri: "/v1/admin/users", method: .post, headers: headers,
+                                     body: try self.json(CreateUserRequest(displayName: String(repeating: "a", count: 101)))) {
+                XCTAssertEqual($0.status, .badRequest, "create and rename share the 100-character limit")
+            }
             try await client.execute(uri: "/v1/admin/users", method: .get, headers: headers) {
                 XCTAssertEqual(try self.decode([UserInfo].self, $0).map(\.role), [.admin, .player])
             }

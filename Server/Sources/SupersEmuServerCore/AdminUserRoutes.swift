@@ -14,36 +14,29 @@ extension TokenInfo: ResponseEncodable {}
 func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: ServerStore) {
     let admin = group.group("admin")
 
-    @Sendable func adminCaller(_ context: SERequestContext) throws -> AuthContext {
-        let auth = try context.caller()
-        try auth.requireAdmin()
-        try auth.require(.usersAdmin)
-        return auth
-    }
-
     @Sendable func libraryAdminCaller(_ context: SERequestContext) throws -> AuthContext {
-        let auth = try adminCaller(context)
+        let auth = try requireUsersAdmin(context)
         try auth.require(.libraryWrite)
         return auth
     }
 
     admin.get("status") { _, context in
-        _ = try adminCaller(context)
+        _ = try requireUsersAdmin(context)
         return try store.adminStatus()
     }
 
     admin.get("remote-access") { _, context in
-        _ = try adminCaller(context)
+        _ = try requireUsersAdmin(context)
         return await store.remoteAccessStatus()
     }
 
     admin.get("users") { _, context in
-        _ = try adminCaller(context)
+        _ = try requireUsersAdmin(context)
         return try store.listUsers()
     }
 
     admin.get("users/:id/games") { _, context in
-        _ = try adminCaller(context)
+        _ = try requireUsersAdmin(context)
         let id = try context.parameters.require("id")
         return try store.userGameAccess(userID: id)
     }
@@ -56,49 +49,44 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
     }
 
     admin.patch("users/:id") { request, context in
-        let auth = try adminCaller(context)
+        let auth = try requireUsersAdmin(context)
         let id = try context.parameters.require("id")
         let body = try await request.decode(as: UpdateUserRequest.self, context: context)
-        let name = body.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name.count <= 100 else {
-            throw HTTPError(.badRequest, message: "displayName must be 1 to 100 characters")
-        }
-        return try store.updateUser(id: id, displayName: name, by: auth)
+        return try store.updateUser(id: id, displayName: try validatedDisplayName(body.displayName), by: auth)
     }
 
     admin.delete("users/:id") { _, context in
-        let auth = try adminCaller(context)
+        let auth = try requireUsersAdmin(context)
         let id = try context.parameters.require("id")
         return try store.removeUser(id: id, by: auth)
     }
 
     admin.post("users") { request, context in
-        let auth = try adminCaller(context)
+        let auth = try requireUsersAdmin(context)
         let body = try await request.decode(as: CreateUserRequest.self, context: context)
-        let name = body.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { throw HTTPError(.badRequest, message: "displayName is required") }
+        let name = try validatedDisplayName(body.displayName)
         return EditedResponse(status: .created, response: try store.createPlayer(displayName: name, by: auth))
     }
 
     admin.get("devices") { _, context in
-        _ = try adminCaller(context)
+        _ = try requireUsersAdmin(context)
         return try store.listDevices()
     }
 
     admin.delete("devices/:id") { _, context in
-        let auth = try adminCaller(context)
+        let auth = try requireUsersAdmin(context)
         let id = try context.parameters.require("id")
         guard let device = try store.revokeDevice(id: id, by: auth) else { throw HTTPError(.notFound, message: "No device \(id)") }
         return device
     }
 
     admin.get("tokens") { _, context in
-        _ = try adminCaller(context)
+        _ = try requireUsersAdmin(context)
         return try store.listAPITokens()
     }
 
     admin.post("tokens") { request, context in
-        let auth = try adminCaller(context)
+        let auth = try requireUsersAdmin(context)
         let body = try await request.decode(as: CreateTokenRequest.self, context: context)
         let name = body.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw HTTPError(.badRequest, message: "name is required") }
@@ -112,9 +100,18 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
     }
 
     admin.delete("tokens/:id") { _, context in
-        let auth = try adminCaller(context)
+        let auth = try requireUsersAdmin(context)
         let id = try context.parameters.require("id")
         guard let info = try store.revokeAPIToken(id: id, by: auth) else { throw HTTPError(.notFound, message: "No token \(id)") }
         return info
     }
+}
+
+/// Trimmed display name for a new or renamed user: 1 to 100 characters.
+func validatedDisplayName(_ raw: String) throws -> String {
+    let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, name.count <= 100 else {
+        throw HTTPError(.badRequest, message: "displayName must be 1 to 100 characters")
+    }
+    return name
 }

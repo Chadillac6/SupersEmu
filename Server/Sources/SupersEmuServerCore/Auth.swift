@@ -23,6 +23,11 @@ public struct AuthContext: Sendable, Equatable {
         }
     }
 
+    /// The paired device's ID, or nil for an API token.
+    public var deviceID: String? {
+        if case .device(let id) = credential { id } else { nil }
+    }
+
     /// Devices act with their user's full rights; API tokens are limited to their scopes.
     public func has(_ scope: Scope) -> Bool {
         switch credential {

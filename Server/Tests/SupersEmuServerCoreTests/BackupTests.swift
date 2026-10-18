@@ -110,6 +110,31 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(String(decoding: try Data(contentsOf: record.safety.appendingPathComponent("options.json")), as: UTF8.self), "{}")
     }
 
+    func testRestoreLeavesFilesThatAreNeverBackedUp() async throws {
+        try write("{\"ip\":\"203.0.113.10\"}", "ddns-state.json")
+        let backup = try await store.backups.create()
+        let paths = store.paths
+        try store.close()
+        let record = try BackupManager.applyRestore(folder: URL(fileURLWithPath: backup.path), to: paths)
+        store = try ServerStore.open(paths: paths)
+        XCTAssertEqual(read("ddns-state.json"), "{\"ip\":\"203.0.113.10\"}")
+        XCTAssertNotNil(read("backups.json"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: record.safety.appendingPathComponent("ddns-state.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: record.safety.appendingPathComponent("backups.json").path))
+    }
+
+    func testConfigWriteFailureIsReportedButBackupsStillRun() async throws {
+        let stateURL = store.paths.root.appendingPathComponent("backups.json")
+        try FileManager.default.removeItem(at: stateURL)
+        try FileManager.default.createDirectory(at: stateURL.appendingPathComponent("blocked"), withIntermediateDirectories: true)
+        do {
+            _ = try await store.backups.updateConfig(.init(destination: scratch.appendingPathComponent("drive").path, keep: 3))
+            XCTFail("a config that wasn't saved must not report success")
+        } catch {}
+        let backup = try await store.backups.create()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backup.path), "a history write failure doesn't fail the backup")
+    }
+
     func testSecondRestoreKeepsTheFirstRestoresCopy() async throws {
         let backup = try await store.backups.create()
         try write("wednesday", "users/u1/saves/rev1")

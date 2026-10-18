@@ -46,8 +46,7 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
             if case .apiToken(_, let scopes) = auth.credential { return scopes.sorted { $0.rawValue < $1.rawValue } }
             return nil
         }()
-        let deviceID: String? = { if case .device(let id) = auth.credential { return id }; return nil }()
-        return MeResponse(user: auth.user, deviceID: deviceID, scopes: scopes)
+        return MeResponse(user: auth.user, deviceID: auth.deviceID, scopes: scopes)
     }
     authed.delete("devices/self") { _, context in
         let auth = try context.caller()
@@ -62,7 +61,7 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
         return LibraryResponse(games: try LibraryQueries.visibleGames(for: auth, store: store))
     }
 
-    // Each Wave 1 track owns one of these files and fills in its routes.
+    // One register function per feature file. Admin-only groups are only served on the local (LAN) router.
     registerLibraryRoutes(authed, store: store)
     registerBIOSRoutes(authed, store: store)
     registerPairingRoutes(public: router.group("v1"), authed: authed, store: store,
