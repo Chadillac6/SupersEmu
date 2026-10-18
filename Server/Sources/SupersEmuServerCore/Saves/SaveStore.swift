@@ -182,7 +182,7 @@ public struct SaveStore: Sendable {
                 let pruned: [String]
                 if upload.kind == .auto {
                     pruned = try pruneAutoRevisions(db, userID: userID, gameID: upload.gameID)
-                } else if upload.kind == .manual, upload.slot.hasSuffix("-shot") {
+                } else if upload.kind == .manual, Self.isScreenshotSlot(upload.slot) {
                     pruned = try pruneScreenshotRevisions(db, userID: userID, gameID: upload.gameID, slot: upload.slot)
                 } else {
                     pruned = []
@@ -222,6 +222,14 @@ public struct SaveStore: Sendable {
             """, arguments: [userID, gameID, userID, gameID, userID, gameID, userID, gameID,
                                 configuration.autoRevisionsKept - 1])
         return try deleteRevisions(rows, db: db, userID: userID, gameID: gameID)
+    }
+
+    /// The screenshot lines the app writes: "auto-shot" and "slot<N>-shot". Any other manual slot keeps its history.
+    static func isScreenshotSlot(_ slot: String) -> Bool {
+        if slot == "auto-shot" { return true }
+        guard slot.hasPrefix("slot"), slot.hasSuffix("-shot") else { return false }
+        let number = slot.dropFirst(4).dropLast(5)
+        return !number.isEmpty && number.allSatisfy(\.isASCII) && number.allSatisfy(\.isNumber)
     }
 
     /// Screenshots are previews, not progress: keeps the newest `autoRevisionsKept` per device on one screenshot line

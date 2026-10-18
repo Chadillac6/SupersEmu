@@ -317,6 +317,8 @@ struct GameDetailView: View {
         VStack(spacing: 10) {
             if let remoteProgress {
                 continueCard(remoteProgress, game: game)
+                // The remote save can't load here, so keep this device's own Play / Resume.
+                if !remoteProgress.loadable { playButton(game) }
             } else {
                 playButton(game)
             }

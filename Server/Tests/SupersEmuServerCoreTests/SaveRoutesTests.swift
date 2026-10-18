@@ -158,10 +158,19 @@ final class SaveRoutesTests: XCTestCase {
                 slotParent = try await self.upload(client, token: self.iPhone.token, kind: .manual, slot: "slot1",
                                                    parent: slotParent, body: "slot-\(index)")!.revision.id
             }
+            var backupParent: String?
+            for index in 0..<4 {
+                backupParent = try await self.upload(client, token: self.iPhone.token, kind: .manual, slot: "backup-shot",
+                                                     parent: backupParent, body: "backup-\(index)")!.revision.id
+            }
 
             let revisions = try await self.list(client, token: self.iPhone.token)
             XCTAssertEqual(revisions.filter { $0.slot == "auto-shot" }.map(\.id), Array(shots.suffix(2)) + [macShot])
             XCTAssertEqual(revisions.filter { $0.slot == "slot1" }.count, 4)
+            XCTAssertEqual(revisions.filter { $0.slot == "backup-shot" }.count, 4)
+            XCTAssertTrue(SaveStore.isScreenshotSlot("slot2-shot"))
+            XCTAssertFalse(SaveStore.isScreenshotSlot("slot-shot"))
+            XCTAssertFalse(SaveStore.isScreenshotSlot("backup-shot"))
             let files = try FileManager.default.contentsOfDirectory(
                 atPath: self.store.paths.userDirectory(self.chad.id).appendingPathComponent("saves/\(self.game)").path)
             XCTAssertEqual(Set(files), Set(revisions.map(\.id)))
