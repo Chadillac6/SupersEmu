@@ -14,11 +14,9 @@ enum BIOSLibrary {
     }
 
     static func md5Hex(of url: URL) throws -> String {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
         var hasher = Insecure.MD5()
-        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
-        return hasher.finalize().hex
+        try Hashing.update(&hasher, withContentsOf: url)
+        return hasher.finalize().hexString
     }
 
     static func files(store: ServerStore) throws -> [BIOSFileInfo] {

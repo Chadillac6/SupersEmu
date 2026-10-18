@@ -290,6 +290,6 @@ final class GameLibrary {
 
     nonisolated static func sha256(of url: URL) throws -> String {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return Hashing.sha256Hex(data)
     }
 }

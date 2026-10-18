@@ -60,7 +60,7 @@ public struct BIOSStore: Sendable {
         let url = directory.appendingPathComponent(known.filename)
         guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value,
               size == known.size, let data = try? Data(contentsOf: url, options: .mappedIfSafe),
-              Insecure.MD5.hash(data: data).map({ String(format: "%02x", $0) }).joined() == known.md5 else { return nil }
+              Insecure.MD5.hash(data: data).hexString == known.md5 else { return nil }
         return BIOSFileInfo(id: Self.sha256(data), filename: known.filename, system: known.system, region: known.region, required: known.required)
     }
 
@@ -132,7 +132,7 @@ public struct BIOSStore: Sendable {
     }
 
     static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        Hashing.sha256Hex(data)
     }
 
     private func manifest() -> [ManifestEntry] {

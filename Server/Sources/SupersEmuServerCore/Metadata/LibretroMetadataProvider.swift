@@ -77,11 +77,11 @@ public actor LibretroMetadataProvider: MetadataProvider {
         guard let expected = set.files[kind] else { throw LibretroError.notPinned }
         let url = cacheRoot.appendingPathComponent("libretro-database").appendingPathComponent(catalog.databaseCommit)
             .appendingPathComponent(kind == "source" ? set.source : kind).appendingPathComponent("\(set.name).dat")
-        if let data = try? Data(contentsOf: url), SHA256.hash(data: data).hex == expected {
+        if let data = try? Data(contentsOf: url), SHA256.hash(data: data).hexString == expected {
             return String(decoding: data, as: UTF8.self)
         }
         guard let data = try await http.get(catalog.datURL(set, kind: kind)) else { throw LibretroError.notFound }
-        guard SHA256.hash(data: data).hex == expected else { throw LibretroError.checksumMismatch }
+        guard SHA256.hash(data: data).hexString == expected else { throw LibretroError.checksumMismatch }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
         return String(decoding: data, as: UTF8.self)

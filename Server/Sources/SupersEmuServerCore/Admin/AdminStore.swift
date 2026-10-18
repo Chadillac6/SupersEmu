@@ -49,8 +49,8 @@ extension ServerStore {
 
     private func certificateExpiryFromTLS(host: String) async -> Date? {
         let queue = DispatchQueue(label: "com.chadillac6.supersemu.remote-access-certificate")
-        let capturedExpiry = CertificateExpiryCapture()
-        let handshake = CertificateExpiryHandshake()
+        let capturedExpiry = LockedValue<Date?>(nil)
+        let handshake = OnceContinuation<Date?, Never>()
         let tlsOptions = NWProtocolTLS.Options()
         host.withCString {
             sec_protocol_options_set_tls_server_name(tlsOptions.securityProtocolOptions, $0)
@@ -61,7 +61,7 @@ extension ServerStore {
                let leaf = chain.first,
                let certificate = try? Certificate(leaf),
                CertificateHostMatcher.matches(host: host, certificate: certificate) {
-                capturedExpiry.store(certificate.notValidAfter)
+                capturedExpiry.value = certificate.notValidAfter
             }
             complete(true)
         }, queue)
@@ -71,7 +71,7 @@ extension ServerStore {
             port: 443,
             using: NWParameters(tls: tlsOptions))
         let timeout = DispatchWorkItem {
-            if handshake.finish(nil) { connection.cancel() }
+            if handshake.resume(returning: nil) { connection.cancel() }
         }
         return await withCheckedContinuation { continuation in
             handshake.install(continuation)
@@ -79,10 +79,10 @@ extension ServerStore {
                 switch state {
                 case .ready:
                     timeout.cancel()
-                    if handshake.finish(capturedExpiry.value) { connection.cancel() }
+                    if handshake.resume(returning: capturedExpiry.value) { connection.cancel() }
                 case .failed, .cancelled:
                     timeout.cancel()
-                    handshake.finish(nil)
+                    handshake.resume(returning: nil)
                 default:
                     break
                 }
@@ -369,34 +369,6 @@ enum CertificateHostMatcher {
                 && hostLabels.count == suffixLabels.count + 1
                 && hostLabels.dropFirst().elementsEqual(suffixLabels)
         }
-    }
-}
-
-private final class CertificateExpiryCapture: @unchecked Sendable {
-    private let lock = NSLock()
-    private var expiry: Date?
-
-    var value: Date? { lock.withLock { expiry } }
-
-    func store(_ expiry: Date) { lock.withLock { self.expiry = expiry } }
-}
-
-private final class CertificateExpiryHandshake: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Date?, Never>?
-
-    func install(_ continuation: CheckedContinuation<Date?, Never>) {
-        lock.withLock { self.continuation = continuation }
-    }
-
-    @discardableResult
-    func finish(_ expiry: Date?) -> Bool {
-        let continuation = lock.withLock { () -> CheckedContinuation<Date?, Never>? in
-            defer { self.continuation = nil }
-            return self.continuation
-        }
-        continuation?.resume(returning: expiry)
-        return continuation != nil
     }
 }
 

@@ -200,7 +200,7 @@ public final class PairingService: Sendable {
     }
 
     static func hash(_ code: String, salt: String) -> String {
-        SHA256.hash(data: Data("\(salt):\(code)".utf8)).map { String(format: "%02x", $0) }.joined()
+        Hashing.sha256Hex(Data("\(salt):\(code)".utf8))
     }
 
     func pairApprovedDevice(userID: String?, request: PendingPairRequest, caller: AuthContext) throws -> PairResponse {
@@ -363,7 +363,7 @@ actor PairRequestService {
             try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
             throw HTTPError(.notFound, message: "No such pairing request")
         }
-        let suppliedHash = SHA256.hash(data: secretBytes).map { String(format: "%02x", $0) }.joined()
+        let suppliedHash = Hashing.sha256Hex(secretBytes)
         guard Self.constantTimeEquals(entry.claimHash, suppliedHash) else {
             try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
             throw HTTPError(.notFound, message: "No such pairing request")

@@ -17,7 +17,7 @@ final class BIOSStoreTests: XCTestCase {
     }
 
     static func bios(_ bytes: Data, _ filename: String, _ system: SystemID, required: Bool = true) -> BIOSFileInfo {
-        BIOSFileInfo(id: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+        BIOSFileInfo(id: SHA256.hash(data: bytes).hexString,
                      filename: filename, system: system, region: "US", required: required)
     }
 
@@ -145,7 +145,7 @@ final class BIOSStoreTests: XCTestCase {
 
     static func known(_ bytes: Data, _ filename: String, _ system: SystemID) -> KnownBIOS {
         KnownBIOS(filename: filename, system: system, region: "US", required: true,
-                  md5: Insecure.MD5.hash(data: bytes).map { String(format: "%02x", $0) }.joined(), size: Int64(bytes.count))
+                  md5: Insecure.MD5.hash(data: bytes).hexString, size: Int64(bytes.count))
     }
 
     func testUserPlacedKnownDumpCountsOfflineWithoutSync() throws {

@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import ImageIO
+import SupersEmuKit
 
 struct SaveSlotInfo: Equatable, Identifiable {
     let slot: Int
@@ -258,6 +259,6 @@ struct SaveSlotStore {
     }
 
     private static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        Hashing.sha256Hex(data)
     }
 }

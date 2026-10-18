@@ -156,11 +156,7 @@ extension LibraryImporter {
     }
 
     static func sha256(of url: URL) throws -> String {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        var hasher = SHA256()
-        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        try Hashing.sha256Hex(ofFileAt: url)
     }
 
     static func byteString(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }

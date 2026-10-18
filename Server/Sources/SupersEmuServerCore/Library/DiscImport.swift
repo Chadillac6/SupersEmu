@@ -81,7 +81,7 @@ extension LibraryImporter {
                 var hasher = SHA256()
                 hasher.update(data: cue.normalized)
                 for track in tracks { hasher.update(data: Data(track.sha.utf8)) }
-                disc.id = hasher.finalize().hex
+                disc.id = hasher.finalize().hexString
                 if Set(tracks.map(\.sha)).count != tracks.count {
                     disc.reason = "Two tracks in the cue sheet have identical contents"
                     return disc
@@ -192,7 +192,7 @@ extension LibraryImporter {
             guard multi else { return discs[0].id }
             var hasher = SHA256()
             hasher.update(data: Data(discs.map(\.id).sorted().joined(separator: "\n").utf8))
-            return hasher.finalize().hex
+            return hasher.finalize().hexString
         }()
         let system = discs[0].system!
         if try store.db.read({ try Int.fetchOne($0, sql: "SELECT needs_review FROM games WHERE id = ?", arguments: [gameID]) }) == 0 {
@@ -252,10 +252,10 @@ extension LibraryImporter {
                 let needsRewrite = cue.files.contains { lineNames[$0.line] != $0.name }
                 if needsRewrite { try cue.rewritten(names: lineNames).write(to: cueURL) }
                 let data = try Data(contentsOf: cueURL)
-                guard needsRewrite || SHA256.hash(data: data).hex == cueFile.sha else {
+                guard needsRewrite || SHA256.hash(data: data).hexString == cueFile.sha else {
                     return .unsupported("\(cueFile.candidate.label): changed while importing")
                 }
-                rows.insert(Row(id: SHA256.hash(data: data).hex, filename: cueURL.lastPathComponent, role: .cue,
+                rows.insert(Row(id: SHA256.hash(data: data).hexString, filename: cueURL.lastPathComponent, role: .cue,
                                 size: Int64(data.count), disc: number), at: rows.firstIndex { $0.disc == number } ?? rows.count)
                 launchNames.append(cueURL.lastPathComponent)
             } else if let name = disc.files.first.flatMap({ storedNames[$0.candidate.key] }) {
@@ -266,7 +266,7 @@ extension LibraryImporter {
             let data = Data((launchNames.joined(separator: "\n") + "\n").utf8)
             let name = unique(title + ".m3u", disc: 0)
             try data.write(to: temp.appendingPathComponent(name))
-            rows.insert(Row(id: SHA256.hash(data: data).hex, filename: name, role: .m3u, size: Int64(data.count), disc: nil), at: 0)
+            rows.insert(Row(id: SHA256.hash(data: data).hexString, filename: name, role: .m3u, size: Int64(data.count), disc: nil), at: 0)
         }
 
         guard Set(rows.map(\.id)).count == rows.count else {

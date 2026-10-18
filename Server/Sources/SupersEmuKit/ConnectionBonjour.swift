@@ -143,13 +143,13 @@ public final class ServerBrowser: @unchecked Sendable {
     ) async throws -> URL {
         let connection = NWConnection(to: server.endpoint, using: parameters)
         let queue = DispatchQueue(label: "com.chadillac6.supersemu.bonjour-resolve")
-        let waitingErrors = LatestWaitingError()
+        let waitingError = LockedValue<NWError?>(nil)
         defer { connection.cancel() }
         return try await withThrowingTaskGroup(of: URL.self) { group in
             group.addTask {
                 try await withTaskCancellationHandler {
                     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
-                        let resumed = ResumeOnce()
+                        let resumed = OnceContinuation(continuation)
                         connection.stateUpdateHandler = { state in
                             switch ResolveOutcome.next(
                                 state: state,
@@ -157,18 +157,16 @@ public final class ServerBrowser: @unchecked Sendable {
                                 scheme: server.scheme
                             ) {
                             case .keepWaiting(let error):
-                                waitingErrors.store(error)
+                                waitingError.value = error
                             case .resolved(let url):
-                                resumed.run { continuation.resume(returning: url) }
+                                resumed.resume(returning: url)
                             case .failed(let error):
-                                resumed.run {
-                                    continuation.resume(throwing: ResolveAttemptFailure.connection(
-                                        error,
-                                        waitingError: waitingErrors.latest
-                                    ))
-                                }
+                                resumed.resume(throwing: ResolveAttemptFailure.connection(
+                                    error,
+                                    waitingError: waitingError.value
+                                ))
                             case .cancelled:
-                                resumed.run { continuation.resume(throwing: CancellationError()) }
+                                resumed.resume(throwing: CancellationError())
                             case .ignore:
                                 break
                             }
@@ -181,7 +179,7 @@ public final class ServerBrowser: @unchecked Sendable {
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw ResolveAttemptFailure.timedOut(waitingErrors.latest)
+                throw ResolveAttemptFailure.timedOut(waitingError.value)
             }
             let url = try await group.next()!
             group.cancelAll()
@@ -254,33 +252,5 @@ enum ResolveAttemptFailure: Error {
         case .timedOut(let waitingError):
             return waitingError ?? URLError(.timedOut)
         }
-    }
-}
-
-private final class LatestWaitingError: @unchecked Sendable {
-    private let lock = NSLock()
-    private var error: NWError?
-
-    var latest: NWError? {
-        lock.lock()
-        defer { lock.unlock() }
-        return error
-    }
-
-    func store(_ error: NWError) {
-        lock.lock()
-        defer { lock.unlock() }
-        self.error = error
-    }
-}
-
-private final class ResumeOnce: @unchecked Sendable {
-    private let lock = NSLock()
-    private var done = false
-    func run(_ body: () -> Void) {
-        lock.lock(); defer { lock.unlock() }
-        guard !done else { return }
-        done = true
-        body()
     }
 }
