@@ -69,10 +69,11 @@ struct GameDetailView: View {
         }
         .task(id: item.id) {
             if item.system?.requiresBIOS == true { await bios.sync(using: server) }
-            await loadRemoteProgress()
             guard item.source == .server, server.isOnline else { return }
             detail = try? await server.detail(for: item.id)
         }
+        // Re-checks once a download finishes, since a cloud-only game has no local save to compare against.
+        .task(id: playableGame?.id) { await loadRemoteProgress() }
     }
 
     private var header: some View {

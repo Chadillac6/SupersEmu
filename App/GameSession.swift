@@ -756,7 +756,16 @@ final class GameSession {
             guard let file else { return self.resume() }
             self.isSyncing = true
             self.status = "Loading save from \(device)…"
-            await self.pull([file])
+            do {
+                if file.line.kind == .manual { await self.pendingDiscard?.value }
+                // Tapping Load is the user's choice, so take the newer save without asking again. Resolving keeps
+                // this device's copy on the server as a branch when it has unsynced progress.
+                try await self.sync.engine.resolve(
+                    SaveConflict(line: file.line, remote: revision), choice: .useRemote, file: file)
+                if let slot { await self.recordRemoteSlot(slot, revision) }
+            } catch {
+                self.diagnosticsLog?.appendEvent("save-state load remote failed: \(error.localizedDescription)")
+            }
             self.isSyncing = false
             guard self.hasStarted, let loop = self.emulationLoop,
                   (try? Data(contentsOf: file.url)).map(SaveSyncEngine.sha256) == revision.sha256 else {

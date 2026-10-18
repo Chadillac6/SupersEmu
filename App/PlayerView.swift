@@ -85,10 +85,12 @@ struct PlayerView: View {
             if let name = session.disconnectedController, !session.isMenuOpen && !session.isShowingSaveSlots {
                 DisconnectPrompt(session: session, name: name)
             }
-            if let newer = session.newerElsewhere, session.pendingConflict == nil, !session.isSyncing {
+            if let newer = session.newerElsewhere, session.pendingConflict == nil, !session.isSyncing,
+               !session.isMenuOpen, !session.isShowingSaveSlots {
                 NewerSaveBanner(revision: newer, load: session.loadNewerSave, dismiss: session.dismissNewerSave)
                     .padding(.horizontal, 16)
-                    .padding(.top, 12)
+                    // Clears the Library / Menu / Save / Load bar.
+                    .padding(.top, 56)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
