@@ -341,6 +341,36 @@ final class SaveSyncEngineTests: XCTestCase {
         }
     }
 
+    func testN64StatesMoveBetweenRendererBuilds() async throws {
+        // The same Mupen64Plus-Next commit reports "-GLES3" on iPhone/iPad and "-OpenGL" on the Mac; the state is the same.
+        try await withServer { server in
+            let phone = try self.device("Chad's iPhone", server: server)
+            let mac = try self.device("Chad's Mac", server: server)
+            let iOSCore = SaveCore(id: "mupen64plus_next", version: "3.0-GLES3 git (12edd2c)")
+            let macCore = SaveCore(id: "mupen64plus_next", version: "3.0-OpenGL git (12edd2c)")
+            let slot = SaveLine(gameID: self.game, kind: .manual, slot: "slot1")
+            try phone.write(self.auto, "dk64-auto")
+            try phone.write(slot, "dk64-slot1")
+            await phone.engine.enqueueUpload(phone.file(self.auto, core: iOSCore))
+            await phone.engine.enqueueUpload(phone.file(slot, core: iOSCore))
+            await phone.engine.flush()
+
+            let outcomes = await mac.engine.prepare([mac.file(self.auto, core: macCore), mac.file(slot, core: macCore)])
+            guard case .downloaded = outcomes[self.auto.key] else { return XCTFail("\(outcomes)") }
+            guard case .downloaded = outcomes[slot.key] else { return XCTFail("\(outcomes)") }
+            XCTAssertEqual(mac.read(self.auto), "dk64-auto")
+            XCTAssertEqual(mac.read(slot), "dk64-slot1")
+
+            // A different core commit is still a different state format.
+            let otherCommit = SaveCore(id: "mupen64plus_next", version: "3.0-OpenGL git (abc1234)")
+            try phone.write(self.auto, "dk64-auto-2")
+            await phone.engine.enqueueUpload(phone.file(self.auto, core: iOSCore))
+            await phone.engine.flush()
+            let blocked = await mac.engine.prepare([mac.file(self.auto, core: otherCommit)])
+            guard case .incompatible = blocked[self.auto.key] else { return XCTFail("\(blocked)") }
+        }
+    }
+
     func testIncompatibleCoreStateIsNeverLoaded() async throws {
         try await withServer { server in
             let phone = try self.device("Chad's iPhone", server: server)

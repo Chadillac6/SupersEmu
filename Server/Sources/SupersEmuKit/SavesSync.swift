@@ -32,6 +32,19 @@ public struct SaveCore: Hashable, Codable, Sendable {
     public var version: String
     public init(id: String, version: String) { self.id = id; self.version = version }
     public static let unknown = SaveCore(id: "unknown", version: "unknown")
+
+    /// The part of `version` that decides whether a state loads. Mupen64Plus-Next names its renderer in the version
+    /// ("3.0-GLES3 git" on iPhone/iPad, "3.0-OpenGL git" on the Mac); the state format is the same for one commit.
+    public static func stateFormat(id: String, version: String) -> String {
+        guard id == "mupen64plus_next" else { return version }
+        return version.replacingOccurrences(of: #"-(GLES2|GLES3|OpenGL|Vulkan)(?= |\(|$)"#, with: "",
+                                            options: .regularExpression)
+    }
+
+    public func canLoadState(from revision: SaveRevision) -> Bool {
+        revision.coreID == id
+            && Self.stateFormat(id: id, version: revision.coreVersion) == Self.stateFormat(id: id, version: version)
+    }
 }
 
 /// A save file on this device that should match its server line.
@@ -50,7 +63,7 @@ public struct LocalSaveFile: Sendable {
     public func canLoad(_ revision: SaveRevision) -> Bool {
         guard requiresMatchingCore else { return true }
         guard let core else { return false }
-        return revision.coreID == core.id && revision.coreVersion == core.version
+        return core.canLoadState(from: revision)
     }
 }
 
