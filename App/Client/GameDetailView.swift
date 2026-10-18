@@ -9,7 +9,9 @@ struct GameDetailView: View {
     let item: LibraryItem
     let onPlay: (Game) -> Void
     let onStartFresh: (Game) -> Void
+    var onKeepLocal: (Game, SaveRevision) -> Void = { _, _ in }
     @State private var detail: GameDetail?
+    @State private var remoteProgress: RemoteProgress?
     @State private var isConfirmingStartOver = false
     @State private var isShowingCheats = false
 
@@ -67,6 +69,7 @@ struct GameDetailView: View {
         }
         .task(id: item.id) {
             if item.system?.requiresBIOS == true { await bios.sync(using: server) }
+            await loadRemoteProgress()
             guard item.source == .server, server.isOnline else { return }
             detail = try? await server.detail(for: item.id)
         }
@@ -220,9 +223,89 @@ struct GameDetailView: View {
         return count == 0 ? "Cheats" : "Cheats (\(count))"
     }
 
+    private struct RemoteProgress {
+        let revision: SaveRevision
+        let screenshot: Data?
+    }
+
+    /// A resume point another device saved after this one last synced.
+    private func loadRemoteProgress() async {
+        guard let game = playableGame, server.isOnline else { return }
+        let file = LocalSaveFile(line: SaveLine(gameID: game.id, kind: .auto), url: AppPaths.autoState(for: game.id),
+                                 core: nil, requiresMatchingCore: true)
+        guard let head = await SaveSync.shared.engine.newerRemote([file])[file.line.key] else {
+            remoteProgress = nil
+            return
+        }
+        remoteProgress = RemoteProgress(revision: head, screenshot: await SaveSync.shared.screenshot(for: head))
+    }
+
+    private func continueCard(_ progress: RemoteProgress, game: Game) -> some View {
+        let device = progress.revision.deviceName ?? "another device"
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 14) {
+                Group {
+                    if let image = SaveDevice.image(from: progress.screenshot) {
+                        image.resizable().interpolation(.none).aspectRatio(contentMode: .fill)
+                    } else {
+                        WideArt(item: item)
+                    }
+                }
+                .frame(width: 128, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .accessibilityIdentifier("continue-remote-screenshot")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("NEWER PROGRESS").font(Brand.eyebrow).tracking(1.2).foregroundStyle(Brand.Colors.red)
+                    Label(device, systemImage: SaveDevice.symbol(for: device))
+                        .font(.headline)
+                        .foregroundStyle(Brand.Colors.ink)
+                    Text("Saved \(progress.revision.createdAt, format: .relative(presentation: .named))")
+                        .font(.callout)
+                        .foregroundStyle(Brand.Colors.ink2)
+                }
+            }
+            Button {
+                dismiss()
+                onPlay(game)
+            } label: {
+                Label("Continue from \(device)", systemImage: "play.fill")
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(BrandPrimaryButtonStyle())
+            .controlSize(.large)
+            .disabled(playIsDisabled)
+            .accessibilityIdentifier("detail-continue-remote")
+            if game.hasResumePoint {
+                Button {
+                    dismiss()
+                    onKeepLocal(game, progress.revision)
+                } label: {
+                    Label("Use This \(SaveDevice.thisDevice)'s Save", systemImage: SaveDevice.symbol(for: SaveDevice.thisDevice))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(BrandSecondaryButtonStyle())
+                .controlSize(.large)
+                .disabled(playIsDisabled)
+                .accessibilityIdentifier("detail-keep-local")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Brand.Colors.card, in: RoundedRectangle(cornerRadius: Brand.Radii.card))
+        .overlay(RoundedRectangle(cornerRadius: Brand.Radii.card).stroke(Brand.Colors.line, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("continue-remote")
+    }
+
     private func stackedActions(_ game: Game) -> some View {
         VStack(spacing: 10) {
-            playButton(game)
+            if let remoteProgress {
+                continueCard(remoteProgress, game: game)
+            } else {
+                playButton(game)
+            }
             HStack(spacing: 10) { secondaryActions(game, fill: true) }
         }
         .frame(maxWidth: 560)

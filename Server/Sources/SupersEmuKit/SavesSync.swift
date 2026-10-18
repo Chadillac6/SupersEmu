@@ -74,6 +74,7 @@ public struct SaveConflict: Codable, Equatable, Sendable, Identifiable {
     public var id: String { line.key }
     public var deviceName: String { remote.deviceName ?? "another device" }
     public var message: String { "A newer save from \(deviceName) is available" }
+    public init(line: SaveLine, remote: SaveRevision) { self.line = line; self.remote = remote }
 }
 
 public enum SaveConflictChoice: Sendable {
@@ -492,6 +493,8 @@ public actor SaveSyncEngine {
                 let lineRevisions = revisions.filter { $0.kind == file.line.kind && $0.slot == file.line.slot }
                 guard let head = lineRevisions.last(where: \.isHead) ?? lineRevisions.last,
                       head.id != state.lines[file.line.key]?.baseRevisionID,
+                      // This device's own upload that hasn't been recorded as the base yet.
+                      !state.queue.contains(where: { $0.line.key == file.line.key && $0.sha256 == head.sha256 }),
                       (try? Data(contentsOf: file.url)).map(Self.sha256) != head.sha256 else { continue }
                 newer[file.line.key] = head
             }

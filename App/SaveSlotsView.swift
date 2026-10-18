@@ -95,9 +95,24 @@ struct SaveSlotsView: View {
             HStack(spacing: 8) {
                 SaveSlotThumbnail(url: slot.screenshotURL, empty: false, compact: compact)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Slot \(slot.slot)")
-                        .font(.callout.bold())
+                    HStack(spacing: 6) {
+                        Text("Slot \(slot.slot)")
+                            .font(.callout.bold())
+                            .lineLimit(1)
+                        if slot.isNew {
+                            Text("NEW")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Brand.Colors.red, in: Capsule())
+                                .accessibilityIdentifier("save-slot-\(slot.slot)-new")
+                        }
+                    }
+                    Label(slot.deviceName ?? "This \(SaveDevice.thisDevice)",
+                          systemImage: slot.deviceName.map { SaveDevice.symbol(for: $0) } ?? SaveDevice.symbol(for: SaveDevice.thisDevice))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .accessibilityIdentifier("save-slot-\(slot.slot)-device")
                     if let savedAt = slot.savedAt {
                         Text(savedAt.formatted(date: .abbreviated, time: .shortened))
                             .font(.caption)

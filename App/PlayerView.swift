@@ -85,6 +85,13 @@ struct PlayerView: View {
             if let name = session.disconnectedController, !session.isMenuOpen && !session.isShowingSaveSlots {
                 DisconnectPrompt(session: session, name: name)
             }
+            if let newer = session.newerElsewhere, session.pendingConflict == nil, !session.isSyncing {
+                NewerSaveBanner(revision: newer, load: session.loadNewerSave, dismiss: session.dismissNewerSave)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             if let conflict = session.pendingConflict {
                 SaveConflictPrompt(conflict: conflict) { session.resolveConflict($0) }
             } else if session.isSyncing {
