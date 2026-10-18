@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import GRDB
+import Logging
 import SupersEmuKit
 
 /// Imports game files into content-addressed storage at `games/<gameID>/<filename>`, and BIOS files into
@@ -13,6 +14,7 @@ public final class LibraryImporter: @unchecked Sendable {
     let store: ServerStore
     let knownBIOS: [KnownBIOS]
     private static let queue = DispatchQueue(label: "supersemu.library.import")
+    private static let logger = Logger(label: "supersemu-library")
 
     public init(store: ServerStore, knownBIOS: [KnownBIOS] = KnownBIOS.all) {
         self.store = store
@@ -400,15 +402,17 @@ public final class LibraryImporter: @unchecked Sendable {
     static func storedPath(gameID: String, name: String) -> String { "games/\(gameID)/\(name)" }
 
     /// Moves (or copies) `source` to `destination` (a file or a whole game directory), then runs `record` to write its rows.
-    /// Anything already at `destination` is set aside and only deleted once `record` succeeds. If placing or `record`
-    /// fails, the placed item is removed and the previous one restored, so storage always matches the rows.
+    /// Anything already at `destination` is set aside in import staging (which Move Library skips) and only deleted once
+    /// `record` succeeds. If placing or `record` fails, the placed item is removed and the previous one restored, so
+    /// storage always matches the rows.
     func place(_ source: URL, at destination: URL, copying: Bool = false, record: () throws -> Void) throws {
         let fm = FileManager.default
         let parent = destination.deletingLastPathComponent()
         try fm.createDirectory(at: parent, withIntermediateDirectories: true)
         var previous: URL?
         if fm.fileExists(atPath: destination.path) {
-            let aside = parent.appendingPathComponent(".\(destination.lastPathComponent).replaced-\(UUID().uuidString)")
+            try fm.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+            let aside = stagingDirectory.appendingPathComponent("replaced-" + UUID().uuidString)
             try fm.moveItem(at: destination, to: aside)
             previous = aside
         }
@@ -420,7 +424,14 @@ public final class LibraryImporter: @unchecked Sendable {
             if let previous { try? fm.moveItem(at: previous, to: destination) }
             throw error
         }
-        if let previous { try? fm.removeItem(at: previous) }
+        if let previous {
+            do {
+                try fm.removeItem(at: previous)
+            } catch {
+                // The rows already point at the new copy; the old one is only scratch space under import staging now.
+                Self.logger.warning("Couldn't delete replaced copy \(previous.lastPathComponent) in import staging: \(error)")
+            }
+        }
     }
 
     func moveToImported(_ source: URL, incoming: URL, day: String) throws {

@@ -270,11 +270,15 @@ final class LibraryManagementTests: XCTestCase {
 
         XCTAssertThrowsError(try importer.place(replacement, at: queued) { throw WriteFailed() })
         XCTAssertEqual(try Data(contentsOf: queued.appendingPathComponent("Game.chd")), Data([9]), "the queued copy is back")
-        XCTAssertEqual(try fm.contentsOfDirectory(atPath: store.paths.games.path).filter { $0.hasPrefix(".def") }, [])
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: importer.stagingDirectory.path), [], "nothing left set aside")
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: store.paths.games.path).filter { $0 != ".staging" }, ["def"])
 
+        XCTAssertFalse(fm.fileExists(atPath: replacement.path), "the failed copy was discarded")
+        try fm.createDirectory(at: replacement, withIntermediateDirectories: true)
+        try Data([1]).write(to: replacement.appendingPathComponent("Game.chd"))
         try importer.place(replacement, at: queued) {}
         XCTAssertEqual(try Data(contentsOf: queued.appendingPathComponent("Game.chd")), Data([1]))
-        XCTAssertEqual(try fm.contentsOfDirectory(atPath: store.paths.games.path).filter { $0.hasPrefix(".def") }, [], "set-aside copy deleted")
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: importer.stagingDirectory.path), [], "set-aside copy deleted")
     }
 
     func testRematchWithoutMetadataServiceValidatesAndAudits() async throws {
