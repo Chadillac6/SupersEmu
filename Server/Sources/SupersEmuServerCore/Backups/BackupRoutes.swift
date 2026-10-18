@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import Logging
 import SupersEmuKit
 
 extension BackupOverview: ResponseEncodable {}
@@ -35,7 +36,12 @@ func registerBackupRoutes(_ group: RouterGroup<SERequestContext>, store: ServerS
         let auth = try requireUsersAdmin(context)
         let body = try await request.decode(as: CreateBackupRequest.self, context: context)
         let info = try await mapped { try await store.backups.create(trigger: .manual, includeROMs: body.includeROMs) }
-        try store.audit(auth, action: "backup.create", detail: info.id)
+        // The backup already exists on disk, so a failed audit write is logged rather than reported as a failed backup.
+        do {
+            try store.audit(auth, action: "backup.create", detail: info.id)
+        } catch {
+            context.logger.error("Couldn't write the audit entry for backup \(info.id): \(error)")
+        }
         return EditedResponse(status: .created, response: info)
     }
 
@@ -47,9 +53,12 @@ func registerBackupRoutes(_ group: RouterGroup<SERequestContext>, store: ServerS
     backups.put("config") { request, context in
         let auth = try requireUsersAdmin(context)
         let update = try await request.decode(as: BackupConfigUpdate.self, context: context)
-        let config = try await mapped { try await store.backups.updateConfig(update) }
-        try store.audit(auth, action: "backup.config", detail: "destination=\(config.destination ?? "default") keep=\(config.keep) includeROMs=\(config.includeROMs)")
-        return config
+        return try await mapped {
+            try await store.backups.updateConfig(update) { config in
+                try store.audit(auth, action: "backup.config",
+                                detail: "destination=\(config.destination ?? "default") keep=\(config.keep) includeROMs=\(config.includeROMs)")
+            }
+        }
     }
 
     backups.post(":id/verify") { _, context in
@@ -61,8 +70,9 @@ func registerBackupRoutes(_ group: RouterGroup<SERequestContext>, store: ServerS
     backups.post(":id/restore") { _, context in
         let auth = try requireUsersAdmin(context)
         let id = try context.parameters.require("id")
-        let info = try await mapped { try await store.backups.requestRestore(id: id) }
-        try store.audit(auth, action: "backup.restore", detail: info.id)
+        let info = try await mapped {
+            try await store.backups.requestRestore(id: id) { try store.audit(auth, action: "backup.restore", detail: $0.id) }
+        }
         return EditedResponse(status: .accepted, response: RestoreBackupResponse(
             backup: info, message: "Restoring \(info.id). The server stops serving, restores and restarts; this takes a few seconds.",
             certificateSHA256: TLSIdentity.storedFingerprint(paths: ServerPaths(root: URL(fileURLWithPath: info.path, isDirectory: true)))))

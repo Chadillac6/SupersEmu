@@ -93,8 +93,10 @@ public actor BackupManager {
 
     public func config() -> BackupConfig { loadState().config }
 
+    /// `beforeSaving` runs (e.g. to audit) once the update is valid; if it throws, nothing is saved.
     @discardableResult
-    public func updateConfig(_ update: BackupConfigUpdate) throws -> BackupConfig {
+    public func updateConfig(_ update: BackupConfigUpdate,
+                             beforeSaving: @Sendable (BackupConfig) throws -> Void = { _ in }) throws -> BackupConfig {
         var state = loadState()
         if let destination = update.destination {
             let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -114,6 +116,7 @@ public actor BackupManager {
         }
         if let includeROMs = update.includeROMs { state.config.includeROMs = includeROMs }
         if let enabled = update.scheduleEnabled { state.config.scheduleEnabled = enabled }
+        try beforeSaving(state.config)
         try save(state)
         return state.config
     }
@@ -326,10 +329,13 @@ public actor BackupManager {
     public func setRestoreHandler(_ handler: (@Sendable (BackupInfo) async -> Void)?) { restoreHandler = handler }
 
     /// Verifies the backup, then hands it to the daemon, which restores it after it has stopped serving.
-    public func requestRestore(id: String) async throws -> BackupInfo {
+    /// `beforeQueuing` runs (e.g. to audit) once the backup is verified; if it throws, no restore is queued.
+    public func requestRestore(id: String,
+                               beforeQueuing: @Sendable (BackupInfo) throws -> Void = { _ in }) async throws -> BackupInfo {
         guard let restoreHandler else { throw BackupError.restoreUnavailable }
         guard !busy else { throw BackupError.alreadyRunning }
         let info = try verify(id: id)
+        try beforeQueuing(info)
         busy = true
         Task { await restoreHandler(info) }
         return info

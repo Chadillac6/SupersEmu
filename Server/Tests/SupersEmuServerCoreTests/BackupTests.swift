@@ -135,6 +135,38 @@ final class BackupTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: backup.path), "a history write failure doesn't fail the backup")
     }
 
+    func testFailedAuditBlocksConfigAndRestore() async throws {
+        struct AuditDown: Error {}
+        let backup = try await store.backups.create()
+        do {
+            try await store.backups.updateConfig(.init(keep: 2)) { _ in throw AuditDown() }
+            XCTFail("an unaudited config change must not be saved")
+        } catch is AuditDown {}
+        let keep = await store.backups.config().keep
+        XCTAssertEqual(keep, 7)
+
+        let restores = LockedCounter()
+        await store.backups.setRestoreHandler { _ in restores.increment() }
+        do {
+            _ = try await store.backups.requestRestore(id: backup.id) { _ in throw AuditDown() }
+            XCTFail("an unaudited restore must not be queued")
+        } catch is AuditDown {}
+        _ = try await store.backups.requestRestore(id: backup.id)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(restores.value, 1, "only the audited request queues a restore, and the failed one left the manager idle")
+    }
+
+    func testFailedAuditAfterABackupStillReportsTheBackup() async throws {
+        let token = try store.createDeviceToken(userID: admin.id, deviceName: "Mac").token
+        try await store.db.write { try $0.execute(sql: "DROP TABLE audit_log") }
+        let app = buildApplication(store: store, configuration: .init())
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/v1/admin/backups", method: .post,
+                                     headers: [.authorization: "Bearer \(token)", .contentType: "application/json"],
+                                     body: ByteBuffer(string: "{}")) { XCTAssertEqual($0.status, .created) }
+        }
+    }
+
     func testSecondRestoreKeepsTheFirstRestoresCopy() async throws {
         let backup = try await store.backups.create()
         try write("wednesday", "users/u1/saves/rev1")
@@ -358,4 +390,11 @@ final class BackupTests: XCTestCase {
         try reopened.close()
         store = nil
     }
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func increment() { lock.withLock { count += 1 } }
 }
