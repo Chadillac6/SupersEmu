@@ -919,6 +919,10 @@ targets:
       - App/Input/HIDPresets.swift
       - App/Input/PlayerChrome.swift
       - App/Input/TouchControlSizing.swift
+      - App/Diagnostics/AppLog.swift
+    dependencies:
+      - package: SupersEmuServer
+        product: SupersEmuKit
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

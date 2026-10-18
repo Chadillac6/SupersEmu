@@ -1,9 +1,10 @@
 import XCTest
+import SupersEmuKit
 
 final class InputMappingTests: XCTestCase {
-    private let snes = ConsoleLayout.forSystem("snes")
-    private let n64 = ConsoleLayout.forSystem("n64")
-    private let genesis = ConsoleLayout.forSystem("genesis")
+    private let snes = ConsoleLayout.forSystem(.snes)
+    private let n64 = ConsoleLayout.forSystem(.n64)
+    private let genesis = ConsoleLayout.forSystem(.genesis)
 
     func testConsoleDefaultsMapByPosition() {
         var state = PadState(pressed: [.south, .east, .l1])
@@ -21,26 +22,26 @@ final class InputMappingTests: XCTestCase {
         let pad = "gc:Gamepad:8BitDo Pro 2"
         XCTAssertEqual(mappings.bindings(for: snes, controllerType: pad, gameID: "g1")["B"], .south)
 
-        mappings.set(.east, for: "B", system: "snes", scope: .controllerType(pad))
+        mappings.set(.east, for: "B", system: .snes, scope: .controllerType(pad))
         XCTAssertEqual(mappings.bindings(for: snes, controllerType: pad, gameID: "g1")["B"], .east)
         XCTAssertEqual(mappings.bindings(for: snes, controllerType: "keyboard", gameID: "g1")["B"], .south)
         XCTAssertEqual(mappings.bindings(for: genesis, controllerType: pad, gameID: "g1")["B"], .south, "overrides are per console")
 
-        mappings.set(.north, for: "B", system: "snes", scope: .game("g1"))
+        mappings.set(.north, for: "B", system: .snes, scope: .game("g1"))
         XCTAssertEqual(mappings.bindings(for: snes, controllerType: pad, gameID: "g1")["B"], .north)
         XCTAssertEqual(mappings.bindings(for: snes, controllerType: "keyboard", gameID: "g1")["B"], .north)
         XCTAssertEqual(mappings.bindings(for: snes, controllerType: pad, gameID: "g2")["B"], .east)
 
-        mappings.reset(system: "snes", scope: .game("g1"))
+        mappings.reset(system: .snes, scope: .game("g1"))
         XCTAssertEqual(mappings.bindings(for: snes, controllerType: pad, gameID: "g1")["B"], .east)
-        mappings.reset(system: "snes", scope: .controllerType(pad))
+        mappings.reset(system: .snes, scope: .controllerType(pad))
         XCTAssertEqual(mappings.bindings(for: snes, controllerType: pad, gameID: "g1")["B"], .south)
         XCTAssertTrue(mappings.controllerOverrides.isEmpty)
     }
 
     func testRemappedInputDrivesTheControl() {
         var mappings = InputMappings()
-        mappings.set(.r2, for: "A", system: "snes", scope: .controllerType("pad"))
+        mappings.set(.r2, for: "A", system: .snes, scope: .controllerType("pad"))
         let bindings = mappings.bindings(for: snes, controllerType: "pad", gameID: nil)
         XCTAssertTrue(InputMapper.output(for: PadState(pressed: [.r2]), layout: snes, bindings: bindings).contains(.a))
         XCTAssertFalse(InputMapper.output(for: PadState(pressed: [.east]), layout: snes, bindings: bindings).contains(.a))
@@ -72,13 +73,21 @@ final class InputMappingTests: XCTestCase {
         XCTAssertEqual(output.buttons, 0)
     }
 
+    func testConsolePickerListsEverySystemOnce() {
+        XCTAssertEqual(ConsoleLayout.systems.count, SystemID.allCases.count)
+        XCTAssertEqual(Set(ConsoleLayout.systems), Set(SystemID.allCases))
+        XCTAssertEqual(ConsoleLayout.forSystem(.sega32x).title, "32X")
+        XCTAssertEqual(ConsoleLayout.forSystem(.segacd).controls.map(\.id), genesis.controls.map(\.id))
+        XCTAssertEqual(ConsoleLayout.forSystem(.gba).controls.count, ConsoleLayout.forSystem(.gb).controls.count + 2)
+    }
+
     func testMappingsPersistAsJSON() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("Controls.json")
         let store = InputMappingStore(url: url)
-        store.set(.l2, for: "Z", system: "n64", scope: .controllerType("hid:0079:0006"))
-        store.set(.west, for: "C", system: "genesis", scope: .game("abc"))
+        store.set(.l2, for: "Z", system: .n64, scope: .controllerType("hid:0079:0006"))
+        store.set(.west, for: "C", system: .genesis, scope: .game("abc"))
         store.setHIDPreset("retrolink-genesis", for: "hid:0079:0011")
 
         let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
@@ -90,7 +99,7 @@ final class InputMappingTests: XCTestCase {
         XCTAssertEqual(reloaded.bindings(for: genesis, controllerType: "keyboard", gameID: "abc")["C"], .west)
         XCTAssertEqual(reloaded.mappings.hidPresets["hid:0079:0011"], "retrolink-genesis")
 
-        reloaded.reset(system: "n64", scope: .controllerType("hid:0079:0006"))
+        reloaded.reset(system: .n64, scope: .controllerType("hid:0079:0006"))
         XCTAssertNil(InputMappingStore(url: url).mappings.controllerOverrides["hid:0079:0006"])
     }
 

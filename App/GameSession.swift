@@ -119,11 +119,11 @@ final class GameSession {
         let initialSlots = SaveSlotStore(directory: AppPaths.stateDirectory(for: game.id)).slots()
         saveSlots = initialSlots
         hasManualState = initialSlots.contains { !$0.isEmpty }
-        input.layout = ConsoleLayout.forSystem(Self.system(for: game))
+        input.layout = ConsoleLayout.forSystem(SystemID(rawValue: Self.system(for: game)) ?? .snes)
         input.gameID = game.id
         #if DEBUG
         // UI-only stub for overlay screenshots of consoles without a test ROM: SUPERSEMU_DEBUG_LAYOUT=n64.
-        if let system = ProcessInfo.processInfo.environment["SUPERSEMU_DEBUG_LAYOUT"] {
+        if let raw = ProcessInfo.processInfo.environment["SUPERSEMU_DEBUG_LAYOUT"], let system = SystemID(rawValue: raw) {
             input.layout = ConsoleLayout.forSystem(system)
         }
         #endif

@@ -193,6 +193,14 @@ public enum CheatCodec {
 
     public static func supportsCheats(_ system: SystemID) -> Bool { !formats(for: system).isEmpty }
 
+    /// Systems whose codes can span several lines, so the editor takes multi-line input.
+    public static func allowsMultiline(_ system: SystemID) -> Bool {
+        switch system {
+        case .gba, .psx, .n64: true
+        case .snes, .gb, .gbc, .genesis, .segacd, .sega32x: false
+        }
+    }
+
     static let snesGenieHex = Array("DF4709156BC8A23E")
     static let genesisAlphabet = Array("ABCDEFGHJKLMNPRSTVWXYZ0123456789")
     static let hexDigits = Set("0123456789ABCDEF")
