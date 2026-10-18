@@ -13,7 +13,9 @@ A push to `main` (including a merged PR) runs the same checks. In parallel,
 release takes about as long as the checks rather than checks plus both builds. The marketing version advances by 0.0.1
 above the latest App Store Connect iOS or Sparkle Mac version, with `project.yml` as
 the minimum floor. TestFlight builds are added to the internal **Chad** group
-automatically. The Mac release is notarized and stapled, and its GitHub release contains
+automatically. The Mac release is notarized and stapled. Stapling is retried 10 times; if Apple's
+ticket server stays unreachable, the notarized files ship unstapled with a warning
+(Gatekeeper fetches the ticket online). Its GitHub release contains
 the ZIP, DMG, and `appcast.xml`. Standard `macos-15` hosted runners with Xcode 26.2
 (Swift 6.2) are used; no runner is installed on the production Mac mini. Failed checks,
 notarization, or TestFlight upload fail the matching release job. The Mac and iOS jobs

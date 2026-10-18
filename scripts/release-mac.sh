@@ -40,19 +40,24 @@ notarize() { # file
   fi
 }
 
+# `stapler staple` validates the ticket itself. GitHub's runners often lose the connection to Apple's
+# ticket server, so after the retries a notarized file ships unstapled: Gatekeeper fetches the ticket online.
 staple_with_retry() {
-  local file="$1" attempt delay
+  local file="$1" attempt attempts delay
+  attempts="${SUPERSEMU_STAPLE_ATTEMPTS:-10}"
   delay="${SUPERSEMU_STAPLE_RETRY_DELAY:-30}"
-  for attempt in 1 2 3 4 5 6; do
-    if xcrun stapler staple "$file" && xcrun stapler validate "$file"; then
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if xcrun stapler staple "$file"; then
       return 0
     fi
-    if [ "$attempt" -lt 6 ]; then
-      printf 'Stapling %s failed (attempt %s/6); retrying in %ss\n' "$file" "$attempt" "$delay" >&2
+    if [ "$attempt" -lt "$attempts" ]; then
+      printf 'Stapling %s failed (attempt %s/%s); retrying in %ss\n' "$file" "$attempt" "$attempts" "$delay" >&2
       sleep "$delay"
     fi
   done
-  printf 'error: failed to staple and validate %s after 6 attempts\n' "$file" >&2
+  printf 'warning: could not staple %s after %s attempts; it is notarized, so it ships unstapled\n' \
+    "$file" "$attempts" >&2
+  [ -z "${GITHUB_ACTIONS:-}" ] || echo "::warning::$(basename "$file") is notarized but unstapled (Apple ticket server unreachable)"
   return 1
 }
 
@@ -100,7 +105,8 @@ name="SupersEmu-$version-$build_number"
 
 ditto -c -k --keepParent "$app" "$RELEASE_TMP/$name.zip"
 notarize "$RELEASE_TMP/$name.zip"
-staple_with_retry "$app"
+stapled=yes
+staple_with_retry "$app" || stapled=no
 ditto -c -k --keepParent "$app" "$out/$name.zip"
 
 staging="$RELEASE_TMP/dmg"
@@ -110,7 +116,13 @@ ln -s /Applications "$staging/Applications"
 hdiutil create -volname SupersEmu -srcfolder "$staging" -format UDZO -ov "$out/$name.dmg" >/dev/null
 codesign --sign "$identity" --timestamp "$out/$name.dmg"
 notarize "$out/$name.dmg"
-staple_with_retry "$out/$name.dmg"
-spctl --assess --type open --context context:primary-signature -v "$out/$name.dmg"
+if staple_with_retry "$out/$name.dmg"; then
+  spctl --assess --type open --context context:primary-signature -v "$out/$name.dmg"
+else
+  stapled=no
+  spctl --assess --type open --context context:primary-signature -v "$out/$name.dmg" ||
+    echo "warning: spctl could not confirm the unstapled DMG (it needs Apple's ticket server too)" >&2
+fi
 
-echo "Done: $out/$name.dmg and $out/$name.zip (both notarized and stapled); Version $marketing_version (build $build_number)"
+[ "$stapled" = yes ] && state='notarized and stapled' || state='notarized; not all stapled, see warnings'
+echo "Done: $out/$name.dmg and $out/$name.zip ($state); Version $marketing_version (build $build_number)"
