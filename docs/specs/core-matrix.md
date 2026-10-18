@@ -54,9 +54,12 @@ Build notes:
   on iOS. The core draws into a host FBO; each frame is blitted (flipped) into an IOSurface-backed
   `CVPixelBuffer` texture and copied from the surface into the normal frame buffer, so `GameSession`/
   `EmulatorScreen` present it like any software core (no `glReadPixels`). Core options are fixed by the host:
-  `gliden64` RDP, `hle` RSP, `cached_interpreter` CPU, no threaded renderer. On macOS GLideN64 frame buffer emulation is off
-  (`EnableFBEmulation=False`): with it on, only black reaches the host FBO (seen on a macOS VM, not yet
-  checked on a real Mac GPU), so games that need frame-buffer effects can draw wrongly until that is fixed.
+  `gliden64` RDP, `hle` RSP, `cached_interpreter` CPU, no threaded renderer. Frame buffer emulation is
+  enabled on all platforms (`EnableFBEmulation=True`). A local `opengl_BufferedDrawer.cpp` override
+  in `Host/CoreEntry/Mupen64PlusNext/GLideN64/` enables the rect `barycoords` attribute only when
+  `coverage` is available, avoiding `GL_INVALID_OPERATION` on macOS core-profile rect draws
+  (fill-rect clears, texrects, and the frame-buffer present copy). This was verified on the VM's
+  software renderer, not on a real Mac GPU. Drop the override once upstream fixes it.
   Probably for the same reason, a state resumed in a new session (the app's "Resumed where you left off")
   can show stale stripes wherever the game doesn't redraw: GLideN64 doesn't write frames back to RDRAM, so
   the restored RDRAM holds old picture data. The cube demo redraws only its cubes, so it shows there. It

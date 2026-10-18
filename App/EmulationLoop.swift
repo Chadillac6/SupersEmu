@@ -224,6 +224,9 @@ final class EmulationLoop: @unchecked Sendable {
                 runFrame(host)
                 frames.append((start, ProcessInfo.processInfo.systemUptime - start))
             }
+            for frame in frames where frame.1 > 0.05 {
+                diagnosticsLog?.appendEvent(String(format: "long-frame ms=%.0f during=none", frame.1 * 1_000))
+            }
             let imageStart = ProcessInfo.processInfo.systemUptime
             imageSlot.publish(host?.copyFrameImage())
             if let host, !hasRecordedRenderPath, host.frameWidth > 0 {

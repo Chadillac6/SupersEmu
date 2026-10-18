@@ -146,12 +146,7 @@ const CoreOption kCoreOptions[] = {
     {"mupen64plus-rsp-plugin", "hle"},
     {"mupen64plus-cpucore", "cached_interpreter"},
     {"mupen64plus-ThreadedRenderer", "False"},
-    // On macOS, GLideN64 frame buffer emulation only draws black through the offscreen FBO.
-#if TARGET_OS_IPHONE
     {"mupen64plus-EnableFBEmulation", "True"},
-#else
-    {"mupen64plus-EnableFBEmulation", "False"},
-#endif
 };
 
 NSDictionary<NSString *, NSString *> *gPendingCoreOptionOverrides = nil;
