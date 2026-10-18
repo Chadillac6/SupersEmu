@@ -19,17 +19,18 @@ echo "spctl $*" >> "$FAKE_LOG"
 STUB
 cat > "$temp_dir/fakebin/codesign" <<'STUB'
 #!/usr/bin/env bash
+[ "$1" = -dv ] && { [ -z "$FAKE_TEAM" ] || echo "TeamIdentifier=$FAKE_TEAM" >&2; exit 0; }
 echo "codesign $*" >> "$FAKE_LOG"
 [ "$FAKE_CODESIGN_OK" = yes ]
 STUB
 chmod +x "$temp_dir/fakebin/"*
 
 failures=0
-run_case() { # name stapled spctl_ok codesign_ok want_status want_codesign_calls want_warning
+run_case() { # name stapled spctl_ok codesign_ok want_status want_codesign_calls want_warning [env team] [signing team]
   local name="$1" status=0 calls
   : > "$temp_dir/log"
   PATH="$temp_dir/fakebin:$PATH" FAKE_LOG="$temp_dir/log" FAKE_STAPLED="$2" FAKE_SPCTL_OK="$3" \
-    FAKE_CODESIGN_OK="$4" SUPERSEMU_TEAM_ID=ABCDE12345 \
+    FAKE_CODESIGN_OK="$4" SUPERSEMU_TEAM_ID="${8-ABCDE12345}" FAKE_TEAM="${9-}" \
     /bin/bash -c 'set -euo pipefail; source "$1"; release_gatekeeper_check test.dmg --type open' \
     _ "$script_dir/release-common.sh" > "$temp_dir/out" 2> "$temp_dir/err" || status=$?
   calls="$(grep -c '^codesign ' "$temp_dir/log" || true)"
@@ -49,4 +50,6 @@ run_case 'stapled but rejected by Gatekeeper fails' yes no yes 1 0 no
 run_case 'unstapled with a valid Developer ID signature only warns' no no yes 0 1 yes
 run_case 'unstapled without a valid Developer ID signature fails' no no no 1 1 no
 run_case 'unstapled and accepted online' no yes yes 0 1 no
+run_case 'standalone publish uses the signing team' no no yes 0 1 yes '' ABCDE12345
+run_case 'standalone publish without a team fails' no no yes 1 0 no '' ''
 [ "$failures" -eq 0 ]
