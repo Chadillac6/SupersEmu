@@ -8,7 +8,7 @@ fake_bin="$temp_dir/fakebin"
 mkdir -p "$fake_bin"
 
 # Each call answers with the next line of $GH_STATES, run through the script's real --jq filter:
-# "status conclusion" is that one job in attempt 1, a line starting with "{" is a raw jobs response,
+# "status conclusion" is that one job in attempt 1, a line starting with "{" is a raw jobs page, "[" a list of pages,
 # "error" fails the call and "missing" lists no jobs (not started yet).
 cat > "$fake_bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -17,16 +17,17 @@ calls=0
 [ -f "$GH_CALLS" ] && IFS= read -r calls < "$GH_CALLS"
 calls=$((calls + 1))
 printf '%s\n' "$calls" > "$GH_CALLS"
-[ "$1 $2 $3" = "api repos/owner/repo/actions/runs/42/jobs?filter=all&per_page=100 --jq" ] \
+[ "$1 $2 $3 $4" = "api --paginate repos/owner/repo/actions/runs/42/jobs?filter=all&per_page=100 --jq" ] \
   || { echo "unexpected gh call: $*" >&2; exit 64; }
 line="$(sed -n "${calls}p" "$GH_STATES")"
 case "$line" in
   error) exit 1 ;;
   missing) json='{"jobs":[]}' ;;
   '{'*) json="$line" ;;
+  '['*) jq -c '.[]' <<< "$line" | while IFS= read -r page; do jq -r "$5" <<< "$page"; done; exit 0 ;;
   *) json="{\"jobs\":[{\"name\":\"Mac and server checks\",\"run_attempt\":1,\"status\":\"${line% *}\",\"conclusion\":$( [ "${line#* }" = none ] && echo null || echo "\"${line#* }\"")}]}" ;;
 esac
-jq -r "$4" <<< "$json"
+jq -r "$5" <<< "$json"
 STUB
 chmod +x "$fake_bin/gh"
 
@@ -57,3 +58,5 @@ run_case 'publishes a release-only rerun after checks passed in an earlier attem
 run_case 'uses the newest attempt of the checks' 1 2 60 \
   '{"jobs":[{"name":"Mac and server checks","run_attempt":2,"status":"in_progress","conclusion":null},{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"}]}' \
   '{"jobs":[{"name":"Mac and server checks","run_attempt":2,"status":"completed","conclusion":"failure"},{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"}]}'
+run_case 'reads the newest attempt from a later page' 1 1 60 \
+  '[{"jobs":[{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"}]},{"jobs":[{"name":"Mac and server checks","run_attempt":2,"status":"completed","conclusion":"failure"}]}]'
