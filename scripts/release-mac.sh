@@ -40,19 +40,25 @@ notarize() { # file
   fi
 }
 
-staple_with_retry() {
-  local file="$1" attempt delay
+# `stapler staple` validates the ticket itself. A failure here is only the ticket download: notarize
+# already required "Accepted", and GitHub's runners often lose the connection to Apple's ticket server.
+# Unstapled notarized builds still pass Gatekeeper (it fetches the ticket online), so callers publish
+# anyway with a warning rather than failing the release.
+staple_or_warn() { # file; returns 1 when left unstapled
+  local file="$1" attempt=1 attempts delay
+  attempts="${SUPERSEMU_STAPLE_ATTEMPTS:-8}"
   delay="${SUPERSEMU_STAPLE_RETRY_DELAY:-30}"
-  for attempt in 1 2 3 4 5 6; do
-    if xcrun stapler staple "$file" && xcrun stapler validate "$file"; then
+  while [ "$attempt" -le "$attempts" ]; do
+    if xcrun stapler staple "$file"; then
       return 0
     fi
-    if [ "$attempt" -lt 6 ]; then
-      printf 'Stapling %s failed (attempt %s/6); retrying in %ss\n' "$file" "$attempt" "$delay" >&2
+    if [ "$attempt" -lt "$attempts" ]; then
+      printf 'Stapling %s failed (attempt %s/%s); retrying in %ss\n' "$file" "$attempt" "$attempts" "$delay" >&2
       sleep "$delay"
     fi
+    attempt=$((attempt + 1))
   done
-  printf 'error: failed to staple and validate %s after 6 attempts\n' "$file" >&2
+  printf '::warning::Could not staple %s after %s attempts (Apple ticket server unreachable); it is notarized, so Gatekeeper checks it online. Publishing unstapled.\n' "$file" "$attempts" >&2
   return 1
 }
 
@@ -100,7 +106,8 @@ name="SupersEmu-$version-$build_number"
 
 ditto -c -k --keepParent "$app" "$RELEASE_TMP/$name.zip"
 notarize "$RELEASE_TMP/$name.zip"
-staple_with_retry "$app"
+stapled=both
+staple_or_warn "$app" || { stapled='dmg-only'; touch "$out/app-unstapled"; }
 ditto -c -k --keepParent "$app" "$out/$name.zip"
 
 staging="$RELEASE_TMP/dmg"
@@ -110,7 +117,12 @@ ln -s /Applications "$staging/Applications"
 hdiutil create -volname SupersEmu -srcfolder "$staging" -format UDZO -ov "$out/$name.dmg" >/dev/null
 codesign --sign "$identity" --timestamp "$out/$name.dmg"
 notarize "$out/$name.dmg"
-staple_with_retry "$out/$name.dmg"
-spctl --assess --type open --context context:primary-signature -v "$out/$name.dmg"
+if staple_or_warn "$out/$name.dmg"; then
+  spctl --assess --type open --context context:primary-signature -v "$out/$name.dmg"
+else
+  if [ "$stapled" = both ]; then stapled='app-only'; else stapled=none; fi
+  spctl --assess --type open --context context:primary-signature -v "$out/$name.dmg" ||
+    echo "::warning::spctl could not confirm the unstapled DMG's notarization online" >&2
+fi
 
-echo "Done: $out/$name.dmg and $out/$name.zip (both notarized and stapled); Version $marketing_version (build $build_number)"
+echo "Done: $out/$name.dmg and $out/$name.zip (notarized; stapled: $stapled); Version $marketing_version (build $build_number)"

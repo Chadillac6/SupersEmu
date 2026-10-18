@@ -86,6 +86,8 @@ If a variable is missing, both scripts stop before building and print the missin
 4. Notarize the app with `xcrun notarytool submit --key/--key-id/--issuer --wait`, using the same API key, and staple it.
 5. Build a `.dmg`, sign it, notarize it, staple it, and check it with `spctl`.
 
+Stapling retries up to 8 times, 30 seconds apart (`SUPERSEMU_STAPLE_ATTEMPTS`, `SUPERSEMU_STAPLE_RETRY_DELAY`). If Apple's ticket server stays unreachable from the runner, the release logs a warning and publishes the notarized build unstapled; Gatekeeper then fetches the ticket online on first launch.
+
 For iOS TestFlight uploads, the release script automatically selects the next patch version above the latest iOS TestFlight version. `MARKETING_VERSION` in `project.yml` is the minimum version floor; set `SUPERSEMU_MARKETING_VERSION` to override the automatic selection. The Mac release continues to use `MARKETING_VERSION` from `project.yml`.
 
 ## Why the Mac app isn't on TestFlight or the Mac App Store

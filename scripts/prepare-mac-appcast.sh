@@ -17,7 +17,12 @@ archives=("$out"/SupersEmu-*.zip)
 app="$out/export/SupersEmu.app"
 [ -d "$app" ] || { echo 'Missing exported release app.' >&2; exit 2; }
 /usr/bin/codesign --verify --deep --strict "$app"
-/usr/sbin/spctl --assess --type execute "$app"
+if ! /usr/sbin/spctl --assess --type execute "$app"; then
+  # release-mac.sh leaves this marker when Apple's ticket server was unreachable for stapling;
+  # the app is notarized, so only the online Gatekeeper lookup failed here too.
+  [ -e "$out/app-unstapled" ] || exit 1
+  echo '::warning::spctl could not confirm the unstapled app online; it was notarized (Accepted) by release-mac.sh' >&2
+fi
 key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")"
 [ -n "$key" ] || { echo 'App has no Sparkle public signing key.' >&2; exit 2; }
 updates="$out/updates"

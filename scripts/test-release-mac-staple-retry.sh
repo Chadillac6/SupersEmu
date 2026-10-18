@@ -6,91 +6,70 @@ release_script="$script_dir/release-mac.sh"
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/release-staple-test.XXXXXX")"
 trap 'rm -rf "$temp_dir"' EXIT
 
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
 fake_bin="$temp_dir/fakebin"
 mkdir -p "$fake_bin"
 function_source="$temp_dir/staple-function.sh"
-sed -n '/^staple_with_retry() {$/,/^}/p' "$release_script" > "$function_source"
-[ -s "$function_source" ] || { echo "FAIL: staple_with_retry function not found" >&2; exit 1; }
+sed -n '/^staple_or_warn() {/,/^}/p' "$release_script" > "$function_source"
+[ -s "$function_source" ] || fail "staple_or_warn function not found"
 
+# Fake xcrun: `stapler staple` fails for the first STAPLE_FAIL_ATTEMPTS calls; `stapler validate`
+# always fails, like Apple's ticket lookup did on the 0ef4e26 release run after a successful staple.
 cat > "$fake_bin/xcrun" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >> "$XCRUN_LOG"
 case "${2:-}" in
   staple)
-    attempt=0
-    if [ -f "$STAPLE_ATTEMPT_FILE" ]; then
-      IFS= read -r attempt < "$STAPLE_ATTEMPT_FILE"
-    fi
-    attempt=$((attempt + 1))
-    printf '%s\n' "$attempt" > "$STAPLE_ATTEMPT_FILE"
-    if [ "$attempt" -le "$STAPLE_FAIL_ATTEMPTS" ]; then
-      exit 1
-    fi
+    attempts="$(grep -c ' staple ' "$XCRUN_LOG" || true)"
+    [ "$attempts" -gt "$STAPLE_FAIL_ATTEMPTS" ] || exit 65
     ;;
-  validate)
-    printf '%s\n' validate >> "$STAPLE_VALIDATE_FILE"
-    ;;
-  *)
-    echo "unexpected xcrun command: $*" >&2
-    exit 64
-    ;;
+  validate) exit 65 ;;
+  *) echo "unexpected xcrun command: $*" >&2; exit 64 ;;
 esac
 STUB
 chmod +x "$fake_bin/xcrun"
 
-run_helper() {
-  local fail_attempts="$1" attempt_file="$2" validate_file="$3" stdout_file="$4" stderr_file="$5"
-  PATH="$fake_bin:$PATH" \
-    STAPLE_FAIL_ATTEMPTS="$fail_attempts" \
-    STAPLE_ATTEMPT_FILE="$attempt_file" \
-    STAPLE_VALIDATE_FILE="$validate_file" \
-    SUPERSEMU_STAPLE_RETRY_DELAY=0 \
-    /bin/bash -c 'source "$1"; staple_with_retry "$2"' _ "$function_source" test.app \
-    > "$stdout_file" 2> "$stderr_file"
+run_helper() { # fail_attempts name
+  local log="$temp_dir/$2.log"
+  : > "$log"
+  set +e
+  PATH="$fake_bin:$PATH" XCRUN_LOG="$log" STAPLE_FAIL_ATTEMPTS="$1" \
+    SUPERSEMU_STAPLE_RETRY_DELAY=0 SUPERSEMU_STAPLE_ATTEMPTS=8 \
+    /bin/bash -c 'source "$1"; staple_or_warn "$2"' _ "$function_source" test.app \
+    > "$temp_dir/$2.stdout" 2> "$temp_dir/$2.stderr"
+  status=$?
+  set -e
+  staples="$(grep -c ' staple ' "$log" || true)"
+  validates="$(grep -c ' validate ' "$log" || true)"
+  retries="$(grep -c '^Stapling test.app failed ' "$temp_dir/$2.stderr" || true)"
 }
 
-success_attempt_file="$temp_dir/success-attempts"
-success_validate_file="$temp_dir/success-validations"
-success_stdout="$temp_dir/success.stdout"
-success_stderr="$temp_dir/success.stderr"
-if run_helper 2 "$success_attempt_file" "$success_validate_file" "$success_stdout" "$success_stderr"; then
-  [ "$(<"$success_attempt_file")" -eq 3 ] ||
-    { echo "FAIL: expected success on attempt 3" >&2; exit 1; }
-  [ "$(wc -l < "$success_validate_file" | tr -d ' ')" -eq 1 ] ||
-    { echo "FAIL: expected one successful-attempt validation" >&2; exit 1; }
-  [ "$(awk '/^Stapling .* failed / { count++ } END { print count+0 }' "$success_stderr")" -eq 2 ] ||
-    { echo "FAIL: expected two retry messages" >&2; exit 1; }
-  grep -Fq 'Stapling test.app failed (attempt 1/6); retrying in 0s' "$success_stderr" ||
-    { echo "FAIL: missing first retry message" >&2; exit 1; }
-  grep -Fq 'Stapling test.app failed (attempt 2/6); retrying in 0s' "$success_stderr" ||
-    { echo "FAIL: missing second retry message" >&2; exit 1; }
-  printf '%s\n' 'PASS: succeeds on the third attempt after two failures'
-  cat "$success_stderr"
-else
-  echo "FAIL: expected the third-attempt run to succeed" >&2
-  cat "$success_stderr" >&2
-  exit 1
-fi
+run_helper 0 first
+[ "$status" -eq 0 ] || fail "first-try staple returned $status"
+[ "$staples" -eq 1 ] && [ "$validates" -eq 0 ] || fail "first-try: $staples staples, $validates validates"
+echo "PASS: staples on the first try and doesn't re-check with a separate validate"
 
-failure_attempt_file="$temp_dir/failure-attempts"
-failure_validate_file="$temp_dir/failure-validations"
-failure_stdout="$temp_dir/failure.stdout"
-failure_stderr="$temp_dir/failure.stderr"
-if run_helper 6 "$failure_attempt_file" "$failure_validate_file" "$failure_stdout" "$failure_stderr"; then
-  echo "FAIL: six failed attempts unexpectedly succeeded" >&2
-  exit 1
-else
-  failure_status=$?
-  [ "$failure_status" -ne 0 ] ||
-    { echo "FAIL: six failed attempts returned zero" >&2; exit 1; }
-  [ "$(<"$failure_attempt_file")" -eq 6 ] ||
-    { echo "FAIL: expected exactly six staple attempts" >&2; exit 1; }
-  [ "$(awk '/^Stapling .* failed / { count++ } END { print count+0 }' "$failure_stderr")" -eq 5 ] ||
-    { echo "FAIL: expected five retry messages before the final error" >&2; exit 1; }
-  grep -Fq 'error: failed to staple and validate test.app after 6 attempts' "$failure_stderr" ||
-    { echo "FAIL: missing final error message" >&2; exit 1; }
-  [ ! -e "$failure_validate_file" ] ||
-    { echo "FAIL: validation ran after every staple attempt failed" >&2; exit 1; }
-  printf 'PASS: six failed attempts exit non-zero (status %s)\n' "$failure_status"
-  cat "$failure_stderr"
-fi
+run_helper 2 third
+[ "$status" -eq 0 ] || fail "third-try staple returned $status"
+[ "$staples" -eq 3 ] && [ "$retries" -eq 2 ] && [ "$validates" -eq 0 ] ||
+  fail "third-try: $staples staples, $retries retries, $validates validates"
+grep -Fq 'Stapling test.app failed (attempt 2/8); retrying in 0s' "$temp_dir/third.stderr" || fail "missing retry message"
+echo "PASS: retries until the ticket is available (success on attempt 3)"
+
+run_helper 99 never
+[ "$status" -eq 1 ] || fail "unreachable ticket server returned $status, want 1 (unstapled)"
+[ "$staples" -eq 8 ] && [ "$retries" -eq 7 ] || fail "never: $staples staples, $retries retries"
+grep -Fq '::warning::Could not staple test.app after 8 attempts' "$temp_dir/never.stderr" || fail "missing warning"
+echo "PASS: gives up after 8 attempts with a warning and status 1 (left unstapled)"
+
+# The release must keep going (and publish) when stapling is skipped.
+grep -Fq 'staple_or_warn "$app" || {' "$release_script" && grep -Fq 'touch "$out/app-unstapled"' "$release_script" ||
+  fail "app staple failure isn't handled"
+grep -Fq '[ -e "$out/app-unstapled" ] || exit 1' "$script_dir/prepare-mac-appcast.sh" ||
+  fail "prepare-mac-appcast.sh doesn't allow an unstapled (notarized) app"
+grep -Fq 'if staple_or_warn "$out/$name.dmg"; then' "$release_script" || fail "DMG staple failure isn't handled"
+! grep -E '^[[:space:]]*staple_or_warn "' "$release_script" | grep -vq '||' || fail "an unguarded staple_or_warn call would abort the release"
+! grep -q 'stapler validate' "$release_script" || fail "release still gates on 'stapler validate'"
+echo "PASS: release-mac.sh continues to publish when stapling is skipped"

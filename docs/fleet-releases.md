@@ -10,7 +10,8 @@ the universal Developer ID Mac update and uploads the iOS build to TestFlight us
 shared marketing version and build number. The marketing version advances by 0.0.1
 above the latest App Store Connect iOS or Sparkle Mac version, with `project.yml` as
 the minimum floor. TestFlight builds are added to the internal **Chad** group
-automatically. The Mac release is notarized and stapled, and its GitHub release contains
+automatically. The Mac release is notarized and stapled (if Apple's ticket server stays
+unreachable after retries, it is published notarized but unstapled with a warning), and its GitHub release contains
 the ZIP, DMG, and `appcast.xml`. Standard `macos-15` hosted runners with Xcode 26.2
 (Swift 6.2) are used; no runner is installed on the production Mac mini. Failed checks,
 notarization, or TestFlight upload fail the release job.
