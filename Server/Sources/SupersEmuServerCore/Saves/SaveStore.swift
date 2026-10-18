@@ -102,7 +102,10 @@ public struct SaveStore: Sendable {
             throw HTTPError(.internalServerError, message: "Stored save failed its integrity check")
         }
         if let deviceID, !(row["detached"] as Bool) {
-            try store.db.write { try Self.recordBase(db: $0, userID: userID, deviceID: deviceID, row: row) }
+            let (kind, slot): (String, String) = (row["kind"], row["slot"])
+            try store.db.write {
+                try Self.recordBase(db: $0, userID: userID, deviceID: deviceID, gameID: gameID, kind: kind, slot: slot, revisionID: revisionID)
+            }
         }
         return data
     }
@@ -148,21 +151,14 @@ public struct SaveStore: Sendable {
                 let stale = headID != nil && headID != upload.parentID
                 let detached = upload.keepAsBranch || (upload.onlyIfHead && stale)
 
-                // An `ifHead` retry whose first attempt (lost response) became the head now looks stale: return that head.
-                // A historical attached match is not reused, so a stale device still gets a branch copy and the real head.
-                let retryOfHead = !upload.keepAsBranch && upload.onlyIfHead && stale && head?["sha256"] == sha
-                    && (head?["parent_id"] as String?) == upload.parentID && (head?["device_id"] as String?) == upload.deviceID
-                // Retries after a lost response, and unchanged content on top of the head, return the existing revision.
-                if let existingID = try (retryOfHead ? headID : nil) ?? String.fetchOne(db, sql: """
-                    SELECT id FROM save_revisions WHERE \(lineSQL) AND sha256 = ? AND parent_id IS ? AND detached = ?
-                    ORDER BY rowid DESC LIMIT 1
-                    """, arguments: line + [sha, upload.parentID, detached])
-                    ?? (!detached && head?["sha256"] == sha && headID == upload.parentID ? headID : nil) {
+                if let existingID = try Self.reusableRevisionID(db, line: line, lineSQL: lineSQL, head: head, upload: upload, sha: sha,
+                                                                detached: detached, stale: stale) {
                     let existing = try revision(db, userID: userID, gameID: upload.gameID, id: existingID)
                     if let deviceID = upload.deviceID,
-                       let row = try Row.fetchOne(db, sql: "SELECT * FROM save_revisions WHERE id = ? AND detached = 0",
-                                                  arguments: [existingID]) {
-                        try Self.recordBase(db: db, userID: userID, deviceID: deviceID, row: row)
+                       try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM save_revisions WHERE id = ? AND detached = 0)",
+                                         arguments: [existingID]) == true {
+                        try Self.recordBase(db: db, userID: userID, deviceID: deviceID, gameID: upload.gameID, kind: upload.kind.rawValue,
+                                            slot: upload.slot, revisionID: existingID)
                     }
                     return (SaveUploadResponse(revision: existing.revision, branched: existing.branched), false, [])
                 }
@@ -175,9 +171,9 @@ public struct SaveStore: Sendable {
                     """, arguments: [revisionID, userID, upload.gameID, upload.kind.rawValue, upload.slot, upload.parentID, sha,
                                      upload.data.count, upload.coreID, upload.coreVersion, upload.deviceID, relativePath, Date(), branched,
                                      detached])
-                if let deviceID = upload.deviceID, !detached,
-                   let row = try Row.fetchOne(db, sql: "SELECT * FROM save_revisions WHERE id = ?", arguments: [revisionID]) {
-                    try Self.recordBase(db: db, userID: userID, deviceID: deviceID, row: row)
+                if let deviceID = upload.deviceID, !detached {
+                    try Self.recordBase(db: db, userID: userID, deviceID: deviceID, gameID: upload.gameID, kind: upload.kind.rawValue,
+                                        slot: upload.slot, revisionID: revisionID)
                 }
                 let pruned: [String]
                 if upload.kind == .auto {
@@ -199,11 +195,34 @@ public struct SaveStore: Sendable {
         return outcome.response
     }
 
-    private static func recordBase(db: Database, userID: String, deviceID: String, row: Row) throws {
+    /// The revision an upload should return instead of inserting a new one, checked in this order:
+    /// 1. An `ifHead` retry whose first attempt (lost response) became the head now looks stale: return that head.
+    /// 2. A retry after a lost response: the same content on the same parent, attached or detached as this upload would be.
+    /// 3. Unchanged content on top of the head.
+    /// A historical attached match is not reused for a stale device, so it still gets a branch copy and the real head.
+    private static func reusableRevisionID(_ db: Database, line: StatementArguments, lineSQL: String, head: Row?, upload: Upload,
+                                           sha: String, detached: Bool, stale: Bool) throws -> String? {
+        let headID: String? = head?["id"]
+        let headSHA: String? = head?["sha256"]
+        let isRetryOfHead = !upload.keepAsBranch && upload.onlyIfHead && stale && headSHA == sha
+            && (head?["parent_id"] as String?) == upload.parentID && (head?["device_id"] as String?) == upload.deviceID
+        if isRetryOfHead, let headID { return headID }
+        if let retried = try String.fetchOne(db, sql: """
+            SELECT id FROM save_revisions WHERE \(lineSQL) AND sha256 = ? AND parent_id IS ? AND detached = ?
+            ORDER BY rowid DESC LIMIT 1
+            """, arguments: line + [sha, upload.parentID, detached]) {
+            return retried
+        }
+        if !detached, headSHA == sha, headID == upload.parentID { return headID }
+        return nil
+    }
+
+    private static func recordBase(db: Database, userID: String, deviceID: String, gameID: String, kind: String, slot: String,
+                                   revisionID: String) throws {
         try db.execute(sql: """
             INSERT INTO save_device_bases (user_id, device_id, game_id, kind, slot, revision_id) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT (device_id, game_id, kind, slot) DO UPDATE SET revision_id = excluded.revision_id
-            """, arguments: [userID, deviceID, row["game_id"] as String, row["kind"] as String, row["slot"] as String, row["id"] as String])
+            """, arguments: [userID, deviceID, gameID, kind, slot, revisionID])
     }
 
     /// Keeps the newest `autoRevisionsKept` auto states per game. Never removes a line head or a revision a device

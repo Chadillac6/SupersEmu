@@ -7,11 +7,39 @@ enum LibraryIssueError: Error, Equatable {
     case notFound, notAssignable, conflict
 }
 
+/// Why a file couldn't be imported: the message shown in Review Needed and the kind it's grouped and fixed by.
+public struct ImportReason: Equatable, Sendable {
+    public var message: String
+    public var kind: LibraryIssue.Kind
+
+    public init(_ message: String, _ kind: LibraryIssue.Kind) {
+        self.message = message
+        self.kind = kind
+    }
+}
+
+extension LibraryIssue.Kind {
+    /// When one file has several reasons, the issue takes the first of their kinds in this order.
+    static let precedence: [Self] = [.missingFiles, .unsupportedFormat, .wrongBIOS, .unknownSystem, .ambiguous, .other]
+
+    static func combined(_ kinds: [Self]) -> Self {
+        precedence.first(where: kinds.contains) ?? .other
+    }
+
+    /// A file or archive that couldn't be read: unsupported zip variants are a format problem, anything else is `other`.
+    static func readFailure(_ error: Error) -> Self {
+        switch error as? ZipArchive.ZipError {
+        case .zip64Unsupported?, .unsupportedMethod?: .unsupportedFormat
+        default: .other
+        }
+    }
+}
+
 /// Review Needed: what the last scan left in Incoming plus the review queue, with the fixes that are safe.
 extension LibraryImporter {
     static let uploadsFolder = "Uploads"
     static let uploadStagingFolder = ".uploads"
-    nonisolated(unsafe) static var maxUploadFileSize: Int64 = 4 << 30
+    public static let defaultMaxUploadFileSize: Int64 = 4 << 30
     static let uploadFreeSpaceMargin: Int64 = 512 << 20
     static let assignableSystems: [SystemID] = [.snes, .gb, .gbc, .gba, .genesis, .sega32x]
 
@@ -32,30 +60,33 @@ extension LibraryImporter {
     }
 
     func recordIssues(_ batch: Batch, incoming: URL) throws {
-        var rows: [(id: String, path: String, reason: String, reviewID: String?)] = []
+        var rows: [(id: String, path: String, reason: String, kind: LibraryIssue.Kind, reviewID: String?)] = []
         for (origin, outcomes) in batch.unsettled {
             guard let relative = Self.relativePath(origin, in: incoming) else { continue }
-            var reasons: [String] = [], reviewID: String?
+            var reasons: [String] = [], kinds: [LibraryIssue.Kind] = [], reviewID: String?
             for outcome in outcomes {
                 switch outcome {
-                case .review(let item):
+                case .review(let item, let kind):
                     reasons.append(item.reason)
+                    kinds.append(kind)
                     reviewID = reviewID ?? item.id
-                case .unsupported(let message):
+                case .unsupported(let message, let kind):
                     reasons.append(message.range(of: ": ").map { String(message[$0.upperBound...]) } ?? message)
+                    kinds.append(kind)
                 default: break
                 }
             }
             guard !reasons.isEmpty else { continue }
             var unique: [String] = []
             for reason in reasons where !unique.contains(reason) { unique.append(reason) }
-            rows.append((Self.issueID(relative), relative, unique.joined(separator: "; "), reviewID))
+            rows.append((Self.issueID(relative), relative, unique.joined(separator: "; "), .combined(kinds), reviewID))
         }
         try store.db.write { db in
             try db.execute(sql: "DELETE FROM import_issues")
             for row in rows {
-                try db.execute(sql: "INSERT OR REPLACE INTO import_issues (id, path, reason, review_id, created_at) VALUES (?, ?, ?, ?, ?)",
-                               arguments: [row.id, row.path, row.reason, row.reviewID, Date()])
+                try db.execute(sql: """
+                    INSERT OR REPLACE INTO import_issues (id, path, reason, kind, review_id, created_at) VALUES (?, ?, ?, ?, ?, ?)
+                    """, arguments: [row.id, row.path, row.reason, row.kind.rawValue, row.reviewID, Date()])
             }
         }
     }
@@ -64,7 +95,13 @@ extension LibraryImporter {
         "in-" + SHA256.hash(data: Data(relativePath.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
     }
 
-    static func issueKind(_ reason: String) -> LibraryIssue.Kind {
+    /// The kind the importer recorded, or for rows stored before kinds were recorded, one guessed from the reason text.
+    static func storedIssueKind(_ stored: String?, reason: String) -> LibraryIssue.Kind {
+        stored.flatMap(LibraryIssue.Kind.init(rawValue:)) ?? legacyIssueKind(reason)
+    }
+
+    /// Only for rows without a recorded kind (`import_issues.kind` / `games.review_kind` added in v13).
+    static func legacyIssueKind(_ reason: String) -> LibraryIssue.Kind {
         let reason = reason.lowercased()
         if reason.contains("missing track") || reason.contains("missing disc") || reason.contains("is missing")
             || reason.contains("without a .cue") { return .missingFiles }
@@ -101,16 +138,16 @@ extension LibraryImporter {
                 let reviewID = group.lazy.compactMap(\.reviewID).first
                 let queued = try reviewID.flatMap { try Self.queuedGame($0, db: db) }
                 if queued != nil, let reviewID { linked.insert(reviewID) }
-                let kind = Self.issueKind(lead.reason)
+                let kind = lead.kind
                 result.append(LibraryIssue(id: lead.id, kind: kind, filename: (lead.path as NSString).lastPathComponent, reason: lead.reason,
                                            incomingPath: lead.path, reviewID: queued == nil ? nil : reviewID,
                                            candidateSystems: Self.candidates(kind, queued)))
             }
-            for row in try Row.fetchAll(db, sql: "SELECT id, review_reason FROM games WHERE needs_review = 1 ORDER BY created_at") {
+            for row in try Row.fetchAll(db, sql: "SELECT id, review_reason, review_kind FROM games WHERE needs_review = 1 ORDER BY created_at") {
                 let id: String = row["id"]
                 guard !linked.contains(id), let queued = try Self.queuedGame(id, db: db) else { continue }
                 let reason: String = row["review_reason"] ?? "Needs review"
-                let kind = Self.issueKind(reason)
+                let kind = Self.storedIssueKind(row["review_kind"], reason: reason)
                 result.append(LibraryIssue(id: "rq-" + id, kind: kind, filename: queued.filename, reason: reason,
                                            incomingPath: nil, reviewID: id, candidateSystems: Self.candidates(kind, queued)))
             }
@@ -123,7 +160,7 @@ extension LibraryImporter {
             guard let issue = try importer.issues().first(where: { $0.id == id }) else { throw LibraryIssueError.notFound }
             guard let reviewID = issue.reviewID, issue.candidateSystems.contains(system) else { throw LibraryIssueError.notAssignable }
             let summary = try importer.store.db.write { db -> GameSummary in
-                try db.execute(sql: "UPDATE games SET system = ?, needs_review = 0, review_reason = NULL, updated_at = ? WHERE id = ? AND needs_review = 1",
+                try db.execute(sql: "UPDATE games SET system = ?, needs_review = 0, review_reason = NULL, review_kind = NULL, updated_at = ? WHERE id = ? AND needs_review = 1",
                                arguments: [system.rawValue, Date(), reviewID])
                 let row = try Row.fetchOne(db, sql: "SELECT g.title, f.size FROM games g JOIN game_files f ON f.game_id = g.id WHERE g.id = ?",
                                            arguments: [reviewID])
@@ -155,13 +192,14 @@ extension LibraryImporter {
         try store.audit(auth, action: "library.review.delete", detail: issue.incomingPath ?? issue.filename)
     }
 
-    typealias IssueRow = (id: String, path: String, reason: String, reviewID: String?)
+    typealias IssueRow = (id: String, path: String, reason: String, kind: LibraryIssue.Kind, reviewID: String?)
 
     static func issueRows(_ db: Database, incoming: URL) throws -> [IssueRow] {
-        try Row.fetchAll(db, sql: "SELECT id, path, reason, review_id FROM import_issues ORDER BY path").compactMap { row in
+        try Row.fetchAll(db, sql: "SELECT id, path, reason, kind, review_id FROM import_issues ORDER BY path").compactMap { row in
             let path: String = row["path"]
             guard FileManager.default.fileExists(atPath: incoming.appendingPathComponent(path).path) else { return nil }
-            return (row["id"], path, row["reason"], row["review_id"])
+            let reason: String = row["reason"]
+            return (row["id"], path, reason, storedIssueKind(row["kind"], reason: reason), row["review_id"])
         }
     }
 
@@ -172,7 +210,7 @@ extension LibraryImporter {
             let key: String
             if let reviewID = row.reviewID {
                 key = "review\n" + reviewID
-            } else if issueKind(row.reason) == .missingFiles {
+            } else if row.kind == .missingFiles {
                 key = (row.path as NSString).deletingLastPathComponent + "\n" + row.reason
             } else {
                 groups.append([row]); continue

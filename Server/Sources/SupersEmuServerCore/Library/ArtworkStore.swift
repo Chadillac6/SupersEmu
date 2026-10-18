@@ -18,59 +18,48 @@ public struct ArtworkStore: Sendable {
 
     @discardableResult
     public func setCover(gameID: String, data: Data, fileExtension: String) throws -> URL {
+        try writeArtwork(data, fileExtension: fileExtension, gameID: gameID, namePrefix: "cover-", prunePrefix: "cover") { db, path in
+            try db.execute(sql: "UPDATE games SET cover_artwork = ?, updated_at = ? WHERE id = ?", arguments: [path, Date(), gameID])
+        }
+    }
+
+    @discardableResult
+    public func setProviderArtwork(_ kind: ArtworkKind, position: Int = 0, provider: String, gameID: String, data: Data,
+                                   fileExtension: String, sourceURL: String? = nil) throws -> URL {
+        let prefix = "\(provider)-\(kind.rawValue)-\(position)-"
+        return try writeArtwork(data, fileExtension: fileExtension, gameID: gameID,
+                                identifiersValid: Self.isSafeComponent(provider) && position >= 0,
+                                namePrefix: prefix, prunePrefix: prefix) { db, path in
+            try db.execute(sql: """
+                INSERT INTO game_artwork (game_id, provider, kind, position, path, source_url, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (game_id, provider, kind, position) DO UPDATE SET path = excluded.path, source_url = excluded.source_url,
+                    updated_at = excluded.updated_at
+                """, arguments: [gameID, provider, kind.rawValue, position, path, sourceURL, Date()])
+        }
+    }
+
+    /// Validates, writes `artwork/<gameID>/<namePrefix><sha256>.<ext>`, records its path with `record`, then deletes the
+    /// game's other files starting with `prunePrefix`.
+    private func writeArtwork(_ data: Data, fileExtension: String, gameID: String, identifiersValid: Bool = true,
+                              namePrefix: String, prunePrefix: String, record: (Database, String) throws -> Void) throws -> URL {
         let ext = fileExtension.lowercased()
         guard Self.contentTypes[ext] != nil else { throw ArtworkError.unsupportedType(ext) }
         guard data.count <= Self.maxCoverSize else { throw ArtworkError.tooLarge }
-        guard Self.isSafeComponent(gameID) else { throw ArtworkError.invalidGameID }
+        guard Self.isSafeComponent(gameID), identifiersValid else { throw ArtworkError.invalidGameID }
         guard try store.db.read({ try Bool.fetchOne($0, sql: "SELECT EXISTS(SELECT 1 FROM games WHERE id = ?)", arguments: [gameID]) }) == true else {
             throw ArtworkError.unknownGame
         }
         let directory = store.paths.artwork.appendingPathComponent(gameID, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         // Content-addressed name: a path never changes bytes, so the ETag (the hash) always matches what is streamed.
-        let name = "cover-\(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()).\(ext)"
+        let name = "\(namePrefix)\(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()).\(ext)"
         let url = directory.appendingPathComponent(name)
-        // Write, record and clean up as one step so a concurrent update can't delete the cover just recorded.
+        // Write, record and clean up as one step so a concurrent update can't delete the file just recorded.
         try Self.writeLock.withLock {
             try data.write(to: url, options: .atomic)
-            try store.db.write { db in
-                try db.execute(sql: "UPDATE games SET cover_artwork = ?, updated_at = ? WHERE id = ?",
-                               arguments: ["artwork/\(gameID)/\(name)", Date(), gameID])
-            }
+            try store.db.write { db in try record(db, "artwork/\(gameID)/\(name)") }
             let others = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-            for other in others where other != name && other.hasPrefix("cover") {
-                try? FileManager.default.removeItem(at: directory.appendingPathComponent(other))
-            }
-        }
-        return url
-    }
-
-    @discardableResult
-    public func setProviderArtwork(_ kind: ArtworkKind, position: Int = 0, provider: String, gameID: String, data: Data,
-                                   fileExtension: String, sourceURL: String? = nil) throws -> URL {
-        let ext = fileExtension.lowercased()
-        guard Self.contentTypes[ext] != nil else { throw ArtworkError.unsupportedType(ext) }
-        guard data.count <= Self.maxCoverSize else { throw ArtworkError.tooLarge }
-        guard Self.isSafeComponent(gameID), Self.isSafeComponent(provider), position >= 0 else { throw ArtworkError.invalidGameID }
-        guard try store.db.read({ try Bool.fetchOne($0, sql: "SELECT EXISTS(SELECT 1 FROM games WHERE id = ?)", arguments: [gameID]) }) == true else {
-            throw ArtworkError.unknownGame
-        }
-        let directory = store.paths.artwork.appendingPathComponent(gameID, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let prefix = "\(provider)-\(kind.rawValue)-\(position)-"
-        let name = "\(prefix)\(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()).\(ext)"
-        let url = directory.appendingPathComponent(name)
-        try Self.writeLock.withLock {
-            try data.write(to: url, options: .atomic)
-            try store.db.write { db in
-                try db.execute(sql: """
-                    INSERT INTO game_artwork (game_id, provider, kind, position, path, source_url, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT (game_id, provider, kind, position) DO UPDATE SET path = excluded.path, source_url = excluded.source_url,
-                        updated_at = excluded.updated_at
-                    """, arguments: [gameID, provider, kind.rawValue, position, "artwork/\(gameID)/\(name)", sourceURL, Date()])
-            }
-            let others = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-            for other in others where other != name && other.hasPrefix(prefix) {
+            for other in others where other != name && other.hasPrefix(prunePrefix) {
                 try? FileManager.default.removeItem(at: directory.appendingPathComponent(other))
             }
         }

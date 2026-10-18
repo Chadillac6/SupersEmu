@@ -7,9 +7,9 @@ public enum SystemDetector {
     public enum Result: Equatable, Sendable {
         case system(SystemID)
         /// Looks like a game file but can't be identified safely. Stored and queued for review.
-        case needsReview(String)
+        case needsReview(ImportReason)
         /// Not a game file (or a format we don't take). Reported, not stored.
-        case unsupported(String)
+        case unsupported(ImportReason)
         /// OS junk (`.DS_Store`, AppleDouble). Skipped without reporting.
         case ignored
     }
@@ -64,10 +64,10 @@ public enum SystemDetector {
         case "sfc", "smc":
             // SNES has no magic number; the extension is SNES-only, so only sanity-check the size.
             let romSize = size % 1024 == 512 ? size - 512 : size
-            return romSize >= 0x8000 ? .system(.snes) : .needsReview("Too small for a SNES ROM (\(size) bytes)")
+            return romSize >= 0x8000 ? .system(.snes) : .needsReview(.init("Too small for a SNES ROM (\(size) bytes)", .ambiguous))
         case "gb", "gbc":
             guard bytes.count >= 0x150, Array(bytes[0x104..<0x134]) == nintendoLogo else {
-                return .needsReview("No Game Boy header (Nintendo logo at 0x104 missing)")
+                return .needsReview(.init("No Game Boy header (Nintendo logo at 0x104 missing)", .ambiguous))
             }
             switch bytes[0x143] {
             case 0xC0: return .system(.gbc)
@@ -77,29 +77,29 @@ public enum SystemDetector {
         case "z64", "n64", "v64":
             // The first word is 0x80371240 in big-endian .z64; .v64 swaps each 16-bit pair, .n64 each 32-bit word.
             guard bytes.count >= 0x40, n64Magics.contains(Array(bytes[0..<4])) else {
-                return .needsReview("No Nintendo 64 header (0x80371240 in any byte order)")
+                return .needsReview(.init("No Nintendo 64 header (0x80371240 in any byte order)", .ambiguous))
             }
             return .system(.n64)
         case "gba":
             guard bytes.count >= 0xC0, bytes[0xB2] == 0x96 else {
-                return .needsReview("No Game Boy Advance header (fixed byte 0x96 at 0xB2 missing)")
+                return .needsReview(.init("No Game Boy Advance header (fixed byte 0x96 at 0xB2 missing)", .ambiguous))
             }
             return .system(.gba)
         case "md", "gen", "bin", "smd":
             return detectGenesis(ext: ext, bytes: bytes, size: size)
         case "32x":
             if let header = segaHeader(bytes, at: 0x100), is32X(header: header, bytes: bytes) { return .system(.sega32x) }
-            return .needsReview("No Sega 32X header (\"32X\" at 0x100 or \"MARS\" at 0x3C0 missing)")
+            return .needsReview(.init("No Sega 32X header (\"32X\" at 0x100 or \"MARS\" at 0x3C0 missing)", .ambiguous))
         case "pbp":
-            return .unsupported("PBP (EBOOT) discs aren't supported yet; convert to .chd or .cue/.bin")
+            return .unsupported(.init("PBP (EBOOT) discs aren't supported yet; convert to .chd or .cue/.bin", .unsupportedFormat))
         case "zip":
-            return .unsupported("Archive inside an archive")
+            return .unsupported(.init("Archive inside an archive", .other))
         case _ where archiveExtensions.contains(ext):
-            return .unsupported("Archive format .\(ext) is not supported (use .zip)")
+            return .unsupported(.init("Archive format .\(ext) is not supported (use .zip)", .unsupportedFormat))
         case _ where patchExtensions.contains(ext):
-            return .unsupported("Patch files are not applied (.\(ext))")
+            return .unsupported(.init("Patch files are not applied (.\(ext))", .other))
         default:
-            return .needsReview(ext.isEmpty ? "Unknown file type (no extension)" : "Unknown file type .\(ext)")
+            return .needsReview(.init(ext.isEmpty ? "Unknown file type (no extension)" : "Unknown file type .\(ext)", .unknownSystem))
         }
     }
 
@@ -111,11 +111,11 @@ public enum SystemDetector {
             return .system(is32X(header: header, bytes: block) ? .sega32x : .genesis)
         }
         if bytes.count >= 0x20, String(decoding: bytes[0..<0x20], as: UTF8.self).contains("SEGADISCSYSTEM") {
-            return .needsReview("Sega CD disc image without a .cue sheet")
+            return .needsReview(.init("Sega CD disc image without a .cue sheet", .missingFiles))
         }
-        return .needsReview(ext == "bin"
+        return .needsReview(.init(ext == "bin"
             ? "Ambiguous .bin: no SEGA header at 0x100"
-            : "No SEGA header at 0x100")
+            : "No SEGA header at 0x100", .ambiguous))
     }
 
     /// 32X carts have a Genesis header naming "SEGA 32X", and/or the "MARS CHECK MODE" security string at 0x3C0.

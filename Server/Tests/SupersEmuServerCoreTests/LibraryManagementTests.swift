@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Hummingbird
 import HummingbirdTesting
 import SupersEmuKit
@@ -20,11 +21,12 @@ final class LibraryManagementTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        LibraryImporter.maxUploadFileSize = 4 << 30
         for url in extraFolders + [store.paths.root] { try? FileManager.default.removeItem(at: url) }
     }
 
-    func app() -> some ApplicationProtocol { buildApplication(store: store, configuration: .init()) }
+    func app(maxUploadFileSize: Int64 = LibraryImporter.defaultMaxUploadFileSize) -> some ApplicationProtocol {
+        buildApplication(store: store, configuration: .init(), maxUploadFileSize: maxUploadFileSize)
+    }
     var importer: LibraryImporter { LibraryImporter(store: store) }
     func auth(_ token: String) -> HTTPFields { [.authorization: "Bearer \(token)"] }
     func decode<T: Decodable>(_ type: T.Type, _ response: TestResponse) throws -> T {
@@ -94,8 +96,7 @@ final class LibraryManagementTests: XCTestCase {
     }
 
     func testUploadSizeLimitLeavesNothingBehind() async throws {
-        LibraryImporter.maxUploadFileSize = 1024
-        try await app().test(.router) { client in
+        try await app(maxUploadFileSize: 1024).test(.router) { client in
             try await self.upload(client, Data(repeating: 1, count: 4096), "Big.sfc", status: .contentTooLarge)
             try await self.upload(client, Data(repeating: 1, count: 512), "Small.sfc")
             try await self.upload(client, Data(repeating: 2, count: 512), "Small.sfc", status: .conflict)
@@ -192,6 +193,97 @@ final class LibraryManagementTests: XCTestCase {
             issues = try await self.issues(client)
             XCTAssertEqual(issues.map(\.filename), ["Thing.rom"])
         }
+    }
+
+    func testIssueKindsAreRecordedAndOlderRowsFallBackToTheirReason() async throws {
+        let incoming = store.paths.incoming
+        try write(DiscFixtures.cue(["Disc Game (Track 1).bin", "Disc Game (Track 2).bin"]), "Disc Game/Disc Game.cue", in: incoming)
+        try write(DiscFixtures.psxTrack(seed: 9), "Disc Game/Disc Game (Track 1).bin", in: incoming)
+        try write(Data(repeating: 7, count: 0x8000), "Mystery.gb", in: incoming)
+        try write(Data(repeating: 3, count: 4096), "Disc.pbp", in: incoming)
+        try write(Data(repeating: 5, count: 4096), "Thing.rom", in: incoming)
+        _ = try await importer.scanIncoming(auth: nil)
+
+        let recorded = try importer.issues()
+        let stored = try await store.db.read { db in
+            try Row.fetchAll(db, sql: "SELECT path, kind FROM import_issues").map { ($0["path"] as String, $0["kind"] as String?) }
+        }
+        XCTAssertFalse(stored.isEmpty)
+        XCTAssertTrue(stored.allSatisfy { $0.1 != nil }, "\(stored)")
+        let reviewKinds = try await store.db.read { try String.fetchAll($0, sql: "SELECT review_kind FROM games WHERE needs_review = 1") }
+        let queued = try await store.db.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM games WHERE needs_review = 1") }
+        XCTAssertEqual(reviewKinds.count, queued, "every queued game has a kind")
+        let byFile = Dictionary(uniqueKeysWithValues: recorded.map { ($0.filename, $0.kind) })
+        XCTAssertEqual(byFile["Disc Game.cue"], .missingFiles)
+        XCTAssertEqual(byFile["Mystery.gb"], .ambiguous)
+        XCTAssertEqual(byFile["Disc.pbp"], .unsupportedFormat)
+        XCTAssertEqual(byFile["Thing.rom"], .unknownSystem)
+
+        // Rows written before kinds were recorded are classified from their reason, as before.
+        try await store.db.write { db in
+            try db.execute(sql: "UPDATE import_issues SET kind = NULL")
+            try db.execute(sql: "UPDATE games SET review_kind = NULL")
+        }
+        XCTAssertEqual(try importer.issues(), recorded)
+    }
+
+    func testRecordedKindsMatchTheReasonTextClassifier() {
+        let reasons: [ImportReason] = [
+            "Hello.sfc", "Bad.gb", "Bad.gba", "Junk.z64", "Blank.32x", "Mystery.bin", "Mystery.md", "fix.ips", "set.7z", "Disc.pbp",
+            "inner.zip", "game.xyz", "noext",
+        ].compactMap { name in
+            switch SystemDetector.detect(filename: name, header: Data(count: 0x200), size: 0x200) {
+            case .needsReview(let reason), .unsupported(let reason): reason
+            default: nil
+            }
+        }
+        XCTAssertGreaterThanOrEqual(reasons.count, 12)
+        for reason in reasons {
+            XCTAssertEqual(reason.kind, LibraryImporter.legacyIssueKind(reason.message), reason.message)
+        }
+        XCTAssertEqual(LibraryIssue.Kind.combined([.other, .ambiguous, .missingFiles]), .missingFiles)
+        XCTAssertEqual(LibraryIssue.Kind.combined([]), .other)
+        XCTAssertEqual(LibraryIssue.Kind.readFailure(ZipArchive.ZipError.unsupportedMethod("a.sfc", 14)), .unsupportedFormat)
+        XCTAssertEqual(LibraryIssue.Kind.readFailure(ZipArchive.ZipError.notAZip), .other)
+    }
+
+    func testPlacedFileIsRemovedWhenItsRowsFailToWrite() throws {
+        struct WriteFailed: Error {}
+        let source = store.paths.root.appendingPathComponent("staged.sfc")
+        try FileManager.default.createDirectory(at: store.paths.root, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: source)
+        let destination = store.paths.games.appendingPathComponent("abc", isDirectory: true).appendingPathComponent("Game.sfc")
+        XCTAssertThrowsError(try importer.place(source, at: destination) { throw WriteFailed() })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path), "no file without a row")
+        XCTAssertEqual(LibraryImporter.storedPath(gameID: "abc", name: "Game.sfc"), "games/abc/Game.sfc")
+    }
+
+    func testRematchWithoutMetadataServiceValidatesAndAudits() async throws {
+        let report = try await importer.importPaths([try romFile()], auth: nil)
+        let id = try XCTUnwrap(report.imported.first?.id)
+        try await app().test(.router) { client in
+            let route = "/v1/admin/metadata/rematch"
+            try await client.execute(uri: route, method: .post, headers: self.auth(self.adminToken),
+                                     body: try self.json(MetadataRematchRequest(gameIDs: [id, "missing"]))) {
+                XCTAssertEqual($0.status, .notFound)
+            }
+            for (ids, queued) in [([id, id], 1), ([], 0), (nil, 1)] as [([String]?, Int)] {
+                try await client.execute(uri: route, method: .post, headers: self.auth(self.adminToken),
+                                         body: try self.json(MetadataRematchRequest(gameIDs: ids))) {
+                    XCTAssertEqual($0.status, .ok)
+                    XCTAssertEqual(try self.decode(MetadataRematchResponse.self, $0).queued, queued)
+                }
+            }
+        }
+        let audits = try await store.db.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM audit_log WHERE action = 'metadata.rematch'") }
+        XCTAssertEqual(audits, 3, "a rejected rematch isn't audited")
+    }
+
+    func romFile() throws -> String {
+        let url = store.paths.root.deletingLastPathComponent().appendingPathComponent("rematch-\(UUID().uuidString).sfc")
+        try ROMFixtures.snes(seed: 41).write(to: url)
+        extraFolders.append(url)
+        return url.path
     }
 
     func testDeletingDiscIssueRemovesSheetAndTracks() async throws {

@@ -110,5 +110,6 @@ public enum ServerMigrations {
         CheatMigrations.register(&migrator)
         MetadataMigrations.registerLibretroUnmatchedRecovery(&migrator)
         MetadataMigrations.registerSearchYear(&migrator)
+        LibraryMigrations.registerIssueKinds(&migrator)
     }
 }
