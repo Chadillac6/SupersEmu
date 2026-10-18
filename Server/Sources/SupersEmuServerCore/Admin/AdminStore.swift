@@ -10,10 +10,9 @@ import X509
 /// Queries behind the users/devices/tokens admin API. Never exposes token hashes.
 extension ServerStore {
     public func remoteAccessStatus() async -> RemoteAccessStatusResponse {
-        let configURL = paths.root.appendingPathComponent("public-access.json")
-        let config = (try? Data(contentsOf: configURL))
-            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-        let publicURL = (config["publicURL"] as? String).flatMap(URL.init(string:))
+        // Same reader as the launcher, so an invalid file shows as off here just as the listener treats it.
+        let config = (try? PublicAccessConfiguration.stored(root: paths.root)) ?? nil
+        let publicURL = config?.publicURL
         let ddnsURL = paths.root.appendingPathComponent("ddns-state.json")
         let ddns = (try? Data(contentsOf: ddnsURL)).flatMap {
             try? SupersEmuJSON.decoder().decode(RemoteAccessDDNSState.self, from: $0)
@@ -23,7 +22,7 @@ extension ServerStore {
             certificateValidUntil = await certificateExpiryFromTLS(host: host)
         }
         return RemoteAccessStatusResponse(
-            enabled: config["enabled"] as? Bool ?? false,
+            enabled: config?.enabled ?? false,
             publicURL: publicURL,
             tokenSaved: FileManager.default.fileExists(atPath: paths.root.appendingPathComponent("cloudflare.token").path),
             ddnsIP: ddns?.ip,
@@ -176,7 +175,8 @@ extension ServerStore {
                                              arguments: [id]) else {
                 throw HTTPError(.notFound, message: "No user \(id)")
             }
-            let user = UserInfo(id: id, displayName: displayName, role: Role(rawValue: row["role"]) ?? .player)
+            var user = Self.user(from: row)
+            user.displayName = displayName
             try db.execute(sql: "UPDATE users SET display_name = ? WHERE id = ?", arguments: [displayName, id])
             try Self.insertAudit(db, auth, action: "users.rename", detail: "user=\(id)")
             return user

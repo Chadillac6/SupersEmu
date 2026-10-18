@@ -72,6 +72,9 @@ public enum ServerLauncher {
 
     public static let publicListenHost = "127.0.0.1"
 
+    /// How long a restore waits before closing connections, so the 202 for the restore request reaches the client.
+    public static let restoreResponseGrace: Duration = .milliseconds(500)
+
     static func resolvePublicAccess(root: URL, options: ServerRunOptions, logger: Logger) -> ServerRunOptions {
         var resolved = options
         do {
@@ -117,8 +120,7 @@ public enum ServerLauncher {
             let pending = PendingRestore()
             await store.backups.setRestoreHandler { info in
                 pending.set(info)
-                // Lets the 202 for the restore request reach the client before connections close.
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: restoreResponseGrace)
                 await group.triggerGracefulShutdown()
             }
             let scheduler = Task { [backups = store.backups] in await BackupScheduler.run(backups, logger: logger) }
@@ -226,12 +228,24 @@ public enum ServerBootstrap {
         let admin = try store.adminUser() ?? store.createUser(displayName: displayName, role: .admin)
         let url = store.paths.adminToken
         guard rotateToken || !FileManager.default.fileExists(atPath: url.path) else { return (admin, false) }
-        let (_, token) = try store.createAPIToken(ownerUserID: admin.id, name: "local-cli", scopes: Scope.allCases)
+        let (tokenID, token) = try store.createAPIToken(ownerUserID: admin.id, name: "local-cli", scopes: Scope.allCases)
         let runningAsRoot = getuid() == 0
-        try? FileManager.default.removeItem(at: url)
-        FileManager.default.createFile(atPath: url.path, contents: Data(token.utf8),
-                                       attributes: [.posixPermissions: runningAsRoot ? 0o640 : 0o600])
-        if runningAsRoot { chown(url.path, 0, 80) } // gid 80 = admin
+        do {
+            try? FileManager.default.removeItem(at: url)
+            guard FileManager.default.createFile(atPath: url.path, contents: Data(token.utf8),
+                                                 attributes: [.posixPermissions: runningAsRoot ? 0o640 : 0o600]) else {
+                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
+            }
+            if runningAsRoot, chown(url.path, 0, 80) != 0 { // gid 80 = admin
+                let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EPERM)
+                try? FileManager.default.removeItem(at: url)
+                throw error
+            }
+        } catch {
+            // Never leave a live all-scope token behind that no file holds.
+            try? store.revokeAPIToken(tokenID)
+            throw error
+        }
         return (admin, true)
     }
 }

@@ -62,7 +62,7 @@ final class AdminUserRoutesTests: XCTestCase {
         let root = store.paths.root
         let expectedNow = Date(timeIntervalSince1970: 1_735_689_600)
         let expectedExpiry = Calendar(identifier: .gregorian).date(byAdding: .year, value: 2, to: expectedNow)!
-        let config = try JSONSerialization.data(withJSONObject: ["enabled": true, "publicURL": "https://games.supersemu.com"])
+        let config = try JSONSerialization.data(withJSONObject: ["enabled": true, "publicURL": "https://games.supersemu.com", "listenPort": 8489])
         try config.write(to: root.appendingPathComponent("public-access.json"))
         try Data("not-returned-token".utf8).write(to: root.appendingPathComponent("cloudflare.token"))
         let ddns = """
@@ -98,6 +98,18 @@ final class AdminUserRoutesTests: XCTestCase {
                 XCTAssertNil(status.ddnsLastError)
                 XCTAssertEqual(status.certificateValidUntil, expectedExpiry)
                 XCTAssertFalse(String(buffer: response.body).contains("not-returned-token"))
+            }
+        }
+    }
+
+    func testRemoteAccessStatusTreatsInvalidConfigAsOff() async throws {
+        let config = try JSONSerialization.data(withJSONObject: ["enabled": true, "publicURL": "http://games.supersemu.com", "listenPort": 8489])
+        try config.write(to: store.paths.root.appendingPathComponent(PublicAccessConfiguration.fileName))
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/admin/remote-access", method: .get, headers: self.bearer(self.adminDevice.token)) { response in
+                let status = try self.decode(RemoteAccessStatusResponse.self, response)
+                XCTAssertFalse(status.enabled)
+                XCTAssertNil(status.publicURL)
             }
         }
     }
