@@ -399,19 +399,28 @@ public final class LibraryImporter: @unchecked Sendable {
     /// Where a game file is stored, relative to the library root (`game_files.stored_path`).
     static func storedPath(gameID: String, name: String) -> String { "games/\(gameID)/\(name)" }
 
-    /// Moves (or copies) `source` to `destination`, replacing anything there, then runs `record` to write its rows.
-    /// If `record` throws, the placed file is removed so storage never holds a file without a row.
+    /// Moves (or copies) `source` to `destination` (a file or a whole game directory), then runs `record` to write its rows.
+    /// Anything already at `destination` is set aside and only deleted once `record` succeeds. If placing or `record`
+    /// fails, the placed item is removed and the previous one restored, so storage always matches the rows.
     func place(_ source: URL, at destination: URL, copying: Bool = false, record: () throws -> Void) throws {
         let fm = FileManager.default
-        try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
-        if copying { try fm.copyItem(at: source, to: destination) } else { try fm.moveItem(at: source, to: destination) }
+        let parent = destination.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        var previous: URL?
+        if fm.fileExists(atPath: destination.path) {
+            let aside = parent.appendingPathComponent(".\(destination.lastPathComponent).replaced-\(UUID().uuidString)")
+            try fm.moveItem(at: destination, to: aside)
+            previous = aside
+        }
         do {
+            if copying { try fm.copyItem(at: source, to: destination) } else { try fm.moveItem(at: source, to: destination) }
             try record()
         } catch {
             try? fm.removeItem(at: destination)
+            if let previous { try? fm.moveItem(at: previous, to: destination) }
             throw error
         }
+        if let previous { try? fm.removeItem(at: previous) }
     }
 
     func moveToImported(_ source: URL, incoming: URL, day: String) throws {
