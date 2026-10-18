@@ -111,3 +111,20 @@ final class SaveSync {
         return await engine.status(of: last.line)
     }
 }
+
+/// The core build this app last ran per core, so screens outside a game can tell whether a remote state will load.
+/// Forgotten when the app build changes, since an update can ship a different core.
+enum InstalledCores {
+    private static func key(_ coreID: String) -> String { "installedCore.\(coreID)" }
+    private static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "" }
+
+    static func record(_ core: SaveCore) {
+        UserDefaults.standard.set([core.version, build], forKey: key(core.id))
+    }
+
+    static func core(id: String) -> SaveCore? {
+        guard let stored = UserDefaults.standard.stringArray(forKey: key(id)), stored.count == 2, stored[1] == build
+        else { return nil }
+        return SaveCore(id: id, version: stored[0])
+    }
+}

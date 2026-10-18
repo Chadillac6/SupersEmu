@@ -144,6 +144,30 @@ final class SaveRoutesTests: XCTestCase {
         }
     }
 
+    func testScreenshotRetentionKeepsNewestPerDeviceAndNeverPrunesSlots() async throws {
+        try await app(.init(autoRevisionsKept: 2)).test(.router) { client in
+            var shots: [String] = []
+            for index in 0..<5 {
+                shots.append(try await self.upload(client, token: self.iPhone.token, kind: .manual, slot: "auto-shot",
+                                                   parent: shots.last, body: "shot-\(index)")!.revision.id)
+            }
+            let macShot = try await self.upload(client, token: self.mac.token, kind: .manual, slot: "auto-shot",
+                                                parent: shots.last, body: "mac-shot")!.revision.id
+            var slotParent: String?
+            for index in 0..<4 {
+                slotParent = try await self.upload(client, token: self.iPhone.token, kind: .manual, slot: "slot1",
+                                                   parent: slotParent, body: "slot-\(index)")!.revision.id
+            }
+
+            let revisions = try await self.list(client, token: self.iPhone.token)
+            XCTAssertEqual(revisions.filter { $0.slot == "auto-shot" }.map(\.id), Array(shots.suffix(2)) + [macShot])
+            XCTAssertEqual(revisions.filter { $0.slot == "slot1" }.count, 4)
+            let files = try FileManager.default.contentsOfDirectory(
+                atPath: self.store.paths.userDirectory(self.chad.id).appendingPathComponent("saves/\(self.game)").path)
+            XCTAssertEqual(Set(files), Set(revisions.map(\.id)))
+        }
+    }
+
     func testSizeLimitAndHashVerification() async throws {
         try await app(.init(maxBytes: 8)).test(.router) { client in
             _ = try await self.upload(client, token: self.iPhone.token, body: "123456789", expect: .contentTooLarge)

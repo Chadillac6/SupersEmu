@@ -227,6 +227,8 @@ struct GameDetailView: View {
     private struct RemoteProgress {
         let revision: SaveRevision
         let screenshot: Data?
+        /// False when the save needs a core build this app doesn't have.
+        let loadable: Bool
     }
 
     /// A resume point another device saved after this one last synced.
@@ -238,7 +240,10 @@ struct GameDetailView: View {
             remoteProgress = nil
             return
         }
-        remoteProgress = RemoteProgress(revision: head, screenshot: await SaveSync.shared.screenshot(for: head))
+        let coreID = CoreRegistry.coreID(for: game.fileURL, console: game.console)
+        let loadable = head.coreID == coreID && InstalledCores.core(id: coreID).map { $0.canLoadState(from: head) } != false
+        remoteProgress = RemoteProgress(revision: head, screenshot: await SaveSync.shared.screenshot(for: head),
+                                        loadable: loadable)
     }
 
     private func continueCard(_ progress: RemoteProgress, game: Game) -> some View {
@@ -265,31 +270,39 @@ struct GameDetailView: View {
                         .foregroundStyle(Brand.Colors.ink2)
                 }
             }
-            Button {
-                dismiss()
-                onPlay(game)
-            } label: {
-                Label("Continue from \(device)", systemImage: "play.fill")
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(BrandPrimaryButtonStyle())
-            .controlSize(.large)
-            .disabled(playIsDisabled)
-            .accessibilityIdentifier("detail-continue-remote")
-            if game.hasResumePoint {
+            if progress.loadable {
                 Button {
                     dismiss()
-                    onKeepLocal(game, progress.revision)
+                    onPlay(game)
                 } label: {
-                    Label("Use This \(SaveDevice.thisDevice)'s Save", systemImage: SaveDevice.symbol(for: SaveDevice.thisDevice))
+                    Label("Continue from \(device)", systemImage: "play.fill")
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(BrandSecondaryButtonStyle())
+                .buttonStyle(BrandPrimaryButtonStyle())
                 .controlSize(.large)
                 .disabled(playIsDisabled)
-                .accessibilityIdentifier("detail-keep-local")
+                .accessibilityIdentifier("detail-continue-remote")
+                if game.hasResumePoint {
+                    Button {
+                        dismiss()
+                        onKeepLocal(game, progress.revision)
+                    } label: {
+                        Label("Use This \(SaveDevice.thisDevice)'s Save", systemImage: SaveDevice.symbol(for: SaveDevice.thisDevice))
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(BrandSecondaryButtonStyle())
+                    .controlSize(.large)
+                    .disabled(playIsDisabled)
+                    .accessibilityIdentifier("detail-keep-local")
+                }
+            } else {
+                Text("This save needs a different emulator core than this \(SaveDevice.thisDevice) has. Update SupersEmu here to load it; it stays on the server.")
+                    .font(.callout)
+                    .foregroundStyle(Brand.Colors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("continue-remote-incompatible")
             }
         }
         .padding(16)

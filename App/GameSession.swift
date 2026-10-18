@@ -239,6 +239,7 @@ final class GameSession {
         #endif
         let core = SaveCore(id: hostInfo.3, version: hostInfo.4)
         self.core = core
+        InstalledCores.record(core)
         let stateFiles = SaveSlotStore.slots.map { SaveSync.manualFile(for: game.id, slot: $0, core: core) }
         if !startFresh, let remote = keepLocalOver, FileManager.default.fileExists(atPath: autoState.path) {
             let file = SaveSync.autoFile(for: game.id, core: core)
@@ -762,7 +763,10 @@ final class GameSession {
                 // this device's copy on the server as a branch when it has unsynced progress.
                 try await self.sync.engine.resolve(
                     SaveConflict(line: file.line, remote: revision), choice: .useRemote, file: file)
-                if let slot { await self.recordRemoteSlot(slot, revision) }
+                if let slot {
+                    await self.recordRemoteSlot(slot, revision)
+                    self.refreshSaveSlots()
+                }
             } catch {
                 self.diagnosticsLog?.appendEvent("save-state load remote failed: \(error.localizedDescription)")
             }
