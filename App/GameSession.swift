@@ -151,10 +151,10 @@ final class GameSession {
         await pull([SaveSync.nativeFile(for: game.id)])
         guard !Task.isCancelled else { return }
         let coreID = CoreRegistry.coreID(for: game.fileURL, console: game.console)
-        let n64Preset = coreID == "mupen64plus_next"
+        let n64Preset = coreID == SECoreIDMupen64PlusNext
             ? N64Preset.selectedPreset(forGameID: game.id)
             : nil
-        if UserDefaults.standard.object(forKey: "diagnostics.recordLogs") as? Bool ?? true {
+        if DiagnosticsSettings.recordLogs {
             diagnosticsLog = try? DiagnosticsLog(title: game.title)
         }
         installCoreLogHandler()
@@ -182,62 +182,36 @@ final class GameSession {
                     systemDirectory: AppPaths.system)
             }
         } catch {
-            loop.stop()
-            emulationLoop = nil
-            SELibretroHost.logHandler = nil
-            diagnosticsLog?.appendEvent("start failed")
-            diagnosticsLog?.stop()
-            diagnosticsLog = nil
-            isSyncing = false
-            errorMessage = error.localizedDescription
-            startTask = nil
+            abortLaunch(loop, event: "start failed", errorMessage: error.localizedDescription)
             return
         }
         guard !Task.isCancelled else {
-            loop.stop()
-            if emulationLoop === loop { emulationLoop = nil }
+            abortLaunch(loop)
             return
         }
         self.host = host
-        let hostInfo: (Bool, Int, Int, String, String, String, Double, Double, [String: String])? = loop.perform { host in
-            guard let host else { return nil }
-            return (
-                host.supportsCheats,
-                host.diskCount,
-                host.currentDisk,
-                host.coreID,
-                host.coreVersion,
-                host.coreName,
-                host.sampleRate,
-                host.framesPerSecond,
-                host.coreOptions)
-        } ?? nil
-        guard let hostInfo else {
-            loop.stop()
-            emulationLoop = nil
-            self.host = nil
-            isSyncing = false
-            startTask = nil
+        guard let hostInfo = loop.perform({ $0.map(HostInfo.init) }) ?? nil else {
+            abortLaunch(loop)
             return
         }
-        hostSampleRate = hostInfo.6
-        hostFramesPerSecond = hostInfo.7
-        loop.setFramesPerSecond(hostInfo.7)
+        hostSampleRate = hostInfo.sampleRate
+        hostFramesPerSecond = hostInfo.framesPerSecond
+        loop.setFramesPerSecond(hostInfo.framesPerSecond)
         startDiagnostics(
-            coreName: hostInfo.5,
-            coreVersion: hostInfo.4,
-            sampleRate: hostInfo.6,
-            framesPerSecond: hostInfo.7,
-            coreOptions: hostInfo.8,
+            coreName: hostInfo.coreName,
+            coreVersion: hostInfo.coreVersion,
+            sampleRate: hostInfo.sampleRate,
+            framesPerSecond: hostInfo.framesPerSecond,
+            coreOptions: hostInfo.coreOptions,
             n64Preset: n64Preset)
-        coreSupportsCheats = hostInfo.0 && CheatCodec.supportsCheats(systemID)
+        coreSupportsCheats = hostInfo.supportsCheats && CheatCodec.supportsCheats(systemID)
         if coreSupportsCheats { cheats = await CheatLibrary.shared.load(game.id) }
-        diskCount = hostInfo.1
-        currentDisk = hostInfo.2
+        diskCount = hostInfo.diskCount
+        currentDisk = hostInfo.currentDisk
         #if DEBUG
         if diskCount < 2, let stub = Self.debugDiscCount { diskCount = stub }
         #endif
-        let core = SaveCore(id: hostInfo.3, version: hostInfo.4)
+        let core = SaveCore(id: hostInfo.coreID, version: hostInfo.coreVersion)
         self.core = core
         InstalledCores.record(core)
         let stateFiles = SaveSlotStore.slots.map { SaveSync.manualFile(for: game.id, slot: $0, core: core) }
@@ -250,11 +224,7 @@ final class GameSession {
             : [SaveSync.autoFile(for: game.id, core: core)] + stateFiles)
         isSyncing = false
         guard !Task.isCancelled, self.host === host else {
-            loop.stop()
-            if emulationLoop === loop {
-                emulationLoop = nil
-                if self.host === host { self.host = nil }
-            }
+            abortLaunch(loop)
             return
         }
         refreshSaveSlots()
@@ -262,15 +232,8 @@ final class GameSession {
             do {
                 try AutoStateCheckpoint.moveAside(autoState)
             } catch {
-                diagnosticsLog?.appendEvent("stop")
-                loop.stop()
-                emulationLoop = nil
-                self.host = nil
-                SELibretroHost.logHandler = nil
-                diagnosticsLog?.stop()
-                diagnosticsLog = nil
-                errorMessage = "Couldn't preserve the previous resume point: \(error.localizedDescription)"
-                startTask = nil
+                abortLaunch(loop, event: "stop",
+                            errorMessage: "Couldn't preserve the previous resume point: \(error.localizedDescription)")
                 return
             }
             // If the app exits before this checkpoint, the old resume point can return on the next launch.
@@ -302,6 +265,47 @@ final class GameSession {
         hasStarted = true
         resume()
         watchForNewerSaves()
+    }
+
+    /// What `launch()` reads from the new host on the emulation thread.
+    private struct HostInfo {
+        let supportsCheats: Bool
+        let diskCount: Int
+        let currentDisk: Int
+        let coreID: String
+        let coreVersion: String
+        let coreName: String
+        let sampleRate: Double
+        let framesPerSecond: Double
+        let coreOptions: [String: String]
+
+        init(_ host: SELibretroHost) {
+            supportsCheats = host.supportsCheats
+            diskCount = host.diskCount
+            currentDisk = host.currentDisk
+            coreID = host.coreID
+            coreVersion = host.coreVersion
+            coreName = host.coreName
+            sampleRate = host.sampleRate
+            framesPerSecond = host.framesPerSecond
+            coreOptions = host.coreOptions
+        }
+    }
+
+    /// Undoes a launch that failed or was cancelled after its loop was created. Session state is only cleared
+    /// while this launch still owns it; a `stop()` during one of launch's awaits has already cleared it.
+    private func abortLaunch(_ loop: EmulationLoop, event: String? = nil, errorMessage message: String? = nil) {
+        loop.stop()
+        if let message { errorMessage = message }
+        guard emulationLoop === loop else { return }
+        if let event { diagnosticsLog?.appendEvent(event) }
+        emulationLoop = nil
+        host = nil
+        SELibretroHost.logHandler = nil
+        diagnosticsLog?.stop()
+        diagnosticsLog = nil
+        isSyncing = false
+        startTask = nil
     }
 
     // MARK: Cheats
@@ -346,7 +350,13 @@ final class GameSession {
         applyCheats()
         status = enabled ? "\(record.label) on" : "\(record.label) off"
         if cheatStates[id] == .rejected { status = "\(record.label): the core didn't accept this code" }
-        Task { try? await CheatLibrary.shared.save([record]) }
+        Task {
+            do {
+                try await CheatLibrary.shared.save([record])
+            } catch {
+                status = "\(record.label): couldn't save (\(error.localizedDescription))"
+            }
+        }
     }
 
     func openCheatPicker() {
@@ -415,14 +425,17 @@ final class GameSession {
 
     private func recordRemoteSlot(_ slot: Int, _ revision: SaveRevision) async {
         let screenshot = await sync.screenshot(for: revision)
-        slotStore.recordRemote(slot, savedAt: revision.createdAt, deviceName: revision.deviceName ?? "Another device",
-                               screenshotPNG: screenshot)
+        do {
+            try slotStore.recordRemote(slot, savedAt: revision.createdAt, deviceName: revision.deviceName ?? "Another device",
+                                       screenshotPNG: screenshot)
+        } catch {
+            diagnosticsLog?.appendEvent("save-state slot=\(slot) remote details not recorded: \(error.localizedDescription)")
+        }
     }
 
     private func manualSlot(for file: LocalSaveFile) -> Int? {
-        guard file.line.kind == .manual, file.line.slot.hasPrefix("slot"),
-              let slot = Int(file.line.slot.dropFirst(4)), SaveSlotStore.slots.contains(slot) else { return nil }
-        return slot
+        guard file.line.kind == .manual else { return nil }
+        return SaveSlotStore.slot(fromLine: file.line.slot)
     }
 
     private func refreshSaveSlots() {
@@ -561,7 +574,7 @@ final class GameSession {
     func recordEvent(_ event: String) {
         if let diagnosticsLog {
             diagnosticsLog.appendEvent(event)
-        } else if UserDefaults.standard.object(forKey: "diagnostics.recordLogs") as? Bool ?? true {
+        } else if DiagnosticsSettings.recordLogs {
             pendingDiagnosticsEvents.append(event)
         }
     }
@@ -626,8 +639,8 @@ final class GameSession {
             return
         }
         SELibretroHost.logHandler = { [weak diagnosticsLog] level, message in
-            let detailed = UserDefaults.standard.object(forKey: "diagnostics.detailedCoreLogs") as? Bool ?? false
-            diagnosticsLog?.appendCoreLog(level: Int(level), message: message, detailedCoreLogging: detailed)
+            diagnosticsLog?.appendCoreLog(level: Int(level), message: message,
+                                          detailedCoreLogging: DiagnosticsSettings.detailedCoreLogs)
         }
     }
 
@@ -647,24 +660,14 @@ final class GameSession {
         // Before the game has started (still syncing) there's nothing new to save, and a fresh state would replace the resume point.
         guard host != nil, let loop = emulationLoop, hasStarted else { return }
         let stateURL = AppPaths.autoState(for: game.id)
+        let saveRAMError: Error?
         do {
-            try loop.perform { host in
-                guard let host else { throw CocoaError(.fileNoSuchFile) }
-                host.flushSaveRAM()
-                try host.saveState(to: stateURL)
-            }
-            lastSuccessfulAutosave = .now
-            diagnosticsLog?.appendEvent("save-state save auto")
-            if !preservingStatus { status = "Auto-saved on this device" }
+            saveRAMError = try loop.perform { try Self.writeAutosave($0, to: stateURL) }
         } catch {
-            status = "Auto-save failed"
-            // The battery save was still flushed; sync it on its own.
-            upload([SaveSync.nativeFile(for: game.id)], saved: "Auto-save failed")
+            autosaveFailed()
             return
         }
-        upload([SaveSync.nativeFile(for: game.id)] + autoScreenshotFiles(force: force)
-                + (core.map { [SaveSync.autoFile(for: game.id, core: $0)] } ?? []),
-               saved: "Auto-saved")
+        autosaveSucceeded(preservingStatus: preservingStatus, force: force, saveRAMError: saveRAMError)
     }
 
     private func scheduleAutosave(preservingStatus: Bool = false) {
@@ -677,25 +680,54 @@ final class GameSession {
     private func autosaveAsynchronously(preservingStatus: Bool, force: Bool = false) async {
         guard host != nil, let loop = emulationLoop, hasStarted else { return }
         let stateURL = AppPaths.autoState(for: game.id)
+        let saveRAMError: Error?
         do {
-            try await loop.performAsync { host in
-                guard let host else { throw CocoaError(.fileNoSuchFile) }
-                host.flushSaveRAM()
-                try host.saveState(to: stateURL)
-            }
-            lastSuccessfulAutosave = .now
-            diagnosticsLog?.appendEvent("save-state save auto")
-            if !preservingStatus { status = "Auto-saved on this device" }
+            saveRAMError = try await loop.performAsync { try Self.writeAutosave($0, to: stateURL) }
         } catch EmulationLoopError.stopped {
+            // The session stopped while this was queued; stop() runs its own final autosave.
             return
         } catch {
-            status = "Auto-save failed"
-            upload([SaveSync.nativeFile(for: game.id)], saved: "Auto-save failed")
+            autosaveFailed()
             return
+        }
+        autosaveSucceeded(preservingStatus: preservingStatus, force: force, saveRAMError: saveRAMError)
+    }
+
+    /// Runs on the emulation thread. A failed battery save doesn't stop the state save; it's returned instead.
+    nonisolated private static func writeAutosave(_ host: SELibretroHost?, to stateURL: URL) throws -> Error? {
+        guard let host else { throw CocoaError(.fileNoSuchFile) }
+        var saveRAMError: Error?
+        do {
+            try host.flushSaveRAM()
+        } catch {
+            saveRAMError = error
+        }
+        try host.saveState(to: stateURL)
+        return saveRAMError
+    }
+
+    private func autosaveSucceeded(preservingStatus: Bool, force: Bool, saveRAMError: Error?) {
+        lastSuccessfulAutosave = .now
+        diagnosticsLog?.appendEvent("save-state save auto")
+        if let saveRAMError {
+            reportSaveRAMFailure(saveRAMError)
+        } else if !preservingStatus {
+            status = "Auto-saved on this device"
         }
         upload([SaveSync.nativeFile(for: game.id)] + autoScreenshotFiles(force: force)
                 + (core.map { [SaveSync.autoFile(for: game.id, core: $0)] } ?? []),
                saved: "Auto-saved")
+    }
+
+    private func autosaveFailed() {
+        status = "Auto-save failed"
+        // The battery save was flushed before the state save failed; sync it on its own.
+        upload([SaveSync.nativeFile(for: game.id)], saved: "Auto-save failed")
+    }
+
+    private func reportSaveRAMFailure(_ error: Error, updatingStatus: Bool = true) {
+        diagnosticsLog?.appendEvent("battery save write failed: \(error.localizedDescription)")
+        if updatingStatus { status = "Battery save failed: \(error.localizedDescription)" }
     }
 
     /// The resume point's screenshot for the game page on other devices: at most every 5 minutes, and always on exit.
@@ -976,15 +1008,25 @@ final class GameSession {
                         try host.saveState(to: url)
                     }
                 }
-                if case .save = command {
-                    try slotStore.save(into: slot, savedAt: Date(), screenshotPNG: screenshot, writeState: writeState)
-                } else {
-                    try slotStore.overwrite(slot, savedAt: Date(), screenshotPNG: screenshot, writeState: writeState)
+                var saved = "Saved to Slot \(slot)"
+                do {
+                    if case .save = command {
+                        try slotStore.save(into: slot, savedAt: Date(), screenshotPNG: screenshot, writeState: writeState)
+                    } else {
+                        try slotStore.overwrite(slot, savedAt: Date(), screenshotPNG: screenshot, writeState: writeState)
+                    }
+                } catch SaveSlotError.metadataNotRecorded(_, let reason) {
+                    // The state itself landed, so it still counts as saved and syncs.
+                    diagnosticsLog?.appendEvent("save-state slot=\(slot) details not recorded: \(reason)")
+                    saved = "Saved to Slot \(slot) (date and picture not saved)"
                 }
                 diagnosticsLog?.appendEvent("save-state save slot=\(slot)")
-                _ = loop.perform { $0?.flushSaveRAM() }
+                do {
+                    try loop.perform { try $0?.flushSaveRAM() }
+                } catch {
+                    reportSaveRAMFailure(error, updatingStatus: false)
+                }
                 refreshSaveSlots()
-                let saved = "Saved to Slot \(slot)"
                 status = saved
                 if let core {
                     let stateFile = SaveSync.manualFile(for: game.id, slot: slot, core: core)
