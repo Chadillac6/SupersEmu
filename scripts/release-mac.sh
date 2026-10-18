@@ -43,11 +43,18 @@ notarize() { # file
 # `stapler staple` validates the ticket itself. GitHub's runners often lose the connection to Apple's
 # ticket server, so after the retries a notarized file ships unstapled: Gatekeeper fetches the ticket online.
 staple_with_retry() {
-  local file="$1" attempt attempts delay
+  local file="$1" attempt attempts delay log status=0
   attempts="${SUPERSEMU_STAPLE_ATTEMPTS:-10}"
   delay="${SUPERSEMU_STAPLE_RETRY_DELAY:-30}"
+  [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || { echo "error: SUPERSEMU_STAPLE_ATTEMPTS must be a positive integer" >&2; exit 2; }
+  [[ "$delay" =~ ^[0-9]+$ ]] || { echo "error: SUPERSEMU_STAPLE_RETRY_DELAY must be whole seconds" >&2; exit 2; }
+  log="$(mktemp "${TMPDIR:-/tmp}/staple.XXXXXX")"
   for ((attempt = 1; attempt <= attempts; attempt++)); do
-    if xcrun stapler staple "$file"; then
+    status=0
+    xcrun stapler staple "$file" > "$log" 2>&1 || status=$?
+    cat "$log" >&2
+    if [ "$status" -eq 0 ]; then
+      rm -f "$log"
       return 0
     fi
     if [ "$attempt" -lt "$attempts" ]; then
@@ -55,6 +62,15 @@ staple_with_retry() {
       sleep "$delay"
     fi
   done
+  # Only ship unstapled when Apple's ticket server couldn't be reached (stapler Error 68 with an NSURLError).
+  # Anything else, e.g. "Record not found" (Error 65), means Gatekeeper would reject the build too.
+  if [ "$status" -ne 68 ] || ! grep -q 'NSURLErrorDomain' "$log"; then
+    rm -f "$log"
+    printf 'error: stapling %s failed (stapler exit %s) for a reason other than reaching Apple'"'"'s ticket server\n' \
+      "$file" "$status" >&2
+    exit 1
+  fi
+  rm -f "$log"
   printf 'warning: could not staple %s after %s attempts; it is notarized, so it ships unstapled\n' \
     "$file" "$attempts" >&2
   [ -z "${GITHUB_ACTIONS:-}" ] || echo "::warning::$(basename "$file") is notarized but unstapled (Apple ticket server unreachable)"
