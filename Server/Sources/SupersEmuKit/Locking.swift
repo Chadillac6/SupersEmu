@@ -20,25 +20,36 @@ public final class LockedValue<Value>: @unchecked Sendable {
 }
 
 /// Resumes a continuation at most once, whichever callback gets there first. Later calls are ignored.
+/// A resume before any continuation is installed is a no-op. Installing twice is a programming error.
 public final class OnceContinuation<Value, Failure: Error>: @unchecked Sendable {
-    private let continuation = LockedValue<CheckedContinuation<Value, Failure>?>(nil)
+    private enum State {
+        case idle
+        case pending(CheckedContinuation<Value, Failure>)
+        case finished
+    }
+
+    private let state = LockedValue(State.idle)
 
     public init() {}
 
     public init(_ continuation: CheckedContinuation<Value, Failure>) {
-        self.continuation.value = continuation
+        install(continuation)
     }
 
     public func install(_ continuation: CheckedContinuation<Value, Failure>) {
-        self.continuation.value = continuation
+        state.withLock { state in
+            guard case .idle = state else { preconditionFailure("OnceContinuation installed more than once") }
+            state = .pending(continuation)
+        }
     }
 
     /// Returns true if this call resumed the continuation.
     @discardableResult
     public func resume(with result: Result<Value, Failure>) -> Bool {
-        let pending = continuation.withLock { stored -> CheckedContinuation<Value, Failure>? in
-            defer { stored = nil }
-            return stored
+        let pending = state.withLock { state -> CheckedContinuation<Value, Failure>? in
+            guard case .pending(let continuation) = state else { return nil }
+            state = .finished
+            return continuation
         }
         pending?.resume(with: result)
         return pending != nil
