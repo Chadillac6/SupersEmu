@@ -1,3 +1,4 @@
+import ImageIO
 import SupersEmuKit
 import SwiftUI
 
@@ -51,5 +52,73 @@ struct SaveConflictPrompt: View {
         case .auto: "Resume point"
         case .manual: "Saved slot"
         }
+    }
+}
+
+/// Names and icons for the device a save came from.
+enum SaveDevice {
+    static var thisDevice: String {
+        #if os(macOS)
+        "Mac"
+        #else
+        UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        #endif
+    }
+
+    static func symbol(for name: String?) -> String {
+        let name = name?.lowercased() ?? ""
+        if name.contains("ipad") { return "ipad" }
+        if name.contains("iphone") { return "iphone" }
+        if name.contains("mac") { return "laptopcomputer" }
+        return "externaldrive.connected.to.line.below"
+    }
+
+    static func image(from png: Data?) -> Image? {
+        guard let png, let source = CGImageSourceCreateWithData(png as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        return Image(decorative: image, scale: 1)
+    }
+}
+
+/// "Newer save from <device>" while playing: Load swaps it in, X keeps playing this device's game.
+struct NewerSaveBanner: View {
+    let revision: SaveRevision
+    let load: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: SaveDevice.symbol(for: revision.deviceName))
+                .font(.title2)
+                .frame(width: 32)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Newer save from \(revision.deviceName ?? "another device")")
+                    .font(.callout.bold())
+                    .lineLimit(2)
+                Text("\(what) · \(revision.createdAt, format: .relative(presentation: .named))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Load", action: load)
+                .buttonStyle(BrandPrimaryButtonStyle())
+                .accessibilityIdentifier("newer-save-load")
+            Button(action: dismiss) {
+                Image(systemName: "xmark").padding(6)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Keep playing")
+            .accessibilityIdentifier("newer-save-dismiss")
+        }
+        .padding(14)
+        .frame(maxWidth: 460)
+        .brandPanel()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("newer-save-banner")
+    }
+
+    private var what: String {
+        revision.kind == .manual ? "Slot \(revision.slot.dropFirst(4))" : "Resume point"
     }
 }

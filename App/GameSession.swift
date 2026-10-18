@@ -24,6 +24,11 @@ final class GameSession {
     private(set) var hasManualState: Bool
     private(set) var isShowingSaveSlots = false
     private(set) var saveSlots: [SaveSlotInfo] = []
+    /// A save another device made while this game is open; offered as a "Load" banner, never loaded on its own.
+    private(set) var newerElsewhere: SaveRevision?
+    @ObservationIgnored private var dismissedNewerSaves: Set<String> = []
+    @ObservationIgnored private var newerSaveWatch: Task<Void, Never>?
+    @ObservationIgnored private var lastAutoScreenshotUpload: Date?
     var slotNavigator = SaveSlotNavigator()
     /// A newer save from another device; the game waits until the player picks which copy to continue.
     private(set) var pendingConflict: SaveConflict?
@@ -86,6 +91,8 @@ final class GameSession {
     @ObservationIgnored private var chordArmed = true
     @ObservationIgnored private var hotkeyHeldSince: ContinuousClock.Instant?
     @ObservationIgnored private let startFresh: Bool
+    /// Set by "Use this device's save" on the game page: this copy replaces the newer one from another device.
+    @ObservationIgnored private let keepLocalOver: SaveRevision?
     @ObservationIgnored private var needsFreshCheckpoint = false
     @ObservationIgnored private var saveSlotsFromMenu = false
     /// False after the menu opens until the hotkey is released, so a still-held hotkey doesn't reopen it.
@@ -104,9 +111,10 @@ final class GameSession {
         displayLink != nil || timer != nil
     }
 
-    init(game: Game, startFresh: Bool = false, sync: SaveSync? = nil) {
+    init(game: Game, startFresh: Bool = false, keepLocalOver: SaveRevision? = nil, sync: SaveSync? = nil) {
         self.game = game
         self.startFresh = startFresh
+        self.keepLocalOver = keepLocalOver
         self.sync = sync ?? .shared
         let initialSlots = SaveSlotStore(directory: AppPaths.stateDirectory(for: game.id)).slots()
         saveSlots = initialSlots
@@ -231,7 +239,12 @@ final class GameSession {
         #endif
         let core = SaveCore(id: hostInfo.3, version: hostInfo.4)
         self.core = core
+        InstalledCores.record(core)
         let stateFiles = SaveSlotStore.slots.map { SaveSync.manualFile(for: game.id, slot: $0, core: core) }
+        if !startFresh, let remote = keepLocalOver, FileManager.default.fileExists(atPath: autoState.path) {
+            let file = SaveSync.autoFile(for: game.id, core: core)
+            try? await sync.engine.resolve(SaveConflict(line: file.line, remote: remote), choice: .keepLocal, file: file)
+        }
         let pulled = await pull(startFresh
             ? stateFiles
             : [SaveSync.autoFile(for: game.id, core: core)] + stateFiles)
@@ -288,6 +301,7 @@ final class GameSession {
         lastAutosave = .now
         hasStarted = true
         resume()
+        watchForNewerSaves()
     }
 
     // MARK: Cheats
@@ -366,7 +380,7 @@ final class GameSession {
             case .downloaded(let revision) where file.line.kind == .auto:
                 message = "Resumed from \(revision.deviceName ?? "another device")"
             case .downloaded(let revision) where file.line.kind == .manual:
-                if let slot = manualSlot(for: file) { slotStore.recordRemote(slot, savedAt: revision.createdAt) }
+                if let slot = manualSlot(for: file) { await recordRemoteSlot(slot, revision) }
             case .incompatible(let revision) where file.line.kind == .auto:
                 // Same rule as local incompatible states: never load it, keep it, and say so.
                 message = "Newer save from \(revision.deviceName ?? "another device") needs \(revision.coreID) \(revision.coreVersion); kept on server"
@@ -386,7 +400,7 @@ final class GameSession {
                     try await sync.engine.resolve(conflict, choice: choice, file: file)
                     if choice == .useRemote, file.line.kind == .auto { message = "Resumed from \(conflict.deviceName)" }
                     if choice == .useRemote, file.line.kind == .manual, let slot = manualSlot(for: file) {
-                        slotStore.recordRemote(slot, savedAt: conflict.remote.createdAt)
+                        await recordRemoteSlot(slot, conflict.remote)
                     }
                 } catch {
                     message = "Kept this device's save (\(error.localizedDescription))"
@@ -397,6 +411,12 @@ final class GameSession {
         }
         refreshSaveSlots()
         return message
+    }
+
+    private func recordRemoteSlot(_ slot: Int, _ revision: SaveRevision) async {
+        let screenshot = await sync.screenshot(for: revision)
+        slotStore.recordRemote(slot, savedAt: revision.createdAt, deviceName: revision.deviceName ?? "Another device",
+                               screenshotPNG: screenshot)
     }
 
     private func manualSlot(for file: LocalSaveFile) -> Int? {
@@ -562,6 +582,7 @@ final class GameSession {
     func appDidBecomeActive() {
         recordEvent("app foreground")
         host?.startAudioEngineIfNeeded()
+        Task { await checkForNewerSaves() }
     }
 
     private func startDiagnostics(
@@ -621,7 +642,7 @@ final class GameSession {
         }
     }
 
-    func autosave(preservingStatus: Bool = false) {
+    func autosave(preservingStatus: Bool = false, force: Bool = false) {
         lastAutosave = .now
         // Before the game has started (still syncing) there's nothing new to save, and a fresh state would replace the resume point.
         guard host != nil, let loop = emulationLoop, hasStarted else { return }
@@ -641,7 +662,8 @@ final class GameSession {
             upload([SaveSync.nativeFile(for: game.id)], saved: "Auto-save failed")
             return
         }
-        upload([SaveSync.nativeFile(for: game.id)] + (core.map { [SaveSync.autoFile(for: game.id, core: $0)] } ?? []),
+        upload([SaveSync.nativeFile(for: game.id)] + autoScreenshotFiles(force: force)
+                + (core.map { [SaveSync.autoFile(for: game.id, core: $0)] } ?? []),
                saved: "Auto-saved")
     }
 
@@ -652,7 +674,7 @@ final class GameSession {
         }
     }
 
-    private func autosaveAsynchronously(preservingStatus: Bool) async {
+    private func autosaveAsynchronously(preservingStatus: Bool, force: Bool = false) async {
         guard host != nil, let loop = emulationLoop, hasStarted else { return }
         let stateURL = AppPaths.autoState(for: game.id)
         do {
@@ -671,8 +693,99 @@ final class GameSession {
             upload([SaveSync.nativeFile(for: game.id)], saved: "Auto-save failed")
             return
         }
-        upload([SaveSync.nativeFile(for: game.id)] + (core.map { [SaveSync.autoFile(for: game.id, core: $0)] } ?? []),
+        upload([SaveSync.nativeFile(for: game.id)] + autoScreenshotFiles(force: force)
+                + (core.map { [SaveSync.autoFile(for: game.id, core: $0)] } ?? []),
                saved: "Auto-saved")
+    }
+
+    /// The resume point's screenshot for the game page on other devices: at most every 5 minutes, and always on exit.
+    private func autoScreenshotFiles(force: Bool) -> [LocalSaveFile] {
+        guard core != nil, force || lastAutoScreenshotUpload.map({ Date().timeIntervalSince($0) >= 300 }) ?? true,
+              let loop = emulationLoop,
+              let png = (loop.perform { $0?.copyFrameImage() } ?? nil).flatMap(SaveSlotStore.pngData(from:)) else { return [] }
+        let url = SaveSync.autoScreenshotURL(for: game.id)
+        guard (try? png.write(to: url, options: .atomic)) != nil else { return [] }
+        lastAutoScreenshotUpload = Date()
+        return [SaveSync.screenshotFile(for: SaveLine(gameID: game.id, kind: .auto), url: url)]
+    }
+
+    // MARK: Newer saves from other devices
+
+    private func watchForNewerSaves() {
+        newerSaveWatch?.cancel()
+        newerSaveWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.checkForNewerSaves()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+    }
+
+    /// Looks for a resume point or slot another device saved since this one last synced.
+    func checkForNewerSaves() async {
+        guard hasStarted, let core, newerElsewhere == nil else { return }
+        let files = [SaveSync.autoFile(for: game.id, core: core)]
+            + SaveSlotStore.slots.map { SaveSync.manualFile(for: game.id, slot: $0, core: core) }
+        let newer = await sync.engine.newerRemote(files).values
+            .filter { core.canLoadState(from: $0) && !dismissedNewerSaves.contains($0.id) }
+            .max { $0.createdAt < $1.createdAt }
+        guard hasStarted, newerElsewhere == nil, let newer else { return }
+        newerElsewhere = newer
+        diagnosticsLog?.appendEvent("newer save elsewhere kind=\(newer.kind.rawValue) slot=\(newer.slot)")
+    }
+
+    func dismissNewerSave() {
+        guard let newer = newerElsewhere else { return }
+        dismissedNewerSaves.insert(newer.id)
+        newerElsewhere = nil
+    }
+
+    /// Loads the save from the banner. This device's copy is kept on the server as a branch.
+    func loadNewerSave() {
+        guard let revision = newerElsewhere, let core, hasStarted, pendingConflict == nil else { return }
+        newerElsewhere = nil
+        dismissedNewerSaves.insert(revision.id)
+        let device = revision.deviceName ?? "another device"
+        if isMenuOpen { closeMenu() }
+        pause()
+        Task { [weak self] in
+            guard let self else { return }
+            let slot = SaveSlotStore.slots.first { SaveSlotStore.lineSlot($0) == revision.slot }
+            let file = revision.kind == .manual
+                ? slot.map { SaveSync.manualFile(for: self.game.id, slot: $0, core: core) }
+                : SaveSync.autoFile(for: self.game.id, core: core)
+            guard let file else { return self.resume() }
+            self.isSyncing = true
+            self.status = "Loading save from \(device)…"
+            do {
+                if file.line.kind == .manual { await self.pendingDiscard?.value }
+                // Tapping Load is the user's choice, so take the newer save without asking again. Resolving keeps
+                // this device's copy on the server as a branch when it has unsynced progress.
+                try await self.sync.engine.resolve(
+                    SaveConflict(line: file.line, remote: revision), choice: .useRemote, file: file)
+                if let slot {
+                    await self.recordRemoteSlot(slot, revision)
+                    self.refreshSaveSlots()
+                }
+            } catch {
+                self.diagnosticsLog?.appendEvent("save-state load remote failed: \(error.localizedDescription)")
+            }
+            self.isSyncing = false
+            guard self.hasStarted, let loop = self.emulationLoop,
+                  (try? Data(contentsOf: file.url)).map(SaveSyncEngine.sha256) == revision.sha256 else {
+                if self.hasStarted { self.status = "Kept this device's save" }
+                return self.resume()
+            }
+            do {
+                try loop.perform { try $0?.loadState(from: file.url) }
+                self.applyCheats()
+                self.diagnosticsLog?.appendEvent("save-state load remote kind=\(revision.kind.rawValue)")
+                self.status = slot.map { "Loaded Slot \($0) from \(device)" } ?? "Loaded save from \(device)"
+            } catch {
+                self.status = "Load failed: \(error.localizedDescription)"
+            }
+            self.resume()
+        }
     }
 
     /// Uploads files right after they're written locally; offline copies stay queued on disk and retry later.
@@ -776,6 +889,7 @@ final class GameSession {
         menuSelection = 0
         isMenuOpen = true
         startOverlayPolling()
+        Task { await checkForNewerSaves() }
     }
 
     func closeMenu() {
@@ -825,6 +939,8 @@ final class GameSession {
     func closeSaveSlots() {
         guard isShowingSaveSlots else { return }
         isShowingSaveSlots = false
+        slotStore.markSeen()
+        refreshSaveSlots()
         slotNavigator.confirmation = nil
         if saveSlotsFromMenu, isMenuOpen {
             saveSlotsFromMenu = false
@@ -871,8 +987,9 @@ final class GameSession {
                 let saved = "Saved to Slot \(slot)"
                 status = saved
                 if let core {
-                    upload([SaveSync.nativeFile(for: game.id), SaveSync.manualFile(for: game.id, slot: slot, core: core)],
-                           saved: saved)
+                    let stateFile = SaveSync.manualFile(for: game.id, slot: slot, core: core)
+                    let shot = screenshot == nil ? [] : [SaveSync.screenshotFile(for: stateFile.line, url: slotStore.screenshotURL(slot))]
+                    upload([SaveSync.nativeFile(for: game.id)] + shot + [stateFile], saved: saved)
                 }
                 closeSaveSlots()
                 if isMenuOpen { closeMenu() }
@@ -1113,8 +1230,11 @@ final class GameSession {
         startTask = nil
         abandonConflict()
         diagnosticsLog?.appendEvent("stop")
+        newerSaveWatch?.cancel()
+        newerSaveWatch = nil
+        newerElsewhere = nil
         pause()
-        autosave()
+        autosave(force: true)
         host?.audioEnabled = false
         hasStarted = false
         isSyncing = false

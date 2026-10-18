@@ -5,15 +5,21 @@ unsigned iOS simulator build for PRs. PR jobs have read-only tokens and no relea
 secrets. Homebrew test fixtures use the existing fetch script; unavailable fixtures
 skip their matching tests.
 
-A push to `main` (including a merged PR) runs the same checks, then builds and publishes
-the universal Developer ID Mac update and uploads the iOS build to TestFlight using one
-shared marketing version and build number. The marketing version advances by 0.0.1
+A push to `main` (including a merged PR) runs the same checks. In parallel,
+`Select release version` picks one shared marketing version and build number, then
+`Publish Mac update` builds and notarizes the universal Developer ID Mac update and
+`Upload iOS build to TestFlight` archives the iOS app. Both release jobs wait for
+`Mac and server checks` to pass (`scripts/ci-wait-for-job.sh`) before publishing, so a
+release takes about as long as the checks rather than checks plus both builds. The marketing version advances by 0.0.1
 above the latest App Store Connect iOS or Sparkle Mac version, with `project.yml` as
 the minimum floor. TestFlight builds are added to the internal **Chad** group
-automatically. The Mac release is notarized and stapled, and its GitHub release contains
+automatically. The Mac release is notarized and stapled. Stapling is retried 10 times; if Apple's
+ticket server stays unreachable, the notarized files ship unstapled with a warning
+(Gatekeeper fetches the ticket online). Its GitHub release contains
 the ZIP, DMG, and `appcast.xml`. Standard `macos-15` hosted runners with Xcode 26.2
 (Swift 6.2) are used; no runner is installed on the production Mac mini. Failed checks,
-notarization, or TestFlight upload fail the release job.
+notarization, or TestFlight upload fail the matching release job. The Mac and iOS jobs
+publish independently: a failed Mac notarization no longer stops the TestFlight upload.
 
 ## One-time credential setup
 
@@ -54,9 +60,9 @@ remain enabled; do not grant release credentials to PR workflows.
 
 1. Open a PR and wait for `Mac and server checks` to pass.
 2. Merge the PR into `main`.
-3. Watch `Publish fleet update` in the Actions tab. Its successful completion means
-   the Mac update was published and the iOS build was uploaded to TestFlight; merging
-   by itself is not proof of delivery.
+3. Watch `Publish Mac update` and `Upload iOS build to TestFlight` in the Actions tab.
+   Their successful completion means the Mac update was published and the iOS build was
+   uploaded to TestFlight; merging by itself is not proof of delivery.
 4. The iOS build appears in the internal **Chad** TestFlight group after processing.
    Macs with the bootstrap Sparkle app installed can fetch the update automatically
    or use **Check for Updates**. A Mac serving the library may need administrator

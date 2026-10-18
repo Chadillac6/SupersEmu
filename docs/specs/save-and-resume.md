@@ -13,7 +13,9 @@ created-at, parent revision.
 
 ## Resume
 Opening a game with an auto state resumes it ("Continue" badge in the library). A state is only
-offered when its core version matches the bundled core.
+offered when its core version matches the bundled core. Mupen64Plus-Next names its renderer in the
+version ("3.0-GLES3 git" on iPhone/iPad, "3.0-OpenGL git" on the Mac); that part is ignored, so N64
+states move between devices built from the same core commit (`SaveCore.stateFormat`).
 
 ## Sync states shown to the user
 Saved on this device, Waiting to upload, Uploading, Synced, Conflict, Failed (retrying).

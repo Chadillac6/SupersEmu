@@ -7,7 +7,8 @@ import SupersEmuKit
 public struct SaveConfiguration: Sendable {
     /// Largest accepted save body. PS1/N64 states are a few MB; 64 MiB leaves headroom.
     public var maxBytes: Int
-    /// Auto-state revisions kept per game. Manual and native revisions are never pruned.
+    /// Auto-state revisions kept per game, and screenshot revisions ("auto-shot", "slot1-shot") kept per line and
+    /// device. Other manual revisions and native revisions are never pruned.
     public var autoRevisionsKept: Int
 
     public init(maxBytes: Int = 64 << 20, autoRevisionsKept: Int = 10) {
@@ -178,7 +179,14 @@ public struct SaveStore: Sendable {
                    let row = try Row.fetchOne(db, sql: "SELECT * FROM save_revisions WHERE id = ?", arguments: [revisionID]) {
                     try Self.recordBase(db: db, userID: userID, deviceID: deviceID, row: row)
                 }
-                let pruned = upload.kind == .auto ? try pruneAutoRevisions(db, userID: userID, gameID: upload.gameID) : []
+                let pruned: [String]
+                if upload.kind == .auto {
+                    pruned = try pruneAutoRevisions(db, userID: userID, gameID: upload.gameID)
+                } else if upload.kind == .manual, Self.isScreenshotSlot(upload.slot) {
+                    pruned = try pruneScreenshotRevisions(db, userID: userID, gameID: upload.gameID, slot: upload.slot)
+                } else {
+                    pruned = []
+                }
                 let inserted = try revision(db, userID: userID, gameID: upload.gameID, id: revisionID)
                 return (SaveUploadResponse(revision: inserted.revision, branched: branched), true, pruned)
             }
@@ -213,6 +221,34 @@ public struct SaveStore: Sendable {
             ORDER BY rowid DESC LIMIT -1 OFFSET ?
             """, arguments: [userID, gameID, userID, gameID, userID, gameID, userID, gameID,
                                 configuration.autoRevisionsKept - 1])
+        return try deleteRevisions(rows, db: db, userID: userID, gameID: gameID)
+    }
+
+    /// The screenshot lines the app writes: "auto-shot" and "slot<N>-shot". Any other manual slot keeps its history.
+    static func isScreenshotSlot(_ slot: String) -> Bool {
+        if slot == "auto-shot" { return true }
+        guard slot.hasPrefix("slot"), slot.hasSuffix("-shot") else { return false }
+        let number = slot.dropFirst(4).dropLast(5)
+        return !number.isEmpty && number.allSatisfy(\.isASCII) && number.allSatisfy(\.isNumber)
+    }
+
+    /// Screenshots are previews, not progress: keeps the newest `autoRevisionsKept` per device on one screenshot line
+    /// (enough to match the auto states kept), plus the line head and any device's base.
+    private func pruneScreenshotRevisions(_ db: Database, userID: String, gameID: String, slot: String) throws -> [String] {
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT id, stored_path FROM (
+                SELECT id, stored_path, rowid AS rid,
+                       ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY rowid DESC) AS rank
+                FROM save_revisions WHERE user_id = ? AND game_id = ? AND kind = 'manual' AND slot = ?)
+            WHERE rank > ?
+              AND rid NOT IN (SELECT MAX(rowid) FROM save_revisions WHERE user_id = ? AND game_id = ? AND kind = 'manual'
+                              AND slot = ? AND detached = 0)
+              AND id NOT IN (SELECT revision_id FROM save_device_bases WHERE user_id = ? AND game_id = ?)
+            """, arguments: [userID, gameID, slot, configuration.autoRevisionsKept, userID, gameID, slot, userID, gameID])
+        return try deleteRevisions(rows, db: db, userID: userID, gameID: gameID)
+    }
+
+    private func deleteRevisions(_ rows: [Row], db: Database, userID: String, gameID: String) throws -> [String] {
         for row in rows {
             // Re-parent children onto the pruned revision's parent so every kept revision still traces back
             // through `parentID` to the bases it descends from.

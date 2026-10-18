@@ -1,3 +1,4 @@
+import SupersEmuKit
 import SwiftUI
 
 @main
@@ -52,6 +53,7 @@ struct RootView: View {
     @Environment(BIOSCenter.self) private var bios
     @Environment(\.scenePhase) private var scenePhase
     #if os(macOS)
+    @State private var systemAppearance = SystemAppearance()
     @Environment(\.openWindow) private var openWindow
     @State private var pendingUpdateNotice: PendingUpdateNotice?
     #endif
@@ -68,7 +70,8 @@ struct RootView: View {
     var body: some View {
         Group {
             if let launch = playing {
-                PlayerView(session: GameSession(game: launch.game, startFresh: launch.startFresh)) {
+                PlayerView(session: GameSession(game: launch.game, startFresh: launch.startFresh,
+                                                  keepLocalOver: launch.keepLocalOver)) {
                     playing = nil
                     library.refresh()
                     downloads.reload()
@@ -78,10 +81,14 @@ struct RootView: View {
             } else {
                 LibraryView(
                     onPlay: { game in Task { await launch(game) } },
-                    onStartFresh: { game in Task { await launch(game, startFresh: true) } }
+                    onStartFresh: { game in Task { await launch(game, startFresh: true) } },
+                    onKeepLocal: { game, remote in Task { await launch(game, keepLocalOver: remote) } }
                 )
             }
         }
+        #if os(macOS)
+        .environment(\.colorScheme, playing != nil ? .dark : systemAppearance.colorScheme)
+        #endif
         .overlay {
             if showsLaunchSplash && playing == nil {
                 LaunchSplash {
@@ -138,17 +145,18 @@ struct RootView: View {
     }
 
     /// Disc games need their BIOS in the system directory before the core loads them.
-    private func launch(_ game: Game, startFresh: Bool = false) async {
+    private func launch(_ game: Game, startFresh: Bool = false, keepLocalOver: SaveRevision? = nil) async {
         if let system = downloads.downloaded[game.id]?.detail.game.system, system.requiresBIOS {
             await bios.sync(using: server)
             guard !bios.isMissing(system) else { return }
         }
-        playing = LaunchRequest(game: game, startFresh: startFresh)
+        playing = LaunchRequest(game: game, startFresh: startFresh, keepLocalOver: keepLocalOver)
     }
 
     private struct LaunchRequest {
         let game: Game
         let startFresh: Bool
+        var keepLocalOver: SaveRevision?
     }
 }
 
@@ -171,6 +179,29 @@ private struct UpdateWhatsNewSheet: View {
         }
         .padding(24)
         .frame(minWidth: 420, minHeight: 280)
+    }
+}
+#endif
+
+#if os(macOS)
+/// The app-wide light/dark setting, read from AppKit rather than the SwiftUI environment.
+/// SwiftUI kept the library window dark after the player's dark scheme went away, so RootView sets the scheme itself.
+@MainActor @Observable
+final class SystemAppearance {
+    private(set) var colorScheme: ColorScheme
+    @ObservationIgnored private var observation: NSKeyValueObservation?
+
+    init(application: NSApplication = .shared) {
+        colorScheme = Self.colorScheme(of: application.effectiveAppearance)
+        observation = application.observe(\.effectiveAppearance) { [weak self] application, _ in
+            MainActor.assumeIsolated {
+                self?.colorScheme = Self.colorScheme(of: application.effectiveAppearance)
+            }
+        }
+    }
+
+    nonisolated static func colorScheme(of appearance: NSAppearance) -> ColorScheme {
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .dark : .light
     }
 }
 #endif

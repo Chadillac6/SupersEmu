@@ -435,3 +435,31 @@ release_marketing_version() {
   echo "Using project.yml marketing version floor $floor; selected $marketing_version" >&2
   printf '%s\n' "$marketing_version"
 }
+
+# Gatekeeper check for a notarized release file: release_gatekeeper_check <file> <spctl --assess args...>
+# A stapled file must pass spctl. An unstapled one (Apple's ticket server was unreachable) can't be assessed without
+# that server, so it must carry a valid Developer ID signature for SUPERSEMU_TEAM_ID instead, and spctl only warns.
+# Without SUPERSEMU_TEAM_ID (a standalone publish), the team comes from the file's own signature.
+release_gatekeeper_check() {
+  local file="$1" requirement team
+  shift
+  if xcrun stapler validate "$file" >/dev/null 2>&1; then
+    spctl --assess "$@" -v "$file"
+    return
+  fi
+  team="${SUPERSEMU_TEAM_ID:-$(codesign -dv "$file" 2>&1 | sed -n 's/^TeamIdentifier=//p')}"
+  if ! [[ "$team" =~ ^[A-Z0-9]{10}$ ]]; then
+    echo "error: $file is unstapled and has no Team ID; set SUPERSEMU_TEAM_ID" >&2
+    return 1
+  fi
+  [ -n "${SUPERSEMU_TEAM_ID:-}" ] || echo "SUPERSEMU_TEAM_ID not set; checking $file against its signing team $team" >&2
+  requirement="anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists"
+  requirement+=" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+  requirement+=" and certificate leaf[subject.OU] = \"$team\""
+  if ! codesign --verify --strict --verbose=2 -R="$requirement" "$file"; then
+    echo "error: $file is unstapled and has no valid Developer ID signature for team $team" >&2
+    return 1
+  fi
+  spctl --assess "$@" -v "$file" ||
+    echo "warning: $file is unstapled and Gatekeeper couldn't assess it offline; its Developer ID signature verified" >&2
+}

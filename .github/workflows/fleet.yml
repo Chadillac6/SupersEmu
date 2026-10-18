@@ -29,6 +29,8 @@ jobs:
       - name: Test release signing scripts
         run: |
           scripts/test-release-mac-staple-retry.sh
+          scripts/test-ci-wait-for-job.sh
+          scripts/test-release-gatekeeper-check.sh
           scripts/test-release-p12.sh
           scripts/test-marketing-version.sh
           scripts/test-mac-release-notes.sh
@@ -52,14 +54,43 @@ jobs:
           path: build/ci-tests.xcresult
           retention-days: 7
           if-no-files-found: ignore
-  release:
-    name: Publish fleet update
-    needs: checks
+  # Release jobs build alongside the checks and publish only after they pass (ci-wait-for-job.sh).
+  version:
+    name: Select release version
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 15
+    environment: mac-release
+    env:
+      SUPERSEMU_TEAM_ID: '967UEY5R3M'
+    outputs:
+      marketing-version: ${{ steps.select.outputs.marketing-version }}
+      build-number: ${{ steps.select.outputs.build-number }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Select shared version and build number
+        id: select
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          brew install xcodegen
+          version="$(scripts/release-version.sh)"
+          build_number="$(date -u +%Y%m%d.%H%M%S)"
+          echo "marketing-version=$version" >> "$GITHUB_OUTPUT"
+          echo "build-number=$build_number" >> "$GITHUB_OUTPUT"
+          echo "Version $version (build $build_number)"
+  release:
+    name: Publish Mac update
+    needs: version
     runs-on: macos-15
     timeout-minutes: 150
     environment: mac-release
     permissions:
+      actions: read
       contents: write
     env:
       SUPERSEMU_TEAM_ID: '967UEY5R3M'
@@ -77,24 +108,24 @@ jobs:
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: scripts/ci-signing.sh
-      - name: Select shared version and build number
+      - name: Use shared version and build number
         env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          MARKETING_VERSION: ${{ needs.version.outputs.marketing-version }}
+          BUILD_NUMBER: ${{ needs.version.outputs.build-number }}
         run: |
           brew install xcodegen
-          version="$(scripts/release-version.sh)"
-          build_number="$(date -u +%Y%m%d.%H%M%S)"
-          echo "SUPERSEMU_MARKETING_VERSION=$version" >> "$GITHUB_ENV"
-          echo "SUPERSEMU_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
-          echo "Version $version (build $build_number)"
+          echo "SUPERSEMU_MARKETING_VERSION=$MARKETING_VERSION" >> "$GITHUB_ENV"
+          echo "SUPERSEMU_BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "Version $MARKETING_VERSION (build $BUILD_NUMBER)"
       - name: Build and notarize universal Mac release
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-        run: |
-          scripts/release-mac.sh
+        run: scripts/release-mac.sh
+      - name: Wait for Mac and server checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci-wait-for-job.sh 'Mac and server checks'
       - name: Check for newer main commit
         id: latest-commit
         env:
@@ -112,12 +143,72 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/publish-mac-update.sh "build/release-mac/$SUPERSEMU_BUILD_NUMBER" "mac-$SUPERSEMU_BUILD_NUMBER" "$GITHUB_SHA"
+      - name: Remove temporary signing credentials
+        if: always()
+        run: scripts/ci-signing.sh cleanup
+  testflight:
+    name: Upload iOS build to TestFlight
+    needs: version
+    runs-on: macos-15
+    timeout-minutes: 150
+    environment: mac-release
+    permissions:
+      actions: read
+      contents: read
+    env:
+      SUPERSEMU_TEAM_ID: '967UEY5R3M'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Prepare isolated signing keychain
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: scripts/ci-signing.sh
+      - name: Use shared version and build number
+        env:
+          MARKETING_VERSION: ${{ needs.version.outputs.marketing-version }}
+          BUILD_NUMBER: ${{ needs.version.outputs.build-number }}
+        run: |
+          brew install xcodegen
+          echo "SUPERSEMU_MARKETING_VERSION=$MARKETING_VERSION" >> "$GITHUB_ENV"
+          echo "SUPERSEMU_BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "Version $MARKETING_VERSION (build $BUILD_NUMBER)"
+      - name: Archive iOS app
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          SUPERSEMU_IOS_STAGE: archive
+        run: scripts/release-ios.sh
+      - name: Wait for Mac and server checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci-wait-for-job.sh 'Mac and server checks'
+      - name: Check for newer main commit
+        id: latest-commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh api repos/Chadillac6/SupersEmu/git/ref/heads/main --jq .object.sha)
+          if [ "$latest" != "$GITHUB_SHA" ]; then
+            echo 'A newer main commit exists; this release will not be published.'
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
       - name: Upload iOS build to TestFlight
         if: steps.latest-commit.outputs.publish == 'true'
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          SUPERSEMU_IOS_STAGE: upload
         run: scripts/release-ios.sh
       - name: Remove temporary signing credentials
         if: always()

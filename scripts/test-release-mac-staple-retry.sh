@@ -1,96 +1,62 @@
 #!/usr/bin/env bash
+# Tests staple_with_retry from release-mac.sh against a fake xcrun.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-release_script="$script_dir/release-mac.sh"
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/release-staple-test.XXXXXX")"
 trap 'rm -rf "$temp_dir"' EXIT
 
-fake_bin="$temp_dir/fakebin"
-mkdir -p "$fake_bin"
 function_source="$temp_dir/staple-function.sh"
-sed -n '/^staple_with_retry() {$/,/^}/p' "$release_script" > "$function_source"
+sed -n '/^staple_with_retry() {$/,/^}/p' "$script_dir/release-mac.sh" > "$function_source"
 [ -s "$function_source" ] || { echo "FAIL: staple_with_retry function not found" >&2; exit 1; }
 
-cat > "$fake_bin/xcrun" <<'STUB'
+mkdir -p "$temp_dir/fakebin"
+cat > "$temp_dir/fakebin/xcrun" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-case "${2:-}" in
-  staple)
-    attempt=0
-    if [ -f "$STAPLE_ATTEMPT_FILE" ]; then
-      IFS= read -r attempt < "$STAPLE_ATTEMPT_FILE"
-    fi
-    attempt=$((attempt + 1))
-    printf '%s\n' "$attempt" > "$STAPLE_ATTEMPT_FILE"
-    if [ "$attempt" -le "$STAPLE_FAIL_ATTEMPTS" ]; then
-      exit 1
-    fi
-    ;;
-  validate)
-    printf '%s\n' validate >> "$STAPLE_VALIDATE_FILE"
-    ;;
-  *)
-    echo "unexpected xcrun command: $*" >&2
-    exit 64
-    ;;
-esac
+[ "${1:-} ${2:-}" = 'stapler staple' ] || { echo "unexpected xcrun command: $*" >&2; exit 64; }
+attempt=$(($(cat "$STAPLE_ATTEMPT_FILE" 2>/dev/null || echo 0) + 1))
+echo "$attempt" > "$STAPLE_ATTEMPT_FILE"
+[ "$attempt" -gt "$STAPLE_FAIL_ATTEMPTS" ] && exit 0
+# Messages and exit codes match the real stapler: ticket server unreachable vs. no ticket for this build.
+if [ "$STAPLE_FAIL_MODE" = missing ]; then
+  echo 'CloudKit query for test.app failed due to "Record not found".'
+  echo 'The staple and validate action failed! Error 65.'
+  exit 65
+fi
+echo 'error is Error Domain=NSURLErrorDomain Code=-1005 "The network connection was lost."'
+echo 'The staple and validate action failed! Error 68.'
+exit 68
 STUB
-chmod +x "$fake_bin/xcrun"
+chmod +x "$temp_dir/fakebin/xcrun"
 
-run_helper() {
-  local fail_attempts="$1" attempt_file="$2" validate_file="$3" stdout_file="$4" stderr_file="$5"
-  PATH="$fake_bin:$PATH" \
-    STAPLE_FAIL_ATTEMPTS="$fail_attempts" \
-    STAPLE_ATTEMPT_FILE="$attempt_file" \
-    STAPLE_VALIDATE_FILE="$validate_file" \
-    SUPERSEMU_STAPLE_RETRY_DELAY=0 \
-    /bin/bash -c 'source "$1"; staple_with_retry "$2"' _ "$function_source" test.app \
-    > "$stdout_file" 2> "$stderr_file"
+failures=0
+run_case() { # name fail_attempts want_status want_attempts want_retry_lines want_warning|error [fail_mode] [attempts]
+  local name="$1" status=0 attempts retries case_dir
+  case_dir="$(mktemp -d "$temp_dir/case.XXXXXX")"
+  PATH="$temp_dir/fakebin:$PATH" STAPLE_FAIL_ATTEMPTS="$2" STAPLE_ATTEMPT_FILE="$case_dir/attempts" \
+    STAPLE_FAIL_MODE="${7:-unreachable}" SUPERSEMU_STAPLE_ATTEMPTS="${8:-10}" \
+    SUPERSEMU_STAPLE_RETRY_DELAY=0 GITHUB_ACTIONS='' \
+    /bin/bash -c 'set -euo pipefail; source "$1"; staple_with_retry "$2"' _ "$function_source" test.app \
+    > "$case_dir/out" 2> "$case_dir/err" || status=$?
+  attempts="$(cat "$case_dir/attempts" 2>/dev/null || echo 0)"
+  retries="$(grep -c '^Stapling test.app failed (attempt [0-9]*/10); retrying in 0s$' "$case_dir/err" || true)"
+  if [ "$status" -eq "$3" ] && [ "$attempts" -eq "$4" ] && [ "$retries" -eq "$5" ] &&
+     { [ "$6" != yes ] || grep -Fq 'warning: could not staple test.app after 10 attempts' "$case_dir/err"; } &&
+     { [ "$6" != error ] || grep -Fq "error: stapling test.app failed (stapler exit 65)" "$case_dir/err"; } &&
+     { [ "$6" = yes ] || ! grep -q 'warning: could not staple' "$case_dir/err"; }; then
+    echo "PASS: $name"
+  else
+    echo "FAIL: $name (status $status, attempts $attempts, retry lines $retries)" >&2
+    cat "$case_dir/err" >&2
+    failures=$((failures + 1))
+  fi
 }
 
-success_attempt_file="$temp_dir/success-attempts"
-success_validate_file="$temp_dir/success-validations"
-success_stdout="$temp_dir/success.stdout"
-success_stderr="$temp_dir/success.stderr"
-if run_helper 2 "$success_attempt_file" "$success_validate_file" "$success_stdout" "$success_stderr"; then
-  [ "$(<"$success_attempt_file")" -eq 3 ] ||
-    { echo "FAIL: expected success on attempt 3" >&2; exit 1; }
-  [ "$(wc -l < "$success_validate_file" | tr -d ' ')" -eq 1 ] ||
-    { echo "FAIL: expected one successful-attempt validation" >&2; exit 1; }
-  [ "$(awk '/^Stapling .* failed / { count++ } END { print count+0 }' "$success_stderr")" -eq 2 ] ||
-    { echo "FAIL: expected two retry messages" >&2; exit 1; }
-  grep -Fq 'Stapling test.app failed (attempt 1/6); retrying in 0s' "$success_stderr" ||
-    { echo "FAIL: missing first retry message" >&2; exit 1; }
-  grep -Fq 'Stapling test.app failed (attempt 2/6); retrying in 0s' "$success_stderr" ||
-    { echo "FAIL: missing second retry message" >&2; exit 1; }
-  printf '%s\n' 'PASS: succeeds on the third attempt after two failures'
-  cat "$success_stderr"
-else
-  echo "FAIL: expected the third-attempt run to succeed" >&2
-  cat "$success_stderr" >&2
-  exit 1
-fi
-
-failure_attempt_file="$temp_dir/failure-attempts"
-failure_validate_file="$temp_dir/failure-validations"
-failure_stdout="$temp_dir/failure.stdout"
-failure_stderr="$temp_dir/failure.stderr"
-if run_helper 6 "$failure_attempt_file" "$failure_validate_file" "$failure_stdout" "$failure_stderr"; then
-  echo "FAIL: six failed attempts unexpectedly succeeded" >&2
-  exit 1
-else
-  failure_status=$?
-  [ "$failure_status" -ne 0 ] ||
-    { echo "FAIL: six failed attempts returned zero" >&2; exit 1; }
-  [ "$(<"$failure_attempt_file")" -eq 6 ] ||
-    { echo "FAIL: expected exactly six staple attempts" >&2; exit 1; }
-  [ "$(awk '/^Stapling .* failed / { count++ } END { print count+0 }' "$failure_stderr")" -eq 5 ] ||
-    { echo "FAIL: expected five retry messages before the final error" >&2; exit 1; }
-  grep -Fq 'error: failed to staple and validate test.app after 6 attempts' "$failure_stderr" ||
-    { echo "FAIL: missing final error message" >&2; exit 1; }
-  [ ! -e "$failure_validate_file" ] ||
-    { echo "FAIL: validation ran after every staple attempt failed" >&2; exit 1; }
-  printf 'PASS: six failed attempts exit non-zero (status %s)\n' "$failure_status"
-  cat "$failure_stderr"
-fi
+run_case 'staples first time' 0 0 1 0 no
+run_case 'succeeds on the third attempt after two failures' 2 0 3 2 no
+run_case 'succeeds on the last attempt' 9 0 10 9 no
+run_case 'ticket server unreachable 10 times: returns 1 with a warning (ships unstapled)' 99 1 10 9 yes
+run_case 'no ticket for the build ("Record not found"): fails the release' 99 1 10 9 error missing
+run_case 'SUPERSEMU_STAPLE_ATTEMPTS=0 is rejected before stapling' 0 2 0 0 no unreachable 0
+[ "$failures" -eq 0 ]

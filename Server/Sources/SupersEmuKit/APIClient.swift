@@ -27,16 +27,37 @@ public enum SupersEmuJSON {
     }
 }
 
+/// Owns a long-lived `URLSession` and invalidates it only once the last holder (including every `APIClient` made
+/// from it) is gone. Sending on an invalidated session raises an Objective-C exception that Swift can't catch, so
+/// owners drop their lease instead of calling `finishTasksAndInvalidate()` while clients may still be in flight.
+public final class URLSessionLease: Sendable {
+    public let session: URLSession
+
+    public init(_ session: URLSession) { self.session = session }
+
+    deinit { session.finishTasksAndInvalidate() }
+}
+
 /// Thin async client for the SupersEmu Server `/v1` API. Shared by the apps and the `supersemu` CLI.
 public struct APIClient: Sendable {
     public var baseURL: URL
     public var token: String?
     public var session: URLSession
+    /// Keeps a leased session valid for as long as this client (or a copy) exists.
+    private let lease: URLSessionLease?
 
     public init(baseURL: URL, token: String?, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.token = token
         self.session = session
+        lease = nil
+    }
+
+    public init(baseURL: URL, token: String?, lease: URLSessionLease) {
+        self.baseURL = baseURL
+        self.token = token
+        session = lease.session
+        self.lease = lease
     }
 
     public func health() async throws -> HealthResponse { try await get("/v1/health") }

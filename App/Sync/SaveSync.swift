@@ -73,6 +73,32 @@ final class SaveSync {
                       core: core, requiresMatchingCore: true)
     }
 
+    /// Screenshots ride along as their own manual lines ("auto-shot", "slot1-shot"), which older apps ignore.
+    static func shotSlot(for line: SaveLine) -> String { line.slot.isEmpty ? "auto-shot" : "\(line.slot)-shot" }
+
+    static func screenshotFile(for line: SaveLine, url: URL) -> LocalSaveFile {
+        LocalSaveFile(line: SaveLine(gameID: line.gameID, kind: .manual, slot: shotSlot(for: line)), url: url, core: nil,
+                      requiresMatchingCore: false)
+    }
+
+    static func autoScreenshotURL(for gameID: String) -> URL {
+        AppPaths.stateDirectory(for: gameID).appendingPathComponent("auto-shot.png")
+    }
+
+    /// The screenshot the saving device uploaded alongside `revision`, if any.
+    func screenshot(for revision: SaveRevision) async -> Data? {
+        guard let client = await provider.currentClient() else { return nil }
+        let slot = Self.shotSlot(for: SaveLine(gameID: revision.gameID, kind: revision.kind, slot: revision.slot))
+        let window: TimeInterval = revision.kind == .auto ? 600 : 120
+        guard let revisions = try? await client.saves(gameID: revision.gameID).revisions,
+              let shot = revisions
+                .filter({ $0.kind == .manual && $0.slot == slot && $0.deviceID == revision.deviceID
+                    && abs($0.createdAt.timeIntervalSince(revision.createdAt)) <= window })
+                .min(by: { abs($0.createdAt.timeIntervalSince(revision.createdAt)) < abs($1.createdAt.timeIntervalSince(revision.createdAt)) })
+        else { return nil }
+        return try? await client.saveData(gameID: revision.gameID, revisionID: shot.id)
+    }
+
     /// Queues files that were just written locally and tries to upload them. Returns the line's sync status.
     @discardableResult
     func uploadAfterWrite(_ files: [LocalSaveFile]) async -> SaveSyncStatus? {
@@ -83,5 +109,22 @@ final class SaveSync {
         guard queued, let last = files.last else { return nil }
         await engine.flush()
         return await engine.status(of: last.line)
+    }
+}
+
+/// The core build this app last ran per core, so screens outside a game can tell whether a remote state will load.
+/// Forgotten when the app build changes, since an update can ship a different core.
+enum InstalledCores {
+    private static func key(_ coreID: String) -> String { "installedCore.\(coreID)" }
+    private static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "" }
+
+    static func record(_ core: SaveCore) {
+        UserDefaults.standard.set([core.version, build], forKey: key(core.id))
+    }
+
+    static func core(id: String) -> SaveCore? {
+        guard let stored = UserDefaults.standard.stringArray(forKey: key(id)), stored.count == 2, stored[1] == build
+        else { return nil }
+        return SaveCore(id: id, version: stored[0])
     }
 }

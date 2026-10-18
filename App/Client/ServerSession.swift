@@ -36,7 +36,9 @@ final class ServerSession {
 
     @ObservationIgnored private let store: CredentialStore
     @ObservationIgnored private let snapshotURL: URL
-    @ObservationIgnored private var urlSession: URLSession?
+    /// Dropped (never invalidated directly) on reconnect: clients already handed to save sync, downloads, etc. keep it
+    /// alive until they finish, and the lease invalidates it after that.
+    @ObservationIgnored private var urlSession: URLSessionLease?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var libraryRevision: String?
     /// Bumped on pair/sign-out so responses for a previous connection are dropped.
@@ -92,7 +94,7 @@ final class ServerSession {
     /// Client for the server URL that answered last.
     func client() -> APIClient? {
         guard let credential, let url = activeURL ?? credential.urls.first ?? credential.publicURL else { return nil }
-        return APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
+        return APIClient(baseURL: url, token: credential.token, lease: session(pin: credential.certificateSHA256))
     }
 
     func presentedCertificateSHA256(at url: URL) async throws -> String {
@@ -243,8 +245,7 @@ final class ServerSession {
         }
         switch result {
         case .success(let url, let winner):
-            urlSession?.finishTasksAndInvalidate()
-            urlSession = winner.session
+            urlSession = URLSessionLease(winner.session)
             trust = winner.trust
             activeURL = url
             apply(winner.library.games)
@@ -281,7 +282,7 @@ final class ServerSession {
 
     private func heartbeat() async {
         guard connection.isConnected, refreshTask == nil, let credential, let url = activeURL else { return }
-        let client = APIClient(baseURL: url, token: credential.token, session: session(pin: credential.certificateSHA256))
+        let client = APIClient(baseURL: url, token: credential.token, lease: session(pin: credential.certificateSHA256))
         let generation = self.generation
         do {
             let health = try await client.health()
@@ -331,7 +332,6 @@ final class ServerSession {
         retryTask?.cancel()
         retryTask = nil
         // The old connection may be gone (or a better route available); drop pooled connections.
-        urlSession?.finishTasksAndInvalidate()
         urlSession = nil
         trust = nil
         // Always try again, even with no network (a loopback server still works): a failure schedules the backoff.
@@ -402,11 +402,11 @@ final class ServerSession {
         return configuration
     }
 
-    private func session(pin: String?) -> URLSession {
+    private func session(pin: String?) -> URLSessionLease {
         if let urlSession { return urlSession }
         let webPKIEndpoints = WebPKIEndpoint.keys(for: credential?.publicURL)
         let delegate = PinnedCertificateDelegate(certificateSHA256: pin, webPKIEndpoints: webPKIEndpoints)
-        let session = URLSession(configuration: Self.configuration, delegate: delegate, delegateQueue: nil)
+        let session = URLSessionLease(URLSession(configuration: Self.configuration, delegate: delegate, delegateQueue: nil))
         if credential != nil {
             urlSession = session
             trust = delegate
@@ -427,7 +427,6 @@ final class ServerSession {
         updated.publicURL = publicURL
         try? store.save(updated)
         self.credential = updated
-        urlSession?.finishTasksAndInvalidate()
         urlSession = nil
         trust = nil
     }

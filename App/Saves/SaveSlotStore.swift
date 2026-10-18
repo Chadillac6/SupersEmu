@@ -6,6 +6,10 @@ struct SaveSlotInfo: Equatable, Identifiable {
     let slot: Int
     let savedAt: Date?
     let screenshotURL: URL?
+    /// The device that made this save when it came from another device; nil for this device's own saves.
+    var deviceName: String? = nil
+    /// Came from another device and hasn't been seen in the Save States panel yet.
+    var isNew = false
 
     var isEmpty: Bool { savedAt == nil }
     var id: Int { slot }
@@ -28,6 +32,8 @@ struct SaveSlotStore {
         let savedAt: Date
         let stateSHA256: String
         let screenshotSHA256: String?
+        var deviceName: String?
+        var isNew: Bool?
     }
 
     static let slots = 1...3
@@ -41,7 +47,7 @@ struct SaveSlotStore {
         directory.appendingPathComponent("slot\(slot).json")
     }
 
-    private func screenshotURL(_ slot: Int) -> URL {
+    func screenshotURL(_ slot: Int) -> URL {
         directory.appendingPathComponent("slot\(slot).png")
     }
 
@@ -69,7 +75,8 @@ struct SaveSlotStore {
                     validScreenshotURL = nil
                 }
                 return SaveSlotInfo(slot: slot, savedAt: metadata.savedAt,
-                                    screenshotURL: validScreenshotURL)
+                                    screenshotURL: validScreenshotURL, deviceName: metadata.deviceName,
+                                    isNew: metadata.isNew == true)
             }
 
             let savedAt = (try? FileManager.default.attributesOfItem(atPath: state.path)[.modificationDate]) as? Date
@@ -184,7 +191,7 @@ struct SaveSlotStore {
         }
     }
 
-    func recordRemote(_ slot: Int, savedAt: Date) {
+    func recordRemote(_ slot: Int, savedAt: Date, deviceName: String? = nil, screenshotPNG: Data? = nil) {
         guard Self.slots.contains(slot) else { return }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let state = stateURL(slot)
@@ -194,12 +201,28 @@ struct SaveSlotStore {
             return
         }
         try? FileManager.default.removeItem(at: screenshotURL(slot))
+        var screenshotSHA256: String?
+        if let screenshotPNG, (try? screenshotPNG.write(to: screenshotURL(slot), options: .atomic)) != nil {
+            screenshotSHA256 = Self.sha256(screenshotPNG)
+        }
         if let metadataData = try? JSONEncoder().encode(Metadata(
             savedAt: savedAt,
             stateSHA256: Self.sha256(data),
-            screenshotSHA256: nil
+            screenshotSHA256: screenshotSHA256,
+            deviceName: deviceName,
+            isNew: deviceName != nil
         )) {
             try? metadataData.write(to: metadataURL(slot), options: .atomic)
+        }
+    }
+
+    /// Clears the "new from another device" mark on every slot.
+    func markSeen() {
+        for slot in Self.slots {
+            guard let data = try? Data(contentsOf: metadataURL(slot)),
+                  var metadata = try? JSONDecoder().decode(Metadata.self, from: data), metadata.isNew == true else { continue }
+            metadata.isNew = false
+            if let encoded = try? JSONEncoder().encode(metadata) { try? encoded.write(to: metadataURL(slot), options: .atomic) }
         }
     }
 
