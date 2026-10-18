@@ -40,6 +40,22 @@ notarize() { # file
   fi
 }
 
+staple_with_retry() {
+  local file="$1" attempt delay
+  delay="${SUPERSEMU_STAPLE_RETRY_DELAY:-30}"
+  for attempt in 1 2 3 4 5 6; do
+    if xcrun stapler staple "$file" && xcrun stapler validate "$file"; then
+      return 0
+    fi
+    if [ "$attempt" -lt 6 ]; then
+      printf 'Stapling %s failed (attempt %s/6); retrying in %ss\n' "$file" "$attempt" "$delay" >&2
+      sleep "$delay"
+    fi
+  done
+  printf 'error: failed to staple and validate %s after 6 attempts\n' "$file" >&2
+  return 1
+}
+
 git submodule update --init --depth 1
 git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
 xcodegen generate
@@ -84,7 +100,7 @@ name="SupersEmu-$version-$build_number"
 
 ditto -c -k --keepParent "$app" "$RELEASE_TMP/$name.zip"
 notarize "$RELEASE_TMP/$name.zip"
-xcrun stapler staple "$app"
+staple_with_retry "$app"
 ditto -c -k --keepParent "$app" "$out/$name.zip"
 
 staging="$RELEASE_TMP/dmg"
@@ -94,7 +110,7 @@ ln -s /Applications "$staging/Applications"
 hdiutil create -volname SupersEmu -srcfolder "$staging" -format UDZO -ov "$out/$name.dmg" >/dev/null
 codesign --sign "$identity" --timestamp "$out/$name.dmg"
 notarize "$out/$name.dmg"
-xcrun stapler staple "$out/$name.dmg"
+staple_with_retry "$out/$name.dmg"
 spctl --assess --type open --context context:primary-signature -v "$out/$name.dmg"
 
 echo "Done: $out/$name.dmg and $out/$name.zip (both notarized and stapled); Version $marketing_version (build $build_number)"
