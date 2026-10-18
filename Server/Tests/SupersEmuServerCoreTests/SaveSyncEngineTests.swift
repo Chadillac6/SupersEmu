@@ -371,6 +371,33 @@ final class SaveSyncEngineTests: XCTestCase {
         }
     }
 
+    func testNewerRemoteReportsOtherDevicesProgressWithoutDownloading() async throws {
+        try await withServer { server in
+            let phone = try self.device("Chad's iPhone", server: server)
+            let mac = try self.device("Chad's Mac", server: server)
+            let core = SaveCore(id: "snes9x", version: "1.62.3")
+            try mac.write(self.auto, "mac-1")
+            await mac.engine.enqueueUpload(mac.file(self.auto, core: core))
+            await mac.engine.flush()
+            let upToDate = await mac.engine.newerRemote([mac.file(self.auto, core: core)])
+            XCTAssertTrue(upToDate.isEmpty, "\(upToDate)")
+
+            _ = await phone.engine.prepare([phone.file(self.auto, core: core)])
+            try phone.write(self.auto, "phone-2")
+            await phone.engine.enqueueUpload(phone.file(self.auto, core: core))
+            await phone.engine.flush()
+
+            let newer = await mac.engine.newerRemote([mac.file(self.auto, core: core)])
+            XCTAssertEqual(newer[self.auto.key]?.deviceName, "Chad's iPhone")
+            XCTAssertEqual(mac.read(self.auto), "mac-1", "checking must not download")
+
+            let outcomes = await mac.engine.prepare([mac.file(self.auto, core: core)])
+            guard case .downloaded = outcomes[self.auto.key] else { return XCTFail("\(outcomes)") }
+            let afterPull = await mac.engine.newerRemote([mac.file(self.auto, core: core)])
+            XCTAssertTrue(afterPull.isEmpty, "\(afterPull)")
+        }
+    }
+
     func testIncompatibleCoreStateIsNeverLoaded() async throws {
         try await withServer { server in
             let phone = try self.device("Chad's iPhone", server: server)

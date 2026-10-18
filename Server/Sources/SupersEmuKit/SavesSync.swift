@@ -481,6 +481,24 @@ public actor SaveSyncEngine {
         return .conflict(SaveConflict(line: file.line, remote: head))
     }
 
+    /// Server heads that another device saved after this device's copy last synced, keyed by line. Changes nothing
+    /// locally, so it is safe to call while a game is running or before one launches.
+    public func newerRemote(_ files: [LocalSaveFile]) async -> [String: SaveRevision] {
+        guard let client = await provider.currentClient(), await provider.isReachable() else { return [:] }
+        var newer: [String: SaveRevision] = [:]
+        for gameID in Set(files.map(\.line.gameID)) {
+            guard let revisions = try? await client.saves(gameID: gameID).revisions else { continue }
+            for file in files where file.line.gameID == gameID {
+                let lineRevisions = revisions.filter { $0.kind == file.line.kind && $0.slot == file.line.slot }
+                guard let head = lineRevisions.last(where: \.isHead) ?? lineRevisions.last,
+                      head.id != state.lines[file.line.key]?.baseRevisionID,
+                      (try? Data(contentsOf: file.url)).map(Self.sha256) != head.sha256 else { continue }
+                newer[file.line.key] = head
+            }
+        }
+        return newer
+    }
+
     private func commitLine(_ line: LineState, key: String, epoch: Int) {
         guard epoch == self.epoch else { return }
         state.lines[key] = line
