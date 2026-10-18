@@ -1,3 +1,4 @@
+import SupersEmuKit
 import SwiftUI
 
 @main
@@ -69,7 +70,8 @@ struct RootView: View {
     var body: some View {
         Group {
             if let launch = playing {
-                PlayerView(session: GameSession(game: launch.game, startFresh: launch.startFresh)) {
+                PlayerView(session: GameSession(game: launch.game, startFresh: launch.startFresh,
+                                                  keepLocalOver: launch.keepLocalOver)) {
                     playing = nil
                     library.refresh()
                     downloads.reload()
@@ -79,7 +81,8 @@ struct RootView: View {
             } else {
                 LibraryView(
                     onPlay: { game in Task { await launch(game) } },
-                    onStartFresh: { game in Task { await launch(game, startFresh: true) } }
+                    onStartFresh: { game in Task { await launch(game, startFresh: true) } },
+                    onKeepLocal: { game, remote in Task { await launch(game, keepLocalOver: remote) } }
                 )
             }
         }
@@ -142,17 +145,18 @@ struct RootView: View {
     }
 
     /// Disc games need their BIOS in the system directory before the core loads them.
-    private func launch(_ game: Game, startFresh: Bool = false) async {
+    private func launch(_ game: Game, startFresh: Bool = false, keepLocalOver: SaveRevision? = nil) async {
         if let system = downloads.downloaded[game.id]?.detail.game.system, system.requiresBIOS {
             await bios.sync(using: server)
             guard !bios.isMissing(system) else { return }
         }
-        playing = LaunchRequest(game: game, startFresh: startFresh)
+        playing = LaunchRequest(game: game, startFresh: startFresh, keepLocalOver: keepLocalOver)
     }
 
     private struct LaunchRequest {
         let game: Game
         let startFresh: Bool
+        var keepLocalOver: SaveRevision?
     }
 }
 

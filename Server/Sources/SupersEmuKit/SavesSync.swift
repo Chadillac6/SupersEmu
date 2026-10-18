@@ -32,6 +32,19 @@ public struct SaveCore: Hashable, Codable, Sendable {
     public var version: String
     public init(id: String, version: String) { self.id = id; self.version = version }
     public static let unknown = SaveCore(id: "unknown", version: "unknown")
+
+    /// The part of `version` that decides whether a state loads. Mupen64Plus-Next names its renderer in the version
+    /// ("3.0-GLES3 git" on iPhone/iPad, "3.0-OpenGL git" on the Mac); the state format is the same for one commit.
+    public static func stateFormat(id: String, version: String) -> String {
+        guard id == "mupen64plus_next" else { return version }
+        return version.replacingOccurrences(of: #"-(GLES2|GLES3|OpenGL|Vulkan)(?= |\(|$)"#, with: "",
+                                            options: .regularExpression)
+    }
+
+    public func canLoadState(from revision: SaveRevision) -> Bool {
+        revision.coreID == id
+            && Self.stateFormat(id: id, version: revision.coreVersion) == Self.stateFormat(id: id, version: version)
+    }
 }
 
 /// A save file on this device that should match its server line.
@@ -50,7 +63,7 @@ public struct LocalSaveFile: Sendable {
     public func canLoad(_ revision: SaveRevision) -> Bool {
         guard requiresMatchingCore else { return true }
         guard let core else { return false }
-        return revision.coreID == core.id && revision.coreVersion == core.version
+        return core.canLoadState(from: revision)
     }
 }
 
@@ -61,6 +74,7 @@ public struct SaveConflict: Codable, Equatable, Sendable, Identifiable {
     public var id: String { line.key }
     public var deviceName: String { remote.deviceName ?? "another device" }
     public var message: String { "A newer save from \(deviceName) is available" }
+    public init(line: SaveLine, remote: SaveRevision) { self.line = line; self.remote = remote }
 }
 
 public enum SaveConflictChoice: Sendable {
@@ -466,6 +480,26 @@ public actor SaveSyncEngine {
         guard file.canLoad(head) else { return .incompatible(head) }
         line.conflict = head
         return .conflict(SaveConflict(line: file.line, remote: head))
+    }
+
+    /// Server heads that another device saved after this device's copy last synced, keyed by line. Changes nothing
+    /// locally, so it is safe to call while a game is running or before one launches.
+    public func newerRemote(_ files: [LocalSaveFile]) async -> [String: SaveRevision] {
+        guard let client = await provider.currentClient(), await provider.isReachable() else { return [:] }
+        var newer: [String: SaveRevision] = [:]
+        for gameID in Set(files.map(\.line.gameID)) {
+            guard let revisions = try? await client.saves(gameID: gameID).revisions else { continue }
+            for file in files where file.line.gameID == gameID {
+                let lineRevisions = revisions.filter { $0.kind == file.line.kind && $0.slot == file.line.slot }
+                guard let head = lineRevisions.last(where: \.isHead) ?? lineRevisions.last,
+                      head.id != state.lines[file.line.key]?.baseRevisionID,
+                      // This device's own upload that hasn't been recorded as the base yet.
+                      !state.queue.contains(where: { $0.line.key == file.line.key && $0.sha256 == head.sha256 }),
+                      (try? Data(contentsOf: file.url)).map(Self.sha256) != head.sha256 else { continue }
+                newer[file.line.key] = head
+            }
+        }
+        return newer
     }
 
     private func commitLine(_ line: LineState, key: String, epoch: Int) {
