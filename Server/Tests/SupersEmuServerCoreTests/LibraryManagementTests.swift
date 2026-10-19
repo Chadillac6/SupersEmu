@@ -281,6 +281,30 @@ final class LibraryManagementTests: XCTestCase {
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: importer.stagingDirectory.path), [], "set-aside copy deleted")
     }
 
+    func testFailedPlacementRestoresReplacedReviewCopies() throws {
+        struct WriteFailed: Error {}
+        let fm = FileManager.default
+        let queuedCue = store.paths.games.appendingPathComponent("cueSHA", isDirectory: true)
+        try fm.createDirectory(at: queuedCue, withIntermediateDirectories: true)
+        try Data([7]).write(to: queuedCue.appendingPathComponent("Game.cue"))
+        let game = store.paths.games.appendingPathComponent("gameSHA", isDirectory: true)
+        let replacement = store.paths.root.appendingPathComponent("replacement", isDirectory: true)
+        try fm.createDirectory(at: replacement, withIntermediateDirectories: true)
+        try Data([1]).write(to: replacement.appendingPathComponent("Game.cue"))
+
+        XCTAssertThrowsError(try importer.place(replacement, at: game, replacing: [queuedCue]) { throw WriteFailed() })
+        XCTAssertEqual(try Data(contentsOf: queuedCue.appendingPathComponent("Game.cue")), Data([7]), "the queued cue is back")
+        XCTAssertFalse(fm.fileExists(atPath: game.path))
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: importer.stagingDirectory.path), [], "nothing left set aside")
+
+        try fm.createDirectory(at: replacement, withIntermediateDirectories: true)
+        try Data([1]).write(to: replacement.appendingPathComponent("Game.cue"))
+        try importer.place(replacement, at: game, replacing: [queuedCue]) {}
+        XCTAssertFalse(fm.fileExists(atPath: queuedCue.path), "the replaced review copy is gone once recorded")
+        XCTAssertEqual(try Data(contentsOf: game.appendingPathComponent("Game.cue")), Data([1]))
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: importer.stagingDirectory.path), [], "set-aside copies deleted")
+    }
+
     func testRematchWithoutMetadataServiceValidatesAndAudits() async throws {
         let report = try await importer.importPaths([try romFile()], auth: nil)
         let id = try XCTUnwrap(report.imported.first?.id)

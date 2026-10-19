@@ -281,8 +281,8 @@ extension LibraryImporter {
             try stale.filter { try Int.fetchOne(db, sql: "SELECT needs_review FROM games WHERE id = ?", arguments: [$0]) == 1 }
         }
         let directory = store.paths.games.appendingPathComponent(gameID, isDirectory: true)
-        for id in staleIDs where id != gameID { try? fm.removeItem(at: store.paths.games.appendingPathComponent(id, isDirectory: true)) }
-        try place(temp, at: directory) {
+        let replaced = staleIDs.filter { $0 != gameID }.map { store.paths.games.appendingPathComponent($0, isDirectory: true) }
+        try place(temp, at: directory, replacing: replaced) {
             try store.db.write { db in
                 for id in staleIDs { try db.execute(sql: "DELETE FROM games WHERE id = ? AND needs_review = 1", arguments: [id]) }
                 let now = Date()

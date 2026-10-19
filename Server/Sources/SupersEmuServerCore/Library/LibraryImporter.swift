@@ -402,34 +402,42 @@ public final class LibraryImporter: @unchecked Sendable {
     static func storedPath(gameID: String, name: String) -> String { "games/\(gameID)/\(name)" }
 
     /// Moves (or copies) `source` to `destination` (a file or a whole game directory), then runs `record` to write its rows.
-    /// Anything already at `destination` is set aside in import staging (which Move Library skips) and only deleted once
-    /// `record` succeeds. If placing or `record` fails, the placed item is removed and the previous one restored, so
-    /// storage always matches the rows.
-    func place(_ source: URL, at destination: URL, copying: Bool = false, record: () throws -> Void) throws {
+    /// Anything already at `destination`, plus each of `replacing` (copies `record` deletes the rows for), is set aside in
+    /// import staging (which Move Library skips) and only deleted once `record` succeeds. If placing or `record` fails, the
+    /// placed item is removed and everything set aside is restored, so storage always matches the rows.
+    func place(_ source: URL, at destination: URL, replacing: [URL] = [], copying: Bool = false,
+               record: () throws -> Void) throws {
         let fm = FileManager.default
-        let parent = destination.deletingLastPathComponent()
-        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
-        var previous: URL?
-        if fm.fileExists(atPath: destination.path) {
-            try fm.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
-            let aside = stagingDirectory.appendingPathComponent("replaced-" + UUID().uuidString)
-            try fm.moveItem(at: destination, to: aside)
-            previous = aside
+        try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var setAside: [(original: URL, aside: URL)] = []
+        func restore() {
+            for item in setAside.reversed() { try? fm.moveItem(at: item.aside, to: item.original) }
+        }
+        do {
+            for original in [destination] + replacing where fm.fileExists(atPath: original.path) {
+                try fm.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+                let aside = stagingDirectory.appendingPathComponent("replaced-" + UUID().uuidString)
+                try fm.moveItem(at: original, to: aside)
+                setAside.append((original, aside))
+            }
+        } catch {
+            restore()
+            throw error
         }
         do {
             if copying { try fm.copyItem(at: source, to: destination) } else { try fm.moveItem(at: source, to: destination) }
             try record()
         } catch {
             try? fm.removeItem(at: destination)
-            if let previous { try? fm.moveItem(at: previous, to: destination) }
+            restore()
             throw error
         }
-        if let previous {
+        for item in setAside {
             do {
-                try fm.removeItem(at: previous)
+                try fm.removeItem(at: item.aside)
             } catch {
                 // The rows already point at the new copy; the old one is only scratch space under import staging now.
-                Self.logger.warning("Couldn't delete replaced copy \(previous.lastPathComponent) in import staging: \(error)")
+                Self.logger.warning("Couldn't delete replaced copy \(item.aside.lastPathComponent) in import staging: \(error)")
             }
         }
     }
