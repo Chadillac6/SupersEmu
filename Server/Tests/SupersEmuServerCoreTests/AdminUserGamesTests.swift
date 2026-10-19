@@ -252,7 +252,7 @@ final class AdminUserGamesTests: XCTestCase {
 
         let claimSecret = String(repeating: "ab", count: 32)
         let claimHash = SHA256.hash(data: Data(repeating: 0xab, count: 32))
-            .map { String(format: "%02x", $0) }.joined()
+            .hexString
         let (revisionID, pairingCode, requestID) = try await app().test(.router) { client in
             let uploaded = try await client.execute(
                 uri: "/v1/saves/\(game)/manual?slot=slot1&core=Snes9x&coreVersion=1.62", method: .put,

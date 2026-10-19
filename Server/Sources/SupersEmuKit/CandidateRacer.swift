@@ -20,6 +20,7 @@ public enum CandidateRacer {
         primary: URL?,
         others: [URL],
         headStart: Duration = .milliseconds(1500),
+        clock: some Clock<Duration> = ContinuousClock(),
         attempt: @escaping @Sendable (URL) async -> CandidateAttempt<Value>
     ) async -> CandidateRaceResult<Value> {
         var candidates: [URL] = []
@@ -31,50 +32,39 @@ public enum CandidateRacer {
             var startedOthers = false
             var sawCertificateMismatch = false
 
-            if let primary {
-                group.addTask { .attempt(primary, await attempt(primary)) }
-                if !candidates.isEmpty {
-                    group.addTask {
-                        try? await Task.sleep(for: headStart)
-                        return .startOthers
-                    }
-                }
-            } else {
+            func startOthers() {
+                guard !startedOthers else { return }
                 startedOthers = true
                 for url in candidates {
                     group.addTask { .attempt(url, await attempt(url)) }
                 }
             }
 
+            if let primary {
+                group.addTask { .attempt(primary, await attempt(primary)) }
+                if !candidates.isEmpty {
+                    group.addTask {
+                        try? await clock.sleep(for: headStart)
+                        return .startOthers
+                    }
+                }
+            } else {
+                startOthers()
+            }
+
             for await event in group {
                 switch event {
                 case .startOthers:
-                    guard !startedOthers else { continue }
-                    startedOthers = true
-                    for url in candidates {
-                        group.addTask { .attempt(url, await attempt(url)) }
-                    }
+                    startOthers()
                 case .attempt(let url, .success(let value)):
                     group.cancelAll()
                     return .success(url, value)
                 case .attempt(_, .failure(.signedOut)):
                     group.cancelAll()
                     return .failure(.signedOut)
-                case .attempt(let url, .failure(.certificateMismatch)):
-                    sawCertificateMismatch = true
-                    if url == primary, !startedOthers {
-                        startedOthers = true
-                        for candidate in candidates {
-                            group.addTask { .attempt(candidate, await attempt(candidate)) }
-                        }
-                    }
-                case .attempt(let url, .failure(.unreachable)):
-                    if url == primary, !startedOthers {
-                        startedOthers = true
-                        for candidate in candidates {
-                            group.addTask { .attempt(candidate, await attempt(candidate)) }
-                        }
-                    }
+                case .attempt(let url, .failure(let reason)):
+                    if reason == .certificateMismatch { sawCertificateMismatch = true }
+                    if url == primary { startOthers() }
                 }
             }
 

@@ -147,7 +147,7 @@ final class MetadataTests: XCTestCase {
                  thumbnails: String = "thumbs1") -> MetadataCatalog {
         var systems: [SystemID: MetadataCatalog.SystemSet] = [:]
         for (system, dat) in dats {
-            systems[system] = .init(name: dat.name, source: dat.source, files: dat.files.mapValues { SHA256.hash(data: Data($0.utf8)).hex },
+            systems[system] = .init(name: dat.name, source: dat.source, files: dat.files.mapValues { SHA256.hash(data: Data($0.utf8)).hexString },
                                     thumbnailsCommit: thumbnails)
         }
         let catalog = MetadataCatalog(databaseCommit: commit, systems: systems)

@@ -297,8 +297,8 @@ struct OnboardingView: View {
             }
             guard requestFlowIsCurrent(identity), !Task.isCancelled else { return }
             let secretBytes = (0..<32).map { _ in UInt8.random(in: .min ... .max) }
-            let secret = secretBytes.map { String(format: "%02x", $0) }.joined()
-            let claimHash = SHA256.hash(data: Data(secretBytes)).map { String(format: "%02x", $0) }.joined()
+            let secret = secretBytes.hexString
+            let claimHash = Hashing.sha256Hex(Data(secretBytes))
             let client = APIClient(baseURL: endpoint, token: nil,
                                    session: PinnedCertificateDelegate.session(
                                     certificateSHA256: fingerprint,

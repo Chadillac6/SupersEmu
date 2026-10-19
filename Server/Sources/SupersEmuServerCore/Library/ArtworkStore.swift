@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import GRDB
+import SupersEmuKit
 
 /// Artwork served at `/v1/games/:id/artwork/<kind>[/<position>]`.
 public enum ArtworkKind: String, CaseIterable, Sendable {
@@ -28,7 +29,7 @@ public struct ArtworkStore: Sendable {
         let directory = store.paths.artwork.appendingPathComponent(gameID, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         // Content-addressed name: a path never changes bytes, so the ETag (the hash) always matches what is streamed.
-        let name = "cover-\(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()).\(ext)"
+        let name = "cover-\(Hashing.sha256Hex(data)).\(ext)"
         let url = directory.appendingPathComponent(name)
         // Write, record and clean up as one step so a concurrent update can't delete the cover just recorded.
         try Self.writeLock.withLock {
@@ -58,7 +59,7 @@ public struct ArtworkStore: Sendable {
         let directory = store.paths.artwork.appendingPathComponent(gameID, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let prefix = "\(provider)-\(kind.rawValue)-\(position)-"
-        let name = "\(prefix)\(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()).\(ext)"
+        let name = "\(prefix)\(Hashing.sha256Hex(data)).\(ext)"
         let url = directory.appendingPathComponent(name)
         try Self.writeLock.withLock {
             try data.write(to: url, options: .atomic)

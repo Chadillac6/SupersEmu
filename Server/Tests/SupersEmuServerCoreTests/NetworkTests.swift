@@ -141,13 +141,13 @@ final class NetworkTests: XCTestCase {
     func testConnectionFallsBackAndRemembersLastGoodURL() async throws {
         let lan = URL(string: "https://mac-mini.local:8487")!
         let remote = URL(string: "https://games.supersemu.com:8487")!
-        let changes = TestBox<[URL?]>([])
+        let changes = LockedValue<[URL?]>([])
         let connection = ServerConnection(profile: ServerProfile(serverName: "Mini", urls: [lan, remote], certificateSHA256: nil),
                                           tokenStore: InMemoryTokenStore(),
-                                          onProfileChange: { profile in changes.update { $0.append(profile.lastGoodURL) } })
-        let tried = TestBox<[URL]>([])
+                                          onProfileChange: { profile in changes.withLock { $0.append(profile.lastGoodURL) } })
+        let tried = LockedValue<[URL]>([])
         let url = try await connection.resolveURL { url in
-            tried.update { $0.append(url) }
+            tried.withLock { $0.append(url) }
             if url == lan { throw URLError(.cannotFindHost) }
         }
         XCTAssertEqual(url, remote)
@@ -365,7 +365,7 @@ final class PublicAccessTests: XCTestCase {
     }
 
     private func requestBody() throws -> ByteBuffer {
-        let digest = SHA256.hash(data: Data(repeating: 0x11, count: 32)).map { String(format: "%02x", $0) }.joined()
+        let digest = SHA256.hash(data: Data(repeating: 0x11, count: 32)).hexString
         return ByteBuffer(data: try SupersEmuJSON.encoder().encode(
             PairRequestCreate(deviceName: "Friend's phone", platform: "iOS", claimHash: digest)))
     }
@@ -632,14 +632,6 @@ final class PublicAccessTests: XCTestCase {
     }
 }
 
-final class TestBox<Value>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: Value
-    init(_ value: Value) { stored = value }
-    var value: Value { lock.withLock { stored } }
-    func update(_ body: (inout Value) -> Void) { lock.withLock { body(&stored) } }
-}
-
 extension NetworkTests {
     func testPublicWebPKIUsesSystemTrustOnlyForConfiguredHostAndPort() throws {
         let endpoints = WebPKIEndpoint.keys(for: URL(string: "https://games.example.com")!)
@@ -797,7 +789,7 @@ extension NetworkTests {
         let url = URL(string: "https://mini.local:8487/v1/me")!
         let task = URLSession.shared.dataTask(with: url)
         let response = HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil, headerFields: ["Location": "http://evil/"])!
-        let followed = LockedBox<URLRequest?>(URLRequest(url: url))
+        let followed = LockedValue<URLRequest?>(URLRequest(url: url))
         delegate.urlSession(URLSession.shared, task: task, willPerformHTTPRedirection: response,
                             newRequest: URLRequest(url: URL(string: "http://evil/")!)) { followed.value = $0 }
         XCTAssertNil(followed.value)
@@ -816,11 +808,4 @@ extension NetworkTests {
         XCTAssertFalse(PinnedCertificateDelegate(certificateSHA256: nil, trustOnFirstUse: true).trustOnFirstUse)
         XCTAssertFalse(PinnedCertificateDelegate(certificateSHA256: "ab", trustOnFirstUse: true, expectedHost: "mini").trustOnFirstUse)
     }
-}
-
-private final class LockedBox<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: T
-    init(_ value: T) { stored = value }
-    var value: T { get { lock.withLock { stored } } set { lock.withLock { stored = newValue } } }
 }
