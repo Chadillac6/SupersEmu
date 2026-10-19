@@ -92,7 +92,7 @@ extension LibraryImporter {
     }
 
     static func issueID(_ relativePath: String) -> String {
-        "in-" + SHA256.hash(data: Data(relativePath.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+        "in-" + SHA256.hash(data: Data(relativePath.utf8)).prefix(12).hexString
     }
 
     /// The kind the importer recorded, or for rows stored before kinds were recorded, one guessed from the reason text.

@@ -370,7 +370,7 @@ public actor MetadataService {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(MetadataRecordFingerprint(record: record, artworkCandidates: candidates))
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return Hashing.sha256Hex(data)
     }
 
     /// Marks artwork done unless a request failed on the network, in which case the next pass retries.

@@ -1,4 +1,5 @@
 import GameController
+import SupersEmuKit
 #if os(macOS)
 import AppKit
 #endif
@@ -8,7 +9,7 @@ import AppKit
 /// Player 1 gets touch, keyboard and the first pad; further pads are players 2-4.
 @MainActor
 final class GameInput {
-    var layout = ConsoleLayout.forSystem("snes")
+    var layout = ConsoleLayout.forSystem(.snes)
     var gameID: String?
     /// On-screen controls; always use the console defaults.
     var touchState = PadState()

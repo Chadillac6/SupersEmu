@@ -224,7 +224,7 @@ struct CheatEditor: View {
         #endif
     }
 
-    private var usesMultilineInput: Bool { system == .gba || system == .psx || system == .n64 }
+    private var usesMultilineInput: Bool { CheatCodec.allowsMultiline(system) }
 
     private var placeholder: String {
         switch system {
@@ -332,7 +332,7 @@ struct CheatPasteView: View {
 
     private var editorHelpText: String {
         let help = "One code per line. Words on the same line become its name, e.g. \"Infinite lives C2C3-CF0D\"."
-        guard [.gba, .psx, .n64].contains(system) else { return help }
+        guard CheatCodec.allowsMultiline(system) else { return help }
         return help + " For a code that spans several lines, put its name on its own line above it."
     }
 

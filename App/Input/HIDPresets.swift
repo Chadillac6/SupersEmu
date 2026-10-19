@@ -1,4 +1,5 @@
 import Foundation
+import SupersEmuKit
 
 /// How a generic USB pad's HID buttons, hat and axes land on physical positions.
 struct HIDPreset: Identifiable, Equatable, Sendable {
@@ -18,7 +19,7 @@ struct HIDPreset: Identifiable, Equatable, Sendable {
     let id: String
     let name: String
     /// Console the pad was built for; picks between presets that share IDs.
-    let console: String?
+    let console: SystemID?
     let vendorID: Int?
     let productID: Int?
     /// Lowercased product-string fragments that identify the pad when IDs are shared.
@@ -80,7 +81,7 @@ struct HIDPreset: Identifiable, Equatable, Sendable {
 
     /// DragonRise 0079:0006. RetroArch: "Retrolink N64" (udev name "Retrolink Nintento 64 Classic USB").
     static let retrolinkN64 = HIDPreset(
-        id: "retrolink-n64", name: "Retrolink N64", console: "n64", vendorID: 0x0079, productID: 0x0006,
+        id: "retrolink-n64", name: "Retrolink N64", console: .n64, vendorID: 0x0079, productID: 0x0006,
         nameHints: ["64"], source: .community,
         buttons: [1: .rightStickUp, 2: .rightStickRight, 3: .rightStickDown, 4: .rightStickLeft,
                   5: .l1, 6: .r1, 7: .south, 8: .l2, 9: .west, 10: .start],
@@ -88,7 +89,7 @@ struct HIDPreset: Identifiable, Equatable, Sendable {
 
     /// DragonRise 0079:0011. RetroArch and SDL: "Retrolink SNES Controller", d-pad on X/Y.
     static let retrolinkSNES = HIDPreset(
-        id: "retrolink-snes", name: "Retrolink SNES", console: "snes", vendorID: 0x0079, productID: 0x0011,
+        id: "retrolink-snes", name: "Retrolink SNES", console: .snes, vendorID: 0x0079, productID: 0x0011,
         nameHints: ["snes", "super"], source: .community,
         buttons: [1: .north, 2: .east, 3: .south, 4: .west, 5: .l1, 6: .r1, 9: .select, 10: .start],
         axes: [HIDUsage.x: .dpadX, HIDUsage.y: .dpadY])
@@ -96,7 +97,7 @@ struct HIDPreset: Identifiable, Equatable, Sendable {
     /// Unverified: no public database lists the Retrolink Genesis 6-button pad. Assumed to share the
     /// DragonRise 0079:0011 board with the SNES pad, with a Genesis button order (A B C X Y Z, Mode, Start).
     static let retrolinkGenesis = HIDPreset(
-        id: "retrolink-genesis", name: "Retrolink Genesis 6-button", console: "genesis", vendorID: 0x0079, productID: 0x0011,
+        id: "retrolink-genesis", name: "Retrolink Genesis 6-button", console: .genesis, vendorID: 0x0079, productID: 0x0011,
         nameHints: ["genesis", "sega", "mega"], source: .unverified,
         buttons: [1: .west, 2: .south, 3: .east, 4: .l1, 5: .north, 6: .r1, 9: .select, 10: .start],
         axes: [HIDUsage.x: .dpadX, HIDUsage.y: .dpadY])
@@ -116,21 +117,16 @@ struct HIDPreset: Identifiable, Equatable, Sendable {
 
     /// Picks the preset for a pad: the user's saved choice, then IDs narrowed by product name, then the
     /// console being played, then the first ID match. Unknown IDs get `generic`.
-    static func match(vendorID: Int, productID: Int, productName: String?, userChoice: String?, console: String?) -> HIDPreset {
+    static func match(vendorID: Int, productID: Int, productName: String?, userChoice: String?, console: SystemID?) -> HIDPreset {
         if let userChoice, let chosen = preset(id: userChoice) { return chosen }
         let candidates = all.filter { $0.vendorID == vendorID && $0.productID == productID }
         guard !candidates.isEmpty else { return generic }
         let name = productName?.lowercased() ?? ""
         if let named = candidates.first(where: { $0.nameHints.contains(where: name.contains) }) { return named }
-        if let console, let forConsole = candidates.first(where: { $0.console == console || sameFamily($0.console, console) }) {
+        if let console, let forConsole = candidates.first(where: { $0.console == console || ($0.console?.isSegaFamily == true && console.isSegaFamily) }) {
             return forConsole
         }
         return candidates[0]
-    }
-
-    private static func sameFamily(_ a: String?, _ b: String) -> Bool {
-        let sega: Set = ["genesis", "segacd", "sega32x"]
-        return a.map { sega.contains($0) && sega.contains(b) } ?? false
     }
 
     static func controllerType(vendorID: Int, productID: Int) -> String {
