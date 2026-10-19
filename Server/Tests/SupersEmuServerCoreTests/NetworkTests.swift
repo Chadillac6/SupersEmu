@@ -60,6 +60,13 @@ final class NetworkTests: XCTestCase {
         XCTAssertEqual(keyMode, 0o600)
     }
 
+    func testTLSIdentityThrowsWhenItCannotBeSaved() throws {
+        let store = try ServerStore.inMemory()
+        try FileManager.default.createDirectory(at: TLSIdentity.keyURL(store.paths), withIntermediateDirectories: true)
+        XCTAssertThrowsError(try TLSIdentity.loadOrCreate(paths: store.paths, commonName: "Test"))
+        XCTAssertNil(TLSIdentity.storedFingerprint(paths: store.paths))
+    }
+
     func testExecutableReplacementIdentityDetection() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("se-executable-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -283,6 +290,35 @@ final class NetworkTests: XCTestCase {
         XCTAssertEqual(again.admin, admin)
         XCTAssertFalse(again.wroteToken)
         XCTAssertEqual(try String(contentsOf: store.paths.adminToken, encoding: .utf8), token)
+    }
+
+    func testBootstrapThrowsAndRevokesTokenWhenTokenFileCannotBeWritten() throws {
+        let store = try ServerStore.inMemory()
+        let directory = store.paths.adminToken.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path) }
+        XCTAssertThrowsError(try ServerBootstrap.ensureAdmin(store: store, displayName: "Chad"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.paths.adminToken.path))
+        let live = try store.db.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM api_tokens WHERE revoked_at IS NULL")
+        }
+        XCTAssertEqual(live, 0)
+    }
+
+    func testFailedTokenRotationKeepsPreviousTokenFile() throws {
+        let store = try ServerStore.inMemory()
+        let (admin, _) = try ServerBootstrap.ensureAdmin(store: store, displayName: "Chad")
+        let token = try String(contentsOf: store.paths.adminToken, encoding: .utf8)
+        let directory = store.paths.adminToken.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path) }
+        XCTAssertThrowsError(try ServerBootstrap.ensureAdmin(store: store, displayName: "Chad", rotateToken: true))
+        XCTAssertEqual(try String(contentsOf: store.paths.adminToken, encoding: .utf8), token)
+        XCTAssertEqual(try store.authenticate(token: token)?.user, admin)
+        let live = try store.db.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM api_tokens WHERE revoked_at IS NULL")
+        }
+        XCTAssertEqual(live, 1)
     }
 
     func testKeychainTokenStore() throws {

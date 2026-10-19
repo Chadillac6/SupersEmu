@@ -3,10 +3,12 @@ import SwiftUI
 struct DiagnosticsView: View {
     var game: Game?
 
-    @AppStorage("diagnostics.showPerformanceOverlay") private var showPerformanceOverlay = false
-    @AppStorage("diagnostics.recordLogs") private var recordSessionLogs = true
-    @AppStorage("diagnostics.detailedCoreLogs") private var detailedCoreLogging = false
-    @AppStorage("n64DefaultPreset") private var defaultPresetRawValue = N64Preset.balanced.rawValue
+    @AppStorage(DiagnosticsSettings.Key.showPerformanceOverlay)
+    private var showPerformanceOverlay = DiagnosticsSettings.Default.showPerformanceOverlay
+    @AppStorage(DiagnosticsSettings.Key.recordLogs) private var recordSessionLogs = DiagnosticsSettings.Default.recordLogs
+    @AppStorage(DiagnosticsSettings.Key.detailedCoreLogs)
+    private var detailedCoreLogging = DiagnosticsSettings.Default.detailedCoreLogs
+    @AppStorage(N64Preset.defaultKey) private var defaultPresetRawValue = N64Preset.balanced.rawValue
     @State private var gamePresetRawValue = "use-default"
     @State private var logs: [DiagnosticsLog.LogFile] = []
     @State private var isConfirmingDelete = false

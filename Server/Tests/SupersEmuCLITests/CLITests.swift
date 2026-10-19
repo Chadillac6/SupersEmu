@@ -347,4 +347,15 @@ extension CLIConfigTests {
         XCTAssertEqual(try resolve(["--certificate-sha256", "cc"]).certificateSHA256, "cc")
         XCTAssertEqual(try resolve(["--server", "https://mini:8487", "--token", "sek_x"]).certificateSHA256, pin)
     }
+
+    func testLoginResolutionIgnoresSavedConfig() throws {
+        let config = dir.appendingPathComponent("pinned.json")
+        try CLIConfigFile(server: "https://mini:8487", token: "sek_1", certificateSHA256: String(repeating: "b", count: 64)).write(to: config)
+        try Data("{".utf8).write(to: dir.appendingPathComponent("broken.json"))
+        for url in [config, dir.appendingPathComponent("broken.json")] {
+            let resolved = try connection(["--server", "https://mini:8487", "--token", "sek_new"])
+                .resolve(environment: [:], configURL: url, useSavedConfig: false, localAdminTokenPath: "/nonexistent")
+            XCTAssertEqual(resolved, .init(server: URL(string: "https://mini:8487")!, token: "sek_new"))
+        }
+    }
 }

@@ -144,8 +144,9 @@ typedef NS_ENUM(NSInteger, SECheatOutcome) {
 /// Returns one SECheatOutcome per code, in order. An empty array clears every cheat.
 - (NSArray<NSNumber *> *)applyCheatCodes:(NSArray<NSString *> *)codes NS_SWIFT_NAME(applyCheats(_:));
 
-/// Writes battery-backed SRAM (if the game has any) to saveRAMURL.
-- (void)flushSaveRAM;
+/// Writes battery-backed SRAM (if the game has any) to saveRAMURL. Returns NO, with `error` set, when the write fails;
+/// games without SRAM succeed without writing anything.
+- (BOOL)flushSaveRAMWithError:(NSError **)error NS_SWIFT_NAME(flushSaveRAM());
 /// Flushes SRAM and unloads the core. Safe to call more than once.
 - (void)shutdown;
 

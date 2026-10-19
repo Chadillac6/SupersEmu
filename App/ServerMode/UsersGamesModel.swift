@@ -9,11 +9,6 @@ private struct ServerSelectionChangedError: LocalizedError {
 
 @MainActor @Observable
 final class UsersGamesModel {
-    private struct PendingUpdate {
-        var userID: String
-        var hiddenGameIDs: [String]
-    }
-
     let server: ServerModeModel
     private(set) var users: [UserInfo] = []
     private(set) var devices: [DeviceInfo] = []
@@ -79,31 +74,24 @@ final class UsersGamesModel {
                 isLoading = false
             }
         }
+        let canContinue = {
+            await self.canContinueRefresh(
+                generation: generation,
+                sequence: sequence,
+                revision: revision,
+                retryOnMutation: retryOnMutation
+            )
+        }
         do {
             let client = try server.adminClient()
             let refreshedUsers = try await client.adminUsers()
-            guard await canContinueRefresh(
-                generation: generation,
-                sequence: sequence,
-                revision: revision,
-                retryOnMutation: retryOnMutation
-            ) else { return }
+            guard await canContinue() else { return }
             users = refreshedUsers
             let refreshedDevices = try await client.devices()
-            guard await canContinueRefresh(
-                generation: generation,
-                sequence: sequence,
-                revision: revision,
-                retryOnMutation: retryOnMutation
-            ) else { return }
+            guard await canContinue() else { return }
             devices = refreshedDevices
             let refreshedGames = try await client.library().games
-            guard await canContinueRefresh(
-                generation: generation,
-                sequence: sequence,
-                revision: revision,
-                retryOnMutation: retryOnMutation
-            ) else { return }
+            guard await canContinue() else { return }
             games = refreshedGames
             error = nil
             let gameIDs = Set(refreshedGames.map(\.id))
@@ -120,19 +108,9 @@ final class UsersGamesModel {
                 ?? users.first(where: { $0.role == .player })?.id
                 ?? users.first?.id
             await selectUser(nextSelection)
-            guard await canContinueRefresh(
-                generation: generation,
-                sequence: sequence,
-                revision: revision,
-                retryOnMutation: retryOnMutation
-            ) else { return }
+            guard await canContinue() else { return }
         } catch {
-            guard await canContinueRefresh(
-                generation: generation,
-                sequence: sequence,
-                revision: revision,
-                retryOnMutation: retryOnMutation
-            ) else { return }
+            guard await canContinue() else { return }
             self.error = LibraryManagerModel.describe(error)
         }
     }

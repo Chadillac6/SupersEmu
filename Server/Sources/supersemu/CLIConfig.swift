@@ -71,12 +71,13 @@ struct Connection: ParsableArguments {
 
     func resolve(environment: [String: String] = ProcessInfo.processInfo.environment,
                  configURL: URL? = nil,
+                 useSavedConfig: Bool = true,
                  localAdminTokenPath: String = Connection.localAdminTokenPath,
                  localCertificatePath: String = Connection.localCertificatePath) throws -> Resolved {
         let explicitServer = nonEmpty(server) ?? nonEmpty(environment["SUPERSEMU_SERVER"])
         var resolvedToken = nonEmpty(token) ?? nonEmpty(environment["SUPERSEMU_TOKEN"])
         // The config file is only read when it can supply something, so a broken one never blocks explicit flags.
-        let config = explicitServer != nil && resolvedToken != nil
+        let config = !useSavedConfig || (explicitServer != nil && resolvedToken != nil)
             ? nil : try CLIConfigFile.load(from: configURL ?? CLIConfigFile.defaultURL(environment: environment))
         let serverString = explicitServer ?? config?.server ?? Self.defaultServer
         guard let url = URL(string: serverString), let scheme = url.scheme, ["http", "https"].contains(scheme), url.host != nil else {
@@ -92,7 +93,7 @@ struct Connection: ParsableArguments {
         }
         // The local daemon's certificate is only a sensible default pin for the local daemon.
         // The saved pin still applies when server and token are both explicit; a broken config is ignored here.
-        let pinConfig = config ?? (try? CLIConfigFile.load(from: configURL ?? CLIConfigFile.defaultURL(environment: environment))) ?? nil
+        let pinConfig = !useSavedConfig ? nil : config ?? (try? CLIConfigFile.load(from: configURL ?? CLIConfigFile.defaultURL(environment: environment))) ?? nil
         let savedPin = pinConfig.flatMap { Self.sameServer($0.server, serverString) ? nonEmpty($0.certificateSHA256) : nil }
         let pin = nonEmpty(certificateSHA256) ?? nonEmpty(environment["SUPERSEMU_CERT_SHA256"]) ?? savedPin
             ?? (Self.isLocalDefaultServer(url) ? FileManager.default.contents(atPath: localCertificatePath).map(CertificatePin.sha256(ofDER:)) : nil)
