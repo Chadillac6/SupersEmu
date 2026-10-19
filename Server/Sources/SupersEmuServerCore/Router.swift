@@ -20,7 +20,8 @@ public enum ServerInfo {
 
 public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
                         exposure: RouterExposure = .local, certificateSHA256: String? = nil,
-                        publicURL: URL? = nil, pairing: PairingServices? = nil) -> Router<SERequestContext> {
+                        publicURL: URL? = nil, pairing: PairingServices? = nil,
+                        remoteAccess: RemoteAccessSource = .storedFile) -> Router<SERequestContext> {
     let router = Router(context: SERequestContext.self)
     router.add(middleware: LogRequestsMiddleware(.info))
     if exposure == .publicInternet {
@@ -72,7 +73,7 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
     if exposure == .local {
         registerAdminLibraryRoutes(authed, store: store, metadata: metadata)
         registerAdminLibraryManagementRoutes(authed, store: store, metadata: metadata)
-        registerAdminUserRoutes(authed, store: store)
+        registerAdminUserRoutes(authed, store: store, remoteAccess: remoteAccess)
         registerBackupRoutes(authed, store: store)
     }
     return router

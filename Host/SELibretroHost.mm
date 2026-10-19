@@ -169,6 +169,18 @@ const SECoreAPI *coreNamed(NSString *identifier) {
 
 HostState g;
 
+/// Host messages (audio session, engine, SRAM): stderr as before, plus the session's diagnostics log via logHandler.
+void hostLog(enum retro_log_level level, NSString *format, ...) NS_FORMAT_FUNCTION(2, 3);
+void hostLog(enum retro_log_level level, NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    NSLog(@"SupersEmu: %@", message);
+    void (^handler)(NSInteger, NSString *) = SELibretroHost.logHandler;
+    if (handler) handler(level, message);
+}
+
 void logCallback(enum retro_log_level level, const char *fmt, ...) {
     void (^handler)(NSInteger, NSString *) = SELibretroHost.logHandler;
     va_list args;
@@ -1012,12 +1024,12 @@ static __weak SELibretroHost *gActiveHost;
     if (memory && size > 0 && saved.length == size) memcpy(memory, saved.bytes, size);
 }
 
-- (void)flushSaveRAM {
-    if (!_loaded) return;
+- (BOOL)flushSaveRAMWithError:(NSError **)error {
+    if (!_loaded) return YES;
     void *memory = g.core->get_memory_data(RETRO_MEMORY_SAVE_RAM);
     size_t size = g.core->get_memory_size(RETRO_MEMORY_SAVE_RAM);
-    if (!memory || size == 0) return;
-    [[NSData dataWithBytes:memory length:size] writeToURL:_saveRAMURL atomically:YES];
+    if (!memory || size == 0) return YES;
+    return [[NSData dataWithBytes:memory length:size] writeToURL:_saveRAMURL options:NSDataWritingAtomic error:error];
 }
 
 - (void)setAudioEnabled:(BOOL)audioEnabled {
@@ -1038,7 +1050,7 @@ static __weak SELibretroHost *gActiveHost;
 #if TARGET_OS_IOS
     NSError *error = nil;
     if (![AVAudioSession.sharedInstance setActive:YES error:&error]) {
-        NSLog(@"SupersEmu: audio session activation error: %@", error.localizedDescription);
+        hostLog(RETRO_LOG_ERROR, @"audio session activation error: %@", error.localizedDescription);
     }
 #endif
 }
@@ -1052,13 +1064,17 @@ static __weak SELibretroHost *gActiveHost;
         g.audioEngineRunning = true;
         return;
     }
+    [self startEngine];
+}
+
+- (void)startEngine {
     NSError *error = nil;
     if (![_engine startAndReturnError:&error]) {
         g.audioEngineRunning = false;
-        NSLog(@"SupersEmu: audio unavailable: %@", error.localizedDescription);
+        hostLog(RETRO_LOG_ERROR, @"audio unavailable: %@", error.localizedDescription);
     } else {
         g.audioEngineRunning = true;
-        NSLog(@"SupersEmu: audio engine started");
+        hostLog(RETRO_LOG_INFO, @"audio engine started");
     }
 }
 
@@ -1133,7 +1149,7 @@ static __weak SELibretroHost *gActiveHost;
         if (![AVAudioSession.sharedInstance setActive:NO
                                           withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
                                                 error:&error]) {
-            NSLog(@"SupersEmu: audio session deactivation error: %@", error.localizedDescription);
+            hostLog(RETRO_LOG_ERROR, @"audio session deactivation error: %@", error.localizedDescription);
         }
     }
 #endif
@@ -1148,7 +1164,7 @@ static __weak SELibretroHost *gActiveHost;
                          mode:AVAudioSessionModeDefault
                       options:0
                         error:&sessionError]) {
-        NSLog(@"SupersEmu: audio session category error: %@", sessionError.localizedDescription);
+        hostLog(RETRO_LOG_ERROR, @"audio session category error: %@", sessionError.localizedDescription);
     }
     [self activateAudioSession];
 #endif
@@ -1164,21 +1180,7 @@ static __weak SELibretroHost *gActiveHost;
     [_engine attachNode:_sourceNode];
     [_engine connect:_sourceNode to:_engine.mainMixerNode format:format];
     [self installAudioObservers];
-    NSError *error = nil;
-    if (![_engine startAndReturnError:&error]) {
-        g.audioEngineRunning = false;
-        NSLog(@"SupersEmu: audio unavailable: %@", error.localizedDescription);
-    }
-#if TARGET_OS_IOS
-    else {
-        g.audioEngineRunning = true;
-        NSLog(@"SupersEmu: audio engine started");
-    }
-#else
-    else {
-        g.audioEngineRunning = true;
-    }
-#endif
+    [self startEngine];
 }
 
 - (void)shutdown {
@@ -1191,7 +1193,10 @@ static __weak SELibretroHost *gActiveHost;
 #else
     if (!_loaded) return;
 #endif
-    [self flushSaveRAM];
+    NSError *saveRAMError = nil;
+    if (![self flushSaveRAMWithError:&saveRAMError]) {
+        hostLog(RETRO_LOG_ERROR, @"battery save write failed: %@", saveRAMError.localizedDescription);
+    }
     self.audioEnabled = NO;
     if (g.hw.requested) hwMakeCurrent();
     // Before unload: Genesis Plus GX restores patched ROM bytes while the ROM is still loaded.

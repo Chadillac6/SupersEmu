@@ -383,7 +383,8 @@ final class BackupTests: XCTestCase {
         try await waitForHealth()
         let response = try await client.restoreBackup(backup.id)
         XCTAssertEqual(response.backup.id, backup.id)
-        try await Task.sleep(for: .seconds(1))
+        // Outlast the grace before shutdown so the health check sees the restarted server, not the old one.
+        try await Task.sleep(for: ServerLauncher.restoreResponseGrace * 2)
         try await waitForHealth()
         let reopened = try ServerStore.open(paths: store.paths)
         XCTAssertEqual(try gameCount(reopened), 1)

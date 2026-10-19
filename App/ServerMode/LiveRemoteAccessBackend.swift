@@ -4,16 +4,20 @@ import SupersEmuKit
 
 @MainActor
 final class LiveRemoteAccessBackend: RemoteAccessBackend {
-    private struct ProcessResult {
-        var status: Int
-        var stdout: String
-        var stderr: String
-
-        var lastMessage: String {
-            (stderr + "\n" + stdout).split(whereSeparator: \.isNewline).last.map(String.init)
-                ?? "Command failed (exit status \(status))."
-        }
+    /// Exit statuses of the bundled `public-access.sh`, plus osascript's cancel code.
+    private enum HelperExit: Int {
+        case userCancelled = -128
+        case tokenRejected = 3
+        case caddyMissing = 5
     }
+
+    private enum HelperPreparation {
+        case ready(script: URL)
+        case unavailable(RemoteAccessPhase)
+    }
+
+    private static let selectLocalServerMessage = "Select a local server to manage Remote Access"
+    private static let startServerMessage = "Start the SupersEmu server to manage Remote Access"
 
     private weak var attachedServer: ServerModeModel?
     private var latestStatus: RemoteAccessStatusResponse?
@@ -40,7 +44,7 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
         do {
             try await checkServerIsRunning(server)
         } catch {
-            return .error(.other("Start the SupersEmu server to manage Remote Access"), steps: nil)
+            return .error(.other(Self.startServerMessage), steps: nil)
         }
         do {
             return phase(from: try await fetchStatus(server), host: host)
@@ -52,20 +56,10 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
     func turnOn(host: String, pastedToken: String?, progress: @escaping @MainActor (RemoteAccessPhase) -> Void) async -> RemoteAccessPhase {
         lastHost = host
         let server = server
-        guard server.isLocal else {
-            return .error(.other("Select a local server to manage Remote Access"), steps: nil)
-        }
-        do {
-            try await checkServerIsRunning(server)
-        } catch {
-            return .error(.other("Start the SupersEmu server to manage Remote Access"), steps: nil)
-        }
-        guard Self.findCaddy() != nil else {
-            return .error(.caddyMissing(homebrewInstalled: Self.findBrew() != nil), steps: nil)
-        }
-        guard let script = Bundle.main.resourceURL?.appendingPathComponent("public-access.sh"),
-              FileManager.default.isExecutableFile(atPath: script.path) else {
-            return .error(.other("The bundled Remote Access helper is missing."), steps: nil)
+        let script: URL
+        switch await prepareHelper(server, requiringCaddy: true) {
+        case .ready(let helper): script = helper
+        case .unavailable(let phase): return phase
         }
 
         var steps = Self.pendingSteps
@@ -90,18 +84,20 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
                 return .error(.other("Couldn't prepare the Cloudflare token file: \(error.localizedDescription)"), steps: nil)
             }
         }
-        let result = await Self.runAdministratorCommand(arguments)
-        let exitStatus = RemoteAccessChecks.osascriptExitStatus(stderr: result.stderr) ?? result.status
+        let result = await PrivilegedCommand.run(arguments: arguments)
+        let exitStatus = PrivilegedCommand.exitStatus(of: result)
         guard exitStatus == 0 else {
-            if exitStatus == -128 { return .off }
-            if exitStatus == 5 {
+            switch HelperExit(rawValue: exitStatus) {
+            case .userCancelled:
+                return .off
+            case .caddyMissing:
                 return .error(.caddyMissing(homebrewInstalled: Self.findBrew() != nil), steps: nil)
-            }
-            if exitStatus == 3 {
+            case .tokenRejected:
                 steps[.dns] = .failed
                 return .error(.tokenRejected, steps: steps)
+            case nil:
+                return .error(.other(result.lastMessage), steps: nil)
             }
-            return .error(.other(result.lastMessage), steps: nil)
         }
 
         await restartSessionIfNeeded(server)
@@ -170,22 +166,15 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
     func turnOff() async -> RemoteAccessPhase {
         let host = lastHost
         let server = server
-        guard server.isLocal else {
-            return .error(.other("Select a local server to manage Remote Access"), steps: nil)
+        let script: URL
+        switch await prepareHelper(server, requiringCaddy: false) {
+        case .ready(let helper): script = helper
+        case .unavailable(let phase): return phase
         }
-        do {
-            try await checkServerIsRunning(server)
-        } catch {
-            return .error(.other("Start the SupersEmu server to manage Remote Access"), steps: nil)
-        }
-        guard let script = Bundle.main.resourceURL?.appendingPathComponent("public-access.sh"),
-              FileManager.default.isExecutableFile(atPath: script.path) else {
-            return .error(.other("The bundled Remote Access helper is missing."), steps: nil)
-        }
-        let result = await Self.runAdministratorCommand([script.path, "disable", "--data-dir", server.dataDirectory.path])
-        let exitStatus = RemoteAccessChecks.osascriptExitStatus(stderr: result.stderr) ?? result.status
+        let result = await PrivilegedCommand.run(arguments: [script.path, "disable", "--data-dir", server.dataDirectory.path])
+        let exitStatus = PrivilegedCommand.exitStatus(of: result)
         guard exitStatus == 0 else {
-            if exitStatus == -128 { return await currentPhase(host: host) }
+            if HelperExit(rawValue: exitStatus) == .userCancelled { return await currentPhase(host: host) }
             return .error(.other(result.lastMessage), steps: nil)
         }
         await restartSessionIfNeeded(server)
@@ -216,7 +205,7 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
         guard let brew = Self.findBrew() else {
             return .error(.caddyMissing(homebrewInstalled: false), steps: nil)
         }
-        let result = await Self.runProcess(executableURL: brew, arguments: ["install", "caddy"], captureStderr: false)
+        let result = await PrivilegedCommand.runProcess(executableURL: brew, arguments: ["install", "caddy"], captureStderr: false)
         guard result.status == 0 else { return .error(.other(result.lastMessage), steps: nil) }
         return await currentPhase(host: lastHost)
     }
@@ -239,6 +228,26 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
             certificateValidUntil: response.certificateValidUntil,
             lastOutsideCheckAt: checkedAt,
             lastOutsideCheck: outsideCheck)
+    }
+
+    /// The checks turnOn and turnOff share before running the bundled helper as root.
+    private func prepareHelper(_ server: ServerModeModel, requiringCaddy: Bool) async -> HelperPreparation {
+        guard server.isLocal else {
+            return .unavailable(.error(.other(Self.selectLocalServerMessage), steps: nil))
+        }
+        do {
+            try await checkServerIsRunning(server)
+        } catch {
+            return .unavailable(.error(.other(Self.startServerMessage), steps: nil))
+        }
+        if requiringCaddy, Self.findCaddy() == nil {
+            return .unavailable(.error(.caddyMissing(homebrewInstalled: Self.findBrew() != nil), steps: nil))
+        }
+        guard let script = Bundle.main.resourceURL?.appendingPathComponent("public-access.sh"),
+              FileManager.default.isExecutableFile(atPath: script.path) else {
+            return .unavailable(.error(.other("The bundled Remote Access helper is missing."), steps: nil))
+        }
+        return .ready(script: script)
     }
 
     private func checkServerIsRunning(_ server: ServerModeModel) async throws {
@@ -372,52 +381,6 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
         } catch {
             return false
         }
-    }
-
-    private static func runAdministratorCommand(_ arguments: [String]) async -> ProcessResult {
-        let command = arguments.map(shellQuote).joined(separator: " ")
-        let appleScript = "do shell script \"\(appleScriptQuote(command))\" with administrator privileges"
-        return await runProcess(
-            executableURL: URL(fileURLWithPath: "/usr/bin/osascript"), arguments: ["-e", appleScript])
-    }
-
-    private static func runProcess(
-        executableURL: URL,
-        arguments: [String],
-        captureStderr: Bool = true
-    ) async -> ProcessResult {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                let stderrPipe = captureStderr ? Pipe() : nil
-                process.executableURL = executableURL
-                process.arguments = arguments
-                process.standardOutput = FileHandle.nullDevice
-                process.standardError = stderrPipe?.fileHandleForWriting ?? FileHandle.nullDevice
-                do {
-                    try process.run()
-                    stderrPipe?.fileHandleForWriting.closeFile()
-                    let errorText = stderrPipe.flatMap {
-                        String(data: $0.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
-                    } ?? ""
-                    process.waitUntilExit()
-                    continuation.resume(returning: ProcessResult(status: Int(process.terminationStatus), stdout: "", stderr: errorText))
-                } catch {
-                    continuation.resume(returning: ProcessResult(status: -1, stdout: "", stderr: error.localizedDescription))
-                }
-            }
-        }
-    }
-
-    private static func shellQuote(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    private static func appleScriptQuote(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
     }
 }
 #endif

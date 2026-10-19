@@ -121,7 +121,7 @@ public struct BIOSStore: Sendable {
             guard let url = fileURL(for: stale.bios), !listedNames.contains(url.lastPathComponent) else { continue }
             try? FileManager.default.removeItem(at: url)
         }
-        try SupersEmuJSON.encoder().encode(entries).write(to: manifestURL, options: .atomic)
+        try SyncStateFile.write(entries, to: manifestURL)
         return BIOSSyncResult(installed: withUserPlaced(entries.map(\.bios)), failed: failed)
     }
 
@@ -136,8 +136,7 @@ public struct BIOSStore: Sendable {
     }
 
     private func manifest() -> [ManifestEntry] {
-        guard let data = try? Data(contentsOf: manifestURL) else { return [] }
-        return (try? SupersEmuJSON.decoder().decode([ManifestEntry].self, from: data)) ?? []
+        SyncStateFile.read([ManifestEntry].self, from: manifestURL) ?? []
     }
 
     private func isIntact(_ bios: BIOSFileInfo) -> Bool {

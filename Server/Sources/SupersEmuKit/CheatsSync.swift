@@ -36,8 +36,7 @@ public actor CheatSyncEngine {
         self.directory = directory
         self.provider = provider
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let stateURL = directory.appendingPathComponent("sync-state.json")
-        state = (try? Data(contentsOf: stateURL)).flatMap { try? SupersEmuJSON.decoder().decode(State.self, from: $0) } ?? State()
+        state = SyncStateFile.read(State.self, from: directory.appendingPathComponent("sync-state.json")) ?? State()
     }
 
     public static func isValidGameID(_ id: String) -> Bool {
@@ -107,7 +106,7 @@ public actor CheatSyncEngine {
         if requeueLocal {
             for file in allFiles() { for cheat in file.cheats { state.pending[cheat.id.uuidString] = file.gameID } }
         }
-        try? persistState()
+        SyncStateFile.writeOrLog(state, to: stateURL)
         status = .deviceOnly
     }
 
@@ -127,7 +126,7 @@ public actor CheatSyncEngine {
         }
         try apply(response.cheats)
         state.lastRevision = max(state.lastRevision, response.revision)
-        try? persistState()
+        try persistState()
     }
 
     private func push(_ client: APIClient) async throws {
@@ -142,13 +141,13 @@ public actor CheatSyncEngine {
             } catch APIClientError.http(let code, _) where code == 400 || code == 403 || code == 404 || code == 409 {
                 // The server will never take this one (bad data, or the game was removed): keep it local only.
                 state.pending[id] = nil
-                try? persistState()
+                try persistState()
                 continue
             }
             let current = file(for: gameID).cheats.first(where: { $0.id.uuidString == id })
             try apply([saved])
             if current == local { state.pending[id] = nil }
-            try? persistState()
+            try persistState()
         }
     }
 
@@ -194,8 +193,7 @@ public actor CheatSyncEngine {
     }
 
     /// Throws so a save whose upload couldn't be queued reports failure instead of silently never syncing.
-    private func persistState() throws {
-        let data = try SupersEmuJSON.encoder().encode(state)
-        try data.write(to: directory.appendingPathComponent("sync-state.json"), options: .atomic)
-    }
+    private var stateURL: URL { directory.appendingPathComponent("sync-state.json") }
+
+    private func persistState() throws { try SyncStateFile.write(state, to: stateURL) }
 }
