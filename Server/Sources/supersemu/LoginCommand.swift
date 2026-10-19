@@ -28,7 +28,7 @@ struct Login: AsyncParsableCommand {
             connection.server = server
             connection.token = value
             connection.certificateSHA256 = certificateSHA256
-            let resolved = try connection.resolve(environment: [:], configURL: URL(fileURLWithPath: "/dev/null/none"))
+            let resolved = try connection.resolve(environment: [:], useSavedConfig: false)
             let me = noVerify ? nil : try await APIClient(baseURL: resolved.server, token: value, session: try Connection.session(for: resolved)).me()
             let url = CLIConfigFile.defaultURL()
             try CLIConfigFile(server: server, token: value, certificateSHA256: resolved.certificateSHA256).write(to: url)
