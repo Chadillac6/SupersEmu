@@ -47,7 +47,10 @@ struct UsersGamesView: View {
         }
         .sheet(isPresented: $showingInvite) {
             if let user = model.selectedUser {
-                InviteDeviceSheet(user: user, createCode: { try await model.createPairingCode(for: user.id) })
+                InviteDeviceSheet(
+                    user: user,
+                    serverCertificateSHA256: model.server.certificateSHA256,
+                    createCode: { try await model.createPairingCode(for: user.id) })
             }
         }
         .confirmationDialog("Remove \(model.selectedUser?.displayName ?? "friend")?", isPresented: $showingRemoveUser) {
@@ -320,6 +323,7 @@ private struct RenameFriendSheet: View {
 
 private struct InviteDeviceSheet: View {
     let user: UserInfo
+    let serverCertificateSHA256: String?
     let createCode: () async throws -> PairingCode
     @State private var pairing: PairingCode?
     @State private var error: String?
@@ -334,20 +338,7 @@ private struct InviteDeviceSheet: View {
                     .buttonStyle(.borderedProminent).disabled(loading)
             }
             if let pairing {
-                HStack(alignment: .top, spacing: 20) {
-                    QRCodeImage(text: pairing.qrURL).frame(width: 190, height: 190)
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Scan with the SupersEmu app, or enter the code:").foregroundStyle(.secondary)
-                        Text(ServerModeView.grouped(pairing.code))
-                            .font(.system(size: 36, weight: .semibold, design: .monospaced))
-                            .textSelection(.enabled)
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            let remaining = max(0, Int(pairing.expiresAt.timeIntervalSince(context.date)))
-                            Text(remaining > 0 ? "Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60)) · one-time use" : "Expired")
-                                .foregroundStyle(remaining > 0 ? Color.gray : Color.red)
-                        }
-                    }
-                }
+                PairingCodePanel(pairing: pairing, serverCertificateSHA256: serverCertificateSHA256, style: .compact)
             } else if loading {
                 ProgressView("Creating pairing code…")
             } else {

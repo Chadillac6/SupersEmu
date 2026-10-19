@@ -260,7 +260,7 @@ struct ServerModeView: View {
             navigation.generatePairingCode = false
             Task {
                 await model.refresh()
-                let localSource: ServerModeModel.Source = model.daemonStatus == .enabled ? .daemon : .session
+                let localSource = model.preferredLocalSource
                 if model.source != localSource {
                     model.source = localSource
                 }
@@ -307,27 +307,8 @@ struct ServerModeView: View {
                 Text(error).foregroundStyle(.red).font(.callout)
             }
             if let pairing = model.pairing {
-                HStack(alignment: .top, spacing: 24) {
-                    QRCodeImage(text: pairing.qrURL).frame(width: 220, height: 220)
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Scan with the SupersEmu app, or enter the code:").foregroundStyle(.secondary)
-                        Text(Self.grouped(pairing.code)).font(.system(size: 40, weight: .semibold, design: .monospaced)).textSelection(.enabled)
-                        if let pin = pairing.payload.certificateSHA256 ?? model.certificateSHA256,
-                           let fingerprint = PairingFingerprint.short(certificateSHA256: pin) {
-                            Text("Server fingerprint: \(fingerprint)").font(.callout.monospaced())
-                        }
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            let remaining = max(0, Int(pairing.expiresAt.timeIntervalSince(context.date)))
-                            Text(remaining > 0 ? "Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60)) · one-time use" : "Expired")
-                                .foregroundStyle(remaining > 0 ? Color.secondary : Color.red)
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Addresses in this code").font(.caption).foregroundStyle(.secondary)
-                            ForEach(pairing.payload.urls, id: \.self) { Text($0.absoluteString).font(.caption.monospaced()) }
-                        }
-                    }
-                }
-                .padding(.vertical, 6)
+                PairingCodePanel(pairing: pairing, serverCertificateSHA256: model.certificateSHA256, style: .regular)
+                    .padding(.vertical, 6)
             }
             ForEach(requests) { request in
                 VStack(alignment: .leading, spacing: 8) {
@@ -390,6 +371,47 @@ struct ServerModeView: View {
 }
 
 /// QR code rendered with CoreImage's generator, scaled with nearest-neighbour so it stays sharp.
+/// QR code, grouped code, server fingerprint, countdown and addresses for a one-time pairing code.
+struct PairingCodePanel: View {
+    enum Style {
+        case regular, compact
+
+        var qrSize: CGFloat { self == .regular ? 220 : 190 }
+        var spacing: CGFloat { self == .regular ? 24 : 20 }
+        var textSpacing: CGFloat { self == .regular ? 10 : 12 }
+        var codeSize: CGFloat { self == .regular ? 40 : 36 }
+    }
+
+    let pairing: PairingCode
+    let serverCertificateSHA256: String?
+    let style: Style
+
+    var body: some View {
+        HStack(alignment: .top, spacing: style.spacing) {
+            QRCodeImage(text: pairing.qrURL).frame(width: style.qrSize, height: style.qrSize)
+            VStack(alignment: .leading, spacing: style.textSpacing) {
+                Text("Scan with the SupersEmu app, or enter the code:").foregroundStyle(.secondary)
+                Text(ServerModeView.grouped(pairing.code))
+                    .font(.system(size: style.codeSize, weight: .semibold, design: .monospaced))
+                    .textSelection(.enabled)
+                if let pin = pairing.payload.certificateSHA256 ?? serverCertificateSHA256,
+                   let fingerprint = PairingFingerprint.short(certificateSHA256: pin) {
+                    Text("Server fingerprint: \(fingerprint)").font(.callout.monospaced())
+                }
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let remaining = max(0, Int(pairing.expiresAt.timeIntervalSince(context.date)))
+                    Text(remaining > 0 ? "Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60)) · one-time use" : "Expired")
+                        .foregroundStyle(remaining > 0 ? Color.secondary : Color.red)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Addresses in this code").font(.caption).foregroundStyle(.secondary)
+                    ForEach(pairing.payload.urls, id: \.self) { Text($0.absoluteString).font(.caption.monospaced()) }
+                }
+            }
+        }
+    }
+}
+
 struct QRCodeImage: View {
     let text: String
 

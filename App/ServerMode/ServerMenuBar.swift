@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import Observation
+import OSLog
 import ServiceManagement
 import SupersEmuKit
 import SwiftUI
@@ -119,7 +120,7 @@ final class ServerStatusMonitor {
 
     private func refresh() async {
         await model.refresh()
-        let desiredSource: ServerModeModel.Source = model.daemonStatus == .enabled ? .daemon : .session
+        let desiredSource = model.preferredLocalSource
         if model.source != desiredSource {
             model.source = desiredSource
             await model.refresh()
@@ -169,11 +170,7 @@ private struct ServerMenuBarContent: View {
     @ViewBuilder
     var body: some View {
         let status = monitor.status
-        Text(updater.versionLabel).disabled(true)
-        Text(UpdateStatusPresentation.menuText(for: updater.status)).disabled(true)
-        if case .readyToInstall(let version) = updater.status {
-            Button("Restart and Install \(version)") { updater.installNow() }
-        }
+        UpdateStatusRows(updater: updater)
         Text(status.title).disabled(true)
         Text(status.detail).disabled(true)
         Text("Remote: \(RemoteAccessModel.shared.isOn ? "On · \(RemoteAccessModel.shared.host)" : RemoteAccessModel.shared.summary)").disabled(true)
@@ -187,7 +184,7 @@ private struct ServerMenuBarContent: View {
         ForEach(monitor.pairRequestEntries) { entry in
             let request = entry.request
             let source = ServerModeModel.Source(rawValue: entry.source) ?? .session
-            let sourceLabel = monitor.hasPairRequestsFromBothSources ? " · \(source == .daemon ? "Boot server" : "This session")" : ""
+            let sourceLabel = monitor.hasPairRequestsFromBothSources ? " · \(source.menuLabel)" : ""
             Text("\(request.deviceName) (\(request.platform)) wants to connect · Code \(request.matchCode)\(sourceLabel)")
             Button("Approve \(request.deviceName)\(sourceLabel)") {
                 Task { await monitor.approvePairRequest(request.id, source: source) }
@@ -209,7 +206,7 @@ private struct ServerMenuBarContent: View {
         } else if status.state == .needsApproval {
             Button("Open Login Items Settings…") { monitor.model.openLoginItems() }
         }
-        Button("Check for Updates…") { updater.checkForUpdates() }
+        UpdateActionRows(updater: updater)
         Toggle("Open SupersEmu at Login", isOn: loginItemBinding)
         Button("Hide Menu Bar Icon") { showIcon = false }
     }
@@ -225,10 +222,22 @@ private struct ServerMenuBarContent: View {
                         } else {
                             try await SMAppService.mainApp.unregister()
                         }
-                    } catch {}
+                    } catch {
+                        Self.reportLoginItemFailure(error, enabling: enabled)
+                    }
                 }
             }
         )
+    }
+
+    private static let logger = Logger(subsystem: "com.chadillac6.supersemu", category: "LoginItem")
+
+    private static func reportLoginItemFailure(_ error: Error, enabling: Bool) {
+        logger.error("Open at Login \(enabling ? "register" : "unregister", privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+        let alert = NSAlert()
+        alert.messageText = enabling ? "Couldn't turn on Open at Login" : "Couldn't turn off Open at Login"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 
     private func openServerWindow(section: ServerModeSection? = nil) {
