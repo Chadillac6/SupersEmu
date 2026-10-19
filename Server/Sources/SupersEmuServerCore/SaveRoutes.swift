@@ -23,7 +23,7 @@ func registerSaveRoutes(_ group: RouterGroup<SERequestContext>, store: ServerSto
     group.put("saves/:game/:kind") { request, context -> SaveUploadResponse in
         let auth = try context.caller()
         // No API-token scope can write saves; only a paired device (acting as its user) uploads.
-        guard case .device(let deviceID) = auth.credential else {
+        guard let deviceID = auth.deviceID else {
             throw HTTPError(.forbidden, message: "Only paired devices can upload saves")
         }
         let gameID = try context.parameters.require("game")
@@ -50,9 +50,7 @@ func registerSaveRoutes(_ group: RouterGroup<SERequestContext>, store: ServerSto
         try auth.require(.savesRead)
         let gameID = try context.parameters.require("game")
         try saves.authorize(gameID: gameID, auth: auth)
-        var deviceID: String?
-        if case .device(let id) = auth.credential { deviceID = id }
-        let data = try saves.data(userID: auth.user.id, gameID: gameID, revisionID: try context.parameters.require("rev"), deviceID: deviceID)
+        let data = try saves.data(userID: auth.user.id, gameID: gameID, revisionID: try context.parameters.require("rev"), deviceID: auth.deviceID)
         return Response(status: .ok, headers: [.contentType: "application/octet-stream"],
                         body: .init(byteBuffer: ByteBuffer(bytes: data)))
     }

@@ -20,9 +20,7 @@ func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, au
 
     if includeAdminRoutes {
         authed.post("admin/pairing-codes") { request, context in
-            let auth = try context.caller()
-            try auth.requireAdmin()
-            try auth.require(.usersAdmin)
+            let auth = try requireUsersAdmin(context)
             let body = try await request.decode(as: CreatePairingCodeRequest.self, context: context)
             let code = try service.createCode(for: body.userID, caller: auth)
             return EditedResponse(status: .created, response: code)
@@ -59,20 +57,13 @@ func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, au
 
     guard includeAdminRoutes else { return }
 
-    @Sendable func adminCaller(_ context: SERequestContext) throws -> AuthContext {
-        let auth = try context.caller()
-        try auth.requireAdmin()
-        try auth.require(.usersAdmin)
-        return auth
-    }
-
     authed.get("admin/pair-requests") { _, context in
-        _ = try adminCaller(context)
+        _ = try requireUsersAdmin(context)
         return await requests.pending()
     }
 
     authed.post("admin/pair-requests/:id/approve") { request, context in
-        let auth = try adminCaller(context)
+        let auth = try requireUsersAdmin(context)
         guard let id = UUID(uuidString: try context.parameters.require("id")) else {
             throw HTTPError(.notFound, message: "No such pairing request")
         }
@@ -82,7 +73,7 @@ func registerPairingRoutes(public publicGroup: RouterGroup<SERequestContext>, au
     }
 
     authed.post("admin/pair-requests/:id/deny") { _, context in
-        let auth = try adminCaller(context)
+        let auth = try requireUsersAdmin(context)
         guard let id = UUID(uuidString: try context.parameters.require("id")) else {
             throw HTTPError(.notFound, message: "No such pairing request")
         }
@@ -125,10 +116,10 @@ public final class PairingService: Sendable {
     public func createCode(for userID: String?, caller: AuthContext) throws -> PairingCode {
         let user: UserInfo
         if let userID {
-            guard let target = try store.db.read({ db in
-                try Row.fetchOne(db, sql: "SELECT * FROM users WHERE id = ? AND revoked_at IS NULL", arguments: [userID])
-            }) else { throw HTTPError(.notFound, message: "No such user") }
-            user = ServerStore.user(from: target)
+            guard let target = try store.db.read({ try ServerStore.activeUser(id: userID, in: $0) }) else {
+                throw HTTPError(.notFound, message: "No such user")
+            }
+            user = target
         } else {
             user = caller.user
         }
@@ -206,43 +197,30 @@ public final class PairingService: Sendable {
     func pairApprovedDevice(userID: String?, request: PendingPairRequest, caller: AuthContext) throws -> PairResponse {
         let user: UserInfo
         if let userID {
-            guard let row = try store.db.read({ db in
-                try Row.fetchOne(db, sql: "SELECT * FROM users WHERE id = ? AND revoked_at IS NULL", arguments: [userID])
-            }) else { throw HTTPError(.notFound, message: "No such user") }
-            user = ServerStore.user(from: row)
+            guard let target = try store.db.read({ try ServerStore.activeUser(id: userID, in: $0) }) else {
+                throw HTTPError(.notFound, message: "No such user")
+            }
+            user = target
         } else {
-            let ownerID = requestOwnerID
-            guard let row = try store.db.read({ db in
-                try Row.fetchOne(db, sql: "SELECT * FROM users WHERE id = ? AND revoked_at IS NULL", arguments: [ownerID])
-            }) else { throw HTTPError(.notFound, message: "No owner user") }
-            user = ServerStore.user(from: row)
+            guard let owner = try store.adminUser() else { throw HTTPError(.notFound, message: "No owner user") }
+            user = owner
         }
         let at = now()
         let device = try store.db.write { db in
             let device = try Self.mintDevice(db: db, user: user, deviceName: request.deviceName, platform: request.platform, at: at)
-            try db.execute(sql: "INSERT INTO audit_log (at, actor_user_id, actor_credential, action, detail) VALUES (?, ?, ?, ?, ?)",
-                           arguments: [at, caller.user.id, caller.credentialID, "pairing.request_approved", "id=\(request.id) user=\(user.id)"])
+            try ServerStore.insertAudit(db, caller, action: "pairing.request_approved",
+                                        detail: "id=\(request.id) user=\(user.id)", at: at)
             return device
         }
         return PairResponse(token: device.token, deviceID: device.deviceID, user: user, serverName: store.serverName)
     }
 
-    private var requestOwnerID: String {
-        (try? store.db.read { db in
-            try String.fetchOne(db, sql: "SELECT id FROM users WHERE role = 'admin' AND revoked_at IS NULL ORDER BY created_at LIMIT 1")
-        }) ?? ""
-    }
-
     private static func mintDevice(db: Database, user: UserInfo, deviceName: String, platform: String, at: Date) throws
         -> (deviceID: String, token: String) {
-        let token = ServerStore.newToken(prefix: "sed_")
-        let deviceID = UUID().uuidString.lowercased()
-        try db.execute(sql: "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-                       arguments: [deviceID, user.id, deviceName, ServerStore.hash(token), at])
-        let actor = AuthContext(user: user, credential: .device(id: deviceID))
-        try db.execute(sql: "INSERT INTO audit_log (at, actor_user_id, actor_credential, action, detail) VALUES (?, ?, ?, ?, ?)",
-                       arguments: [at, user.id, actor.credentialID, "pairing.device_paired", "device=\(deviceName) platform=\(platform)"])
-        return (deviceID, token)
+        let device = try ServerStore.insertDevice(db, userID: user.id, name: deviceName, at: at)
+        try ServerStore.insertAudit(db, AuthContext(user: user, credential: .device(id: device.deviceID)),
+                                    action: "pairing.device_paired", detail: "device=\(deviceName) platform=\(platform)", at: at)
+        return device
     }
 }
 
@@ -350,21 +328,11 @@ actor PairRequestService {
     func claim(id: UUID?, claimSecret: String, remoteAddress: String = "unknown",
                exposure: RouterExposure = .local) throws -> PairRequestClaimResult {
         let claimedAt = now()
-        guard let id, var entry = entries[id] else {
-            try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
-            throw HTTPError(.notFound, message: "No such pairing request")
-        }
-        guard entry.exposure == exposure else {
-            try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
-            throw HTTPError(.notFound, message: "No such pairing request")
-        }
-        let secretBytes = Self.decodeHex(claimSecret)
-        guard let secretBytes else {
-            try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
-            throw HTTPError(.notFound, message: "No such pairing request")
-        }
-        let suppliedHash = Hashing.sha256Hex(secretBytes)
-        guard Self.constantTimeEquals(entry.claimHash, suppliedHash) else {
+        // Every failed claim looks the same (status, message, rate-limit cost), so a probe learns nothing.
+        guard let id, var entry = entries[id], entry.exposure == exposure,
+              let secretBytes = Self.decodeHex(claimSecret),
+              Self.constantTimeEquals(entry.claimHash, Hashing.sha256Hex(secretBytes))
+        else {
             try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
             throw HTTPError(.notFound, message: "No such pairing request")
         }
@@ -388,21 +356,25 @@ actor PairRequestService {
     }
 
     func approve(id: UUID, userID: String?, caller: AuthContext) throws {
-        guard var entry = entries[id] else { throw HTTPError(.notFound, message: "No such pairing request") }
-        guard entry.request.expiresAt > now() else { throw HTTPError(.gone, message: "Pairing request expired") }
-        guard case .waiting = entry.state else { throw HTTPError(.gone, message: "Pairing request is no longer pending") }
+        var entry = try waitingEntry(id)
         let response = try pairing.pairApprovedDevice(userID: userID, request: entry.request, caller: caller)
         entry.state = .approved(response)
         entries[id] = entry
     }
 
     func deny(id: UUID, caller: AuthContext) throws {
-        guard var entry = entries[id] else { throw HTTPError(.notFound, message: "No such pairing request") }
-        guard entry.request.expiresAt > now() else { throw HTTPError(.gone, message: "Pairing request expired") }
-        guard case .waiting = entry.state else { throw HTTPError(.gone, message: "Pairing request is no longer pending") }
+        var entry = try waitingEntry(id)
         entry.state = .denied
         entries[id] = entry
         try store.audit(caller, action: "pairing.request_denied", detail: "id=\(id)")
+    }
+
+    /// The request an admin can still approve or deny.
+    private func waitingEntry(_ id: UUID) throws -> Entry {
+        guard let entry = entries[id] else { throw HTTPError(.notFound, message: "No such pairing request") }
+        guard entry.request.expiresAt > now() else { throw HTTPError(.gone, message: "Pairing request expired") }
+        guard case .waiting = entry.state else { throw HTTPError(.gone, message: "Pairing request is no longer pending") }
+        return entry
     }
 
     private static func decodeHex(_ value: String) -> Data? {
