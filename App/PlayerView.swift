@@ -13,7 +13,8 @@ struct PlayerView: View {
     @State private var hub = ControllerHub.shared
     @State private var playerWidth: CGFloat = 0
     #endif
-    @AppStorage("diagnostics.showPerformanceOverlay") private var showPerformanceOverlay = false
+    @AppStorage(DiagnosticsSettings.Key.showPerformanceOverlay)
+    private var showPerformanceOverlay = DiagnosticsSettings.Default.showPerformanceOverlay
     @State private var performanceOverlayText = ""
     @State private var topBarAutoHide = TopBarAutoHide()
 

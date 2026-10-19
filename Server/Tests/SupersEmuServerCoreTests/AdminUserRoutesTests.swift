@@ -2,6 +2,7 @@ import Foundation
 import GRDB
 import Hummingbird
 import HummingbirdTesting
+import Logging
 import SupersEmuKit
 @testable import SupersEmuServerCore
 import XCTest
@@ -62,7 +63,7 @@ final class AdminUserRoutesTests: XCTestCase {
         let root = store.paths.root
         let expectedNow = Date(timeIntervalSince1970: 1_735_689_600)
         let expectedExpiry = Calendar(identifier: .gregorian).date(byAdding: .year, value: 2, to: expectedNow)!
-        let config = try JSONSerialization.data(withJSONObject: ["enabled": true, "publicURL": "https://games.supersemu.com"])
+        let config = try JSONSerialization.data(withJSONObject: ["enabled": true, "publicURL": "https://games.supersemu.com", "listenPort": 8489])
         try config.write(to: root.appendingPathComponent("public-access.json"))
         try Data("not-returned-token".utf8).write(to: root.appendingPathComponent("cloudflare.token"))
         let ddns = """
@@ -100,6 +101,36 @@ final class AdminUserRoutesTests: XCTestCase {
                 XCTAssertFalse(String(buffer: response.body).contains("not-returned-token"))
             }
         }
+    }
+
+    func testRemoteAccessStatusTreatsInvalidConfigAsOff() async throws {
+        let config = try JSONSerialization.data(withJSONObject: ["enabled": true, "publicURL": "http://games.supersemu.com", "listenPort": 8489])
+        try config.write(to: store.paths.root.appendingPathComponent(PublicAccessConfiguration.fileName))
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/admin/remote-access", method: .get, headers: self.bearer(self.adminDevice.token)) { response in
+                let status = try self.decode(RemoteAccessStatusResponse.self, response)
+                XCTAssertFalse(status.enabled)
+                XCTAssertNil(status.publicURL)
+            }
+        }
+    }
+
+    func testRemoteAccessStatusReportsListenerStartedByOverride() async throws {
+        let saved = try PublicAccessConfiguration(enabled: false, publicURL: URL(string: "https://games.supersemu.com")!)
+        try JSONEncoder().encode(saved).write(to: store.paths.root.appendingPathComponent(PublicAccessConfiguration.fileName))
+        var options = ServerRunOptions()
+        options.publicURL = URL(string: "https://override.supersemu.com")
+        let resolved = ServerLauncher.resolvePublicAccess(
+            root: store.paths.root, options: options, logger: Logger(label: "test"))
+        XCTAssertNotNil(resolved.publicAccess)
+
+        let active = await store.remoteAccessStatus(source: .listener(resolved.publicAccess))
+        XCTAssertTrue(active.enabled)
+        XCTAssertEqual(active.publicURL?.absoluteString, "https://override.supersemu.com")
+
+        let off = await store.remoteAccessStatus(source: .listener(nil))
+        XCTAssertFalse(off.enabled)
+        XCTAssertEqual(off.publicURL?.absoluteString, "https://games.supersemu.com")
     }
 
     func testRemoteAccessStatusTokenAbsentAndPublicRouterHidesAdminRoute() async throws {

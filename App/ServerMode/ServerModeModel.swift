@@ -33,13 +33,28 @@ final class ServerModeModel {
             case .paired: return "Paired server"
             }
         }
+        /// The shorter wording the menu bar uses.
+        var menuLabel: String {
+            switch self {
+            case .daemon: return "Boot server"
+            case .session: return "This session"
+            case .paired: return "Paired server"
+            }
+        }
     }
 
-    static let daemonPlistName = "com.chadillac6.supersemu.server.plist"
-    static let daemonPort = 8487
-    static let sessionPort = 8488
-    private static let daemonLocalURL = URL(string: "https://127.0.0.1:8487")!
-    private static let sessionLocalURL = URL(string: "https://127.0.0.1:8488")!
+    static let daemonPlistName = LocalServerConstants.daemonPlistName
+    static let daemonPort = LocalServerConstants.daemonPort
+    static let sessionPort = LocalServerConstants.sessionPort
+    private static let daemonLocalURL = URL(string: "https://127.0.0.1:\(daemonPort)")!
+    private static let sessionLocalURL = URL(string: "https://127.0.0.1:\(sessionPort)")!
+
+    /// The local server to show: the boot daemon when it's enabled, otherwise this session's server.
+    static func preferredLocalSource(daemonStatus: SMAppService.Status) -> Source {
+        daemonStatus == .enabled ? .daemon : .session
+    }
+
+    var preferredLocalSource: Source { Self.preferredLocalSource(daemonStatus: daemonStatus) }
 
     var source: Source {
         didSet {
@@ -85,7 +100,7 @@ final class ServerModeModel {
     init() {
         let status = daemon.status
         daemonStatus = status
-        source = status == .enabled ? .daemon : .session
+        source = Self.preferredLocalSource(daemonStatus: status)
         UNUserNotificationCenter.current().delegate = PairRequestNotificationDelegate.shared
     }
 
@@ -367,39 +382,23 @@ final class ServerModeModel {
             firewallBlocksServer = nil
         } catch {
             lanReachability = .blocked
-            firewallBlocksServer = firewallStatusForServerBinary()
+            if let binary = serverBinary {
+                firewallBlocksServer = await Firewall.isBlocked(binaryPath: binary.path)
+            } else {
+                firewallBlocksServer = nil
+            }
         }
     }
 
     func allowInFirewall() async {
         guard let binary = serverBinary else { return }
-        let path = binary.path.replacingOccurrences(of: "'", with: "'\\''")
-        let command = "/usr/libexec/ApplicationFirewall/socketfilterfw --add '\(path)' && /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp '\(path)'"
-        let escaped = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        var details: NSDictionary?
-        let script = NSAppleScript(source: "do shell script \"\(escaped)\" with administrator privileges")
-        _ = script?.executeAndReturnError(&details)
+        let result = await PrivilegedCommand.run(shellCommand: Firewall.allowShellCommand(binaryPath: binary.path))
+        let exitStatus = PrivilegedCommand.exitStatus(of: result)
+        if exitStatus != 0, exitStatus != PrivilegedCommand.userCancelledStatus {
+            message = "Couldn't update the macOS Firewall: \(result.lastMessage)"
+        }
         lastLANProbeAt = nil
         await probeLANReachability(force: true)
-    }
-
-    private func firewallStatusForServerBinary() -> Bool? {
-        guard let binary = serverBinary else { return nil }
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/libexec/ApplicationFirewall/socketfilterfw")
-        process.arguments = ["--getappblocked", binary.path]
-        process.standardOutput = output
-        process.standardError = output
-        do {
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return nil }
-            let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).lowercased()
-            return text.contains("blocked") && !text.contains("not blocked")
-        } catch {
-            return nil
-        }
     }
 
     private static func firstLANAddress() -> String? {
