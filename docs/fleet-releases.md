@@ -53,7 +53,12 @@ secrets in command-line arguments. GitHub encrypts secrets at rest.
 The workflow imports the certificate into an isolated temporary runner keychain,
 then restores the previous search list and removes temporary signing material even
 on failure. It never changes a developer's login keychain. The release script checks
-all required secrets before building. The `main`-only environment restriction must
+all required secrets before building. Automatic iOS signing makes a new "Created via API"
+Apple Development certificate on each fresh runner; the cleanup step revokes that
+run's certificate (matched by its exact content) so the account never reaches
+Apple's certificate limit ("Your account has reached the maximum number of
+certificates"). If cleanup warns that it couldn't, revoke unused "Created via API"
+development certificates in the Apple Developer portal. The `main`-only environment restriction must
 remain enabled; do not grant release credentials to PR workflows.
 
 ## Daily use

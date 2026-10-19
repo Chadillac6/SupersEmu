@@ -235,10 +235,9 @@ print(".".join(str(part) for part in result))
 ' "$floor"
 }
 
-release_asc_marketing_versions() {
-  local auth_header="$RELEASE_TMP/asc-marketing-auth-header"
-  local versions_file="$RELEASE_TMP/ios-prerelease-versions.txt"
-  if ! python3 - "$ASC_KEY_FILE" "$auth_header" <<'PY'
+# Writes a curl header line (Authorization: Bearer <JWT>) for ASC_KEY_ID/ASC_ISSUER_ID and key file $1 to $2.
+release_asc_auth_header() {
+  python3 - "$1" "$2" <<'PY'
 import base64
 import json
 import os
@@ -286,7 +285,12 @@ fd = os.open(header_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, "w") as output:
     output.write("Authorization: Bearer " + token + "\n")
 PY
-  then
+}
+
+release_asc_marketing_versions() {
+  local auth_header="$RELEASE_TMP/asc-marketing-auth-header"
+  local versions_file="$RELEASE_TMP/ios-prerelease-versions.txt"
+  if ! release_asc_auth_header "$ASC_KEY_FILE" "$auth_header"; then
     echo "error: could not create App Store Connect authorization for marketing version lookup" >&2
     return 1
   fi
@@ -353,6 +357,62 @@ PY
     return 1
   fi
   cat "$versions_file"
+}
+
+# Revokes the App Store Connect development certificates whose PEMs are in file $2, using
+# curl header file $1. Only DEVELOPMENT certificates whose content matches exactly are revoked.
+release_revoke_dev_certs() {
+  python3 - "$1" "$2" <<'PY'
+import base64
+import json
+import re
+import subprocess
+import sys
+
+auth_header, pem_path = sys.argv[1:]
+base = "https://api.appstoreconnect.apple.com/v1/certificates"
+
+def curl(*args):
+    response = subprocess.run(
+        ["curl", "--silent", "--show-error", "--fail", "-H", f"@{auth_header}", *args],
+        capture_output=True,
+        text=True,
+    )
+    if response.returncode:
+        raise RuntimeError(response.stderr.strip() or f"curl exited {response.returncode}")
+    return response.stdout
+
+try:
+    with open(pem_path, encoding="ascii") as pem_file:
+        local = {
+            base64.b64decode("".join(body.split()))
+            for body in re.findall(
+                r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", pem_file.read(), re.S
+            )
+        }
+    if not local:
+        print("No temporary development certificate to revoke")
+        sys.exit(0)
+    page = json.loads(curl(
+        base + "?filter%5BcertificateType%5D=DEVELOPMENT&limit=200"
+        "&fields%5Bcertificates%5D=certificateType,certificateContent,displayName"
+    ))
+    matches = [
+        item for item in page.get("data", [])
+        if item.get("attributes", {}).get("certificateType") == "DEVELOPMENT"
+        and base64.b64decode(item["attributes"].get("certificateContent") or "") in local
+    ]
+    if not matches:
+        print("No matching development certificate on App Store Connect (already revoked?)")
+    for item in matches:
+        if not re.fullmatch(r"[A-Za-z0-9]+", item["id"]):
+            raise RuntimeError(f"unexpected certificate id {item['id']!r}")
+        curl("-X", "DELETE", base + "/" + item["id"])
+        print(f"Revoked temporary development certificate {item['id']}")
+except Exception as error:
+    print(f"error: could not revoke temporary development certificates: {error}", file=sys.stderr)
+    sys.exit(1)
+PY
 }
 
 release_mac_marketing_version_from_appcast() {
