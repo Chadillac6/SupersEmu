@@ -32,6 +32,7 @@ jobs:
           scripts/test-ci-wait-for-job.sh
           scripts/test-release-gatekeeper-check.sh
           scripts/test-release-p12.sh
+          scripts/test-release-revoke-dev-certs.sh
           scripts/test-marketing-version.sh
           scripts/test-mac-release-notes.sh
       - name: Test remote access scripts
