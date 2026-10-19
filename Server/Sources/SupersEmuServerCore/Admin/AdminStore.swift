@@ -262,12 +262,6 @@ extension ServerStore {
     private static let deviceColumns = "SELECT id, user_id, name, created_at, last_seen_at, revoked_at FROM devices"
     private static let tokenColumns = "SELECT id, name, scopes, created_at, revoked_at FROM api_tokens"
 
-    /// Same row as `audit(_:action:detail:)`, inside an existing write transaction.
-    static func insertAudit(_ db: Database, _ auth: AuthContext, action: String, detail: String) throws {
-        try db.execute(sql: "INSERT INTO audit_log (at, actor_user_id, actor_credential, action, detail) VALUES (?, ?, ?, ?, ?)",
-                       arguments: [Date(), auth.user.id, auth.credentialID, action, detail])
-    }
-
     public func createPlayer(displayName: String, by auth: AuthContext) throws -> UserInfo {
         let user = UserInfo(id: UUID().uuidString.lowercased(), displayName: displayName, role: .player)
         let directory = paths.userDirectory(user.id)
@@ -317,7 +311,7 @@ extension ServerStore {
     }
 
     public func revokeOwnDevice(by auth: AuthContext) throws -> DeviceInfo? {
-        guard case .device(let id) = auth.credential else {
+        guard let id = auth.deviceID else {
             throw HTTPError(.forbidden, message: "A device token is required")
         }
         return try db.write { db in

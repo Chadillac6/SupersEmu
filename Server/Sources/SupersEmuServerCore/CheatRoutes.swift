@@ -28,7 +28,7 @@ func registerCheatRoutes(_ group: RouterGroup<SERequestContext>, store: ServerSt
 
     group.put("cheats/:game/:id") { request, context -> CheatRecord in
         let auth = try context.caller()
-        guard case .device(let deviceID) = auth.credential else {
+        guard let deviceID = auth.deviceID else {
             throw HTTPError(.forbidden, message: "Only paired devices can change cheats")
         }
         let gameID = try context.parameters.require("game")

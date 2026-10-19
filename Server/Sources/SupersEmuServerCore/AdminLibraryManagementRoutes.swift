@@ -18,7 +18,7 @@ func registerAdminLibraryManagementRoutes(_ group: RouterGroup<SERequestContext>
             throw HTTPError(.badRequest, message: "path must be a relative path of visible names")
         }
         let staged = FileManager.default.fileExists(atPath: importer.uploadStagingRoot.appendingPathComponent(batch, isDirectory: true).path)
-        try uploadGate { try store.paths.storage.beginUpload(batch: batch, owner: auth.uploadOwner, stagedOnDisk: staged) }
+        try uploadGate { try store.paths.storage.beginUpload(batch: batch, owner: auth.credentialID, stagedOnDisk: staged) }
         defer { store.paths.storage.endUpload(batch: batch) }
         if let length = request.headers[.contentLength].flatMap({ Int64($0) }) {
             try checkUploadSize(length, store: store)
@@ -32,7 +32,7 @@ func registerAdminLibraryManagementRoutes(_ group: RouterGroup<SERequestContext>
         try requireLibraryAvailable(store)
         let batch = try context.parameters.require("batch")
         guard LibraryImporter.isSafeBatch(batch) else { throw HTTPError(.badRequest, message: "invalid batch") }
-        try uploadGate { try store.paths.storage.beginFinish(batch: batch, owner: auth.uploadOwner) }
+        try uploadGate { try store.paths.storage.beginFinish(batch: batch, owner: auth.credentialID) }
         var finished = false
         defer { store.paths.storage.endFinish(batch: batch, finished: finished) }
         try await issueErrors { try await importer.finishUpload(batch: batch) }
@@ -94,15 +94,6 @@ func requireLibraryAvailable(_ store: ServerStore) throws {
     }
     if store.paths.storage.move?.isRunning == true { throw HTTPError(.conflict, message: "The library is being moved") }
     try store.paths.createLibraryDirectories()
-}
-
-private extension AuthContext {
-    var uploadOwner: String {
-        switch credential {
-        case .device(let id): return "device:" + id
-        case .apiToken(let id, _): return "token:" + id
-        }
-    }
 }
 
 private func uploadGate(_ body: () throws -> Void) throws {

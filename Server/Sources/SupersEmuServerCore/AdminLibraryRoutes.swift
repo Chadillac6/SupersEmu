@@ -102,3 +102,11 @@ func requireLibraryAdmin(_ context: SERequestContext) throws -> AuthContext {
     try auth.require(.libraryWrite)
     return auth
 }
+
+@Sendable
+func requireUsersAdmin(_ context: SERequestContext) throws -> AuthContext {
+    let auth = try context.caller()
+    try auth.requireAdmin()
+    try auth.require(.usersAdmin)
+    return auth
+}
