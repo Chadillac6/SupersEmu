@@ -725,4 +725,17 @@ extension CheatSyncEngineTests {
             XCTFail("save should report that the upload couldn't be queued")
         } catch {}
     }
+
+    func testSyncReportsFailureWhenItsProgressCannotBeSaved() async throws {
+        try await withServer { url in
+            let (phone, _, _) = try self.engine("phone", server: url)
+            try await phone.save([CheatRecord(gameID: self.game, label: "A", code: "C2C3-CF0D", format: .snesGameGenie)])
+            let blocker = self.scratch.appendingPathComponent("phone", isDirectory: true).appendingPathComponent("sync-state.json", isDirectory: true)
+            try FileManager.default.removeItem(at: blocker)
+            try FileManager.default.createDirectory(at: blocker, withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: blocker.appendingPathComponent("keep"))
+            let status = await phone.sync()
+            guard case .failed = status else { return XCTFail("\(status)") }
+        }
+    }
 }

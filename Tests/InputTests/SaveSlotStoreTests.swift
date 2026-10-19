@@ -153,10 +153,46 @@ final class SaveSlotStoreTests: XCTestCase {
             try Data("remote".utf8).write(to: $0)
         }
         let remoteDate = date.addingTimeInterval(60)
-        store.recordRemote(3, savedAt: remoteDate)
+        try store.recordRemote(3, savedAt: remoteDate)
         XCTAssertEqual(store.slots()[2].savedAt, remoteDate)
         XCTAssertNil(store.slots()[2].screenshotURL)
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("slot3.png").path))
+    }
+
+    func testMetadataCommitFailureThrowsAfterStateIsSaved() throws {
+        let metadata = directory.appendingPathComponent("slot1.json")
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: metadata.path) }
+
+        XCTAssertThrowsError(try store.save(into: 1, savedAt: Date(), screenshotPNG: nil) { url in
+            try Data("new".utf8).write(to: url)
+            try Data("{}".utf8).write(to: metadata)
+            try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: metadata.path)
+        }) { error in
+            guard case SaveSlotError.metadataNotRecorded(1, _) = error else { return XCTFail("\(error)") }
+        }
+        XCTAssertEqual(try Data(contentsOf: store.stateURL(1)), Data("new".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("slot1.json.tmp").path))
+    }
+
+    func testRecordRemoteMetadataWriteFailureThrows() throws {
+        try store.save(into: 2, savedAt: Date(), screenshotPNG: nil) { try Data("remote".utf8).write(to: $0) }
+        let metadata = directory.appendingPathComponent("slot2.json")
+        try FileManager.default.removeItem(at: metadata)
+        try FileManager.default.createDirectory(at: metadata, withIntermediateDirectories: true)
+        try Data("blocker".utf8).write(to: metadata.appendingPathComponent("blocker"))
+
+        XCTAssertThrowsError(try store.recordRemote(2, savedAt: Date(), deviceName: "iPhone"))
+    }
+
+    func testRecordRemoteWithoutStateClearsMetadataAndScreenshot() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("slot1.json"))
+        try Data("png".utf8).write(to: directory.appendingPathComponent("slot1.png"))
+
+        try store.recordRemote(1, savedAt: Date())
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("slot1.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("slot1.png").path))
     }
 
     func testLatestScreenshotURLChoosesNewestValidScreenshot() throws {
@@ -196,6 +232,10 @@ final class SaveSlotStoreTests: XCTestCase {
 
     func testLineSlotNamesAndPNGDataRoundTrip() throws {
         XCTAssertEqual((1...3).map(SaveSlotStore.lineSlot), ["slot1", "slot2", "slot3"])
+        XCTAssertEqual((1...3).map { SaveSlotStore.slot(fromLine: SaveSlotStore.lineSlot($0)) }, [1, 2, 3])
+        XCTAssertNil(SaveSlotStore.slot(fromLine: "slot4"))
+        XCTAssertNil(SaveSlotStore.slot(fromLine: "auto"))
+        XCTAssertNil(SaveSlotStore.slot(fromLine: "slotx"))
         let png = try makePNG()
         let source = try XCTUnwrap(CGImageSourceCreateWithData(png as CFData, nil))
         let decoded = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
