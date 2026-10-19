@@ -15,8 +15,14 @@ revoke_runner_dev_certs() {
     [ -f "$kc" ] && keychains+=("$kc")
   done
   [ "${#keychains[@]}" -gt 0 ] || return 0
+  local status=0
   security find-certificate -a -c 'Apple Development: Created via API' -p "${keychains[@]}" \
-    > "$pems" 2>/dev/null || true
+    > "$pems" 2>"$secrets_dir/find-certificate.err" || status=$?
+  # 44 is errSecItemNotFound: no temporary certificate on this runner.
+  if [ "$status" -ne 0 ] && [ "$status" -ne 44 ]; then
+    echo "error: security find-certificate exited $status: $(cat "$secrets_dir/find-certificate.err")" >&2
+    return 1
+  fi
   [ -s "$pems" ] || { echo "No temporary development certificate to revoke"; return 0; }
   (
     ASC_KEY_ID="$(cat "$secrets_dir/asc-key-id")"
