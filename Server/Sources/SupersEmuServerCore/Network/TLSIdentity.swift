@@ -22,9 +22,17 @@ public struct TLSIdentity: Sendable {
         if let existing = try load(paths: paths) { return existing }
         let identity = try generate(commonName: commonName, dnsNames: ["localhost", "\(LocalNetwork.bonjourHostName() ?? "supersemu").local"])
         try FileManager.default.createDirectory(at: directory(paths), withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: keyURL(paths).path, contents: Data(identity.privateKeyPEM.utf8), attributes: [.posixPermissions: 0o600])
-        FileManager.default.createFile(atPath: certificateURL(paths).path, contents: identity.certificateDER, attributes: [.posixPermissions: 0o644])
+        // The key goes first: `load` treats the certificate as the marker that the identity is complete.
+        try write(identity.privateKeyPEM.utf8, to: keyURL(paths), permissions: 0o600)
+        try write(identity.certificateDER, to: certificateURL(paths), permissions: 0o644)
         return identity
+    }
+
+    /// A silent failure here would hand out a new pin on every launch and break every paired device.
+    private static func write(_ bytes: some Sequence<UInt8>, to url: URL, permissions: Int) throws {
+        guard FileManager.default.createFile(atPath: url.path, contents: Data(bytes), attributes: [.posixPermissions: permissions]) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
+        }
     }
 
     public static func load(paths: ServerPaths) throws -> TLSIdentity? {

@@ -7,13 +7,28 @@ import SupersEmuKit
 import SwiftASN1
 import X509
 
+/// Where `/v1/admin/remote-access` gets the public-access state it reports.
+public enum RemoteAccessSource: Sendable {
+    /// `public-access.json` as saved. For routers not started by `ServerLauncher`.
+    case storedFile
+    /// What the running public listener serves, command-line overrides included. Nil when it isn't running.
+    case listener(PublicAccessConfiguration?)
+}
+
 /// Queries behind the users/devices/tokens admin API. Never exposes token hashes.
 extension ServerStore {
-    public func remoteAccessStatus() async -> RemoteAccessStatusResponse {
-        let configURL = paths.root.appendingPathComponent("public-access.json")
-        let config = (try? Data(contentsOf: configURL))
-            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-        let publicURL = (config["publicURL"] as? String).flatMap(URL.init(string:))
+    public func remoteAccessStatus(source: RemoteAccessSource = .storedFile) async -> RemoteAccessStatusResponse {
+        // Same reader as the launcher, so an invalid file shows as off here just as the listener treats it.
+        let stored = (try? PublicAccessConfiguration.stored(root: paths.root)) ?? nil
+        let config: PublicAccessConfiguration?
+        switch source {
+        case .storedFile:
+            config = stored
+        case .listener(let active):
+            // Off keeps the saved URL so the app can show and re-enable it.
+            config = active ?? stored.map { var off = $0; off.enabled = false; return off }
+        }
+        let publicURL = config?.publicURL
         let ddnsURL = paths.root.appendingPathComponent("ddns-state.json")
         let ddns = (try? Data(contentsOf: ddnsURL)).flatMap {
             try? SupersEmuJSON.decoder().decode(RemoteAccessDDNSState.self, from: $0)
@@ -23,7 +38,7 @@ extension ServerStore {
             certificateValidUntil = await certificateExpiryFromTLS(host: host)
         }
         return RemoteAccessStatusResponse(
-            enabled: config["enabled"] as? Bool ?? false,
+            enabled: config?.enabled ?? false,
             publicURL: publicURL,
             tokenSaved: FileManager.default.fileExists(atPath: paths.root.appendingPathComponent("cloudflare.token").path),
             ddnsIP: ddns?.ip,
@@ -176,7 +191,8 @@ extension ServerStore {
                                              arguments: [id]) else {
                 throw HTTPError(.notFound, message: "No user \(id)")
             }
-            let user = UserInfo(id: id, displayName: displayName, role: Role(rawValue: row["role"]) ?? .player)
+            var user = Self.user(from: row)
+            user.displayName = displayName
             try db.execute(sql: "UPDATE users SET display_name = ? WHERE id = ?", arguments: [displayName, id])
             try Self.insertAudit(db, auth, action: "users.rename", detail: "user=\(id)")
             return user

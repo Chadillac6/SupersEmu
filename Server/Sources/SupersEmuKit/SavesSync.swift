@@ -168,7 +168,7 @@ public actor SaveSyncEngine {
         try? FileManager.default.createDirectory(at: directory.appendingPathComponent("pending", isDirectory: true),
                                                  withIntermediateDirectories: true)
         let url = directory.appendingPathComponent("sync-state.json")
-        state = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(PersistedState.self, from: $0) } ?? PersistedState()
+        state = SyncStateFile.read(PersistedState.self, from: url) ?? PersistedState()
     }
 
     public func setProvider(_ provider: any SaveSyncServerProvider) { self.provider = provider }
@@ -178,7 +178,7 @@ public actor SaveSyncEngine {
         for item in state.queue { try? FileManager.default.removeItem(at: blobURL(item.id)) }
         epoch += 1
         state = PersistedState()
-        persist()
+        persistOrLog()
     }
 
     /// Records that the user intentionally removed this device's copy of a synced line.
@@ -188,7 +188,7 @@ public actor SaveSyncEngine {
         lineState.discarded = true
         state.lines[key] = lineState
         dropAttachedPending(key)
-        persist()
+        persistOrLog()
     }
 
     public var pendingCount: Int { state.queue.count }
@@ -234,9 +234,11 @@ public actor SaveSyncEngine {
         } catch {
             return false
         }
+        let unqueued = state
         // Only the newest attached copy of a line needs uploading; older queued copies are superseded.
+        var superseded: UUID?
         if parent == nil, let attached, state.queue[attached].id != uploadingID {
-            try? FileManager.default.removeItem(at: blobURL(state.queue[attached].id))
+            superseded = state.queue[attached].id
             state.queue.remove(at: attached)
         }
         state.queue.append(item)
@@ -244,7 +246,15 @@ public actor SaveSyncEngine {
             line.discarded = false
             state.lines[key] = line
         }
-        persist()
+        do {
+            try persist()
+        } catch {
+            // A queue entry that isn't on disk would be lost on relaunch, so don't claim the save is queued.
+            state = unqueued
+            try? FileManager.default.removeItem(at: blobURL(item.id))
+            return false
+        }
+        if let superseded { try? FileManager.default.removeItem(at: blobURL(superseded)) }
         return true
     }
 
@@ -345,7 +355,7 @@ public actor SaveSyncEngine {
             // Offline isn't a failure of this save: it stays "waiting to upload".
             if let index = state.queue.firstIndex(where: { $0.id == item.id }) {
                 state.queue[index].attempts += 1
-                persist()
+                persistOrLog()
             }
             return .offline(error.localizedDescription)
         }
@@ -355,7 +365,7 @@ public actor SaveSyncEngine {
         if let index = state.queue.firstIndex(where: { $0.id == id }) {
             state.queue[index].attempts += 1
             state.queue[index].lastError = message
-            persist()
+            persistOrLog()
         }
         return .retryLater(message)
     }
@@ -363,7 +373,7 @@ public actor SaveSyncEngine {
     private func remove(_ id: UUID) {
         try? FileManager.default.removeItem(at: blobURL(id))
         state.queue.removeAll { $0.id == id }
-        persist()
+        persistOrLog()
     }
 
     // MARK: Pull before launch
@@ -505,7 +515,7 @@ public actor SaveSyncEngine {
     private func commitLine(_ line: LineState, key: String, epoch: Int) {
         guard epoch == self.epoch else { return }
         state.lines[key] = line
-        persist()
+        persistOrLog()
     }
 
     /// Applies the user's choice for a conflict reported by `prepare`.
@@ -519,8 +529,8 @@ public actor SaveSyncEngine {
             // Preserve this device's copy as a branch before replacing it locally.
             if let localSHA = (try? Data(contentsOf: file.url)).map(Self.sha256), localSHA != state.lines[key]?.baseSHA256 || hasPending(key) {
                 let base = state.lines[key]?.baseRevisionID
+                guard enqueue(file, detachedFrom: .some(base)) else { throw SaveSyncError.couldNotKeepLocalCopy }
                 dropAttachedPending(key)
-                enqueue(file, detachedFrom: .some(base))
             }
             try await download(conflict.remote, to: file.url, client: client)
             guard epoch == self.epoch else { throw SaveSyncError.noServer }
@@ -542,7 +552,7 @@ public actor SaveSyncEngine {
             line.conflict = nil
             state.lines[key] = line
         }
-        persist()
+        persistOrLog()
         await flush()
     }
 
@@ -568,10 +578,9 @@ public actor SaveSyncEngine {
 
     private func blobURL(_ id: UUID) -> URL { blobs.appendingPathComponent(id.uuidString) }
 
-    private func persist() {
-        guard let data = try? JSONEncoder().encode(state) else { return }
-        try? data.write(to: stateURL, options: .atomic)
-    }
+    private func persist() throws { try SyncStateFile.write(state, to: stateURL) }
+
+    private func persistOrLog() { SyncStateFile.writeOrLog(state, to: stateURL) }
 
     static func describe(_ error: Error) -> String {
         (error as? APIClientError)?.description ?? error.localizedDescription
@@ -583,12 +592,13 @@ public actor SaveSyncEngine {
 }
 
 public enum SaveSyncError: Error, Equatable, CustomStringConvertible {
-    case noServer, hashMismatch, incompatibleCore
+    case noServer, hashMismatch, incompatibleCore, couldNotKeepLocalCopy
     public var description: String {
         switch self {
         case .noServer: return "Not connected to a SupersEmu Server"
         case .hashMismatch: return "Downloaded save failed its integrity check"
         case .incompatibleCore: return "That save needs a different core version"
+        case .couldNotKeepLocalCopy: return "Couldn't keep a copy of this device's save"
         }
     }
 }

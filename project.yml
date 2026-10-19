@@ -874,6 +874,8 @@ targets:
     sources:
       - Tests/HostTests
       - App/ServerMode/ServerMenuStatus.swift
+      - App/ServerMode/LocalServerConstants.swift
+      - App/ServerMode/PrivilegedCommand.swift
       - App/ServerMode/UpdateStatus.swift
       - App/Diagnostics/PerformanceStats.swift
       - App/FramePacer.swift

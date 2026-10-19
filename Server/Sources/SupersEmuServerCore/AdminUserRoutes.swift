@@ -11,7 +11,8 @@ extension TokenInfo: ResponseEncodable {}
 
 // Track: CLI + admin. /v1/admin/users, /v1/admin/devices, /v1/admin/tokens, /v1/admin/status.
 // Every route needs an admin user and the `users:admin` scope (device tokens of the admin have it).
-func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: ServerStore) {
+func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: ServerStore,
+                             remoteAccess: RemoteAccessSource = .storedFile) {
     let admin = group.group("admin")
 
     @Sendable func adminCaller(_ context: SERequestContext) throws -> AuthContext {
@@ -34,7 +35,7 @@ func registerAdminUserRoutes(_ group: RouterGroup<SERequestContext>, store: Serv
 
     admin.get("remote-access") { _, context in
         _ = try adminCaller(context)
-        return await store.remoteAccessStatus()
+        return await store.remoteAccessStatus(source: remoteAccess)
     }
 
     admin.get("users") { _, context in
