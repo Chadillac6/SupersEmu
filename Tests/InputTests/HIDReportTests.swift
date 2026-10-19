@@ -1,4 +1,5 @@
 import XCTest
+import SupersEmuKit
 
 /// Synthetic descriptors and reports. No real controller is attached on the CI/VM Mac.
 final class HIDReportTests: XCTestCase {
@@ -88,17 +89,17 @@ final class HIDReportTests: XCTestCase {
 
     func testPresetMatching() {
         XCTAssertEqual(HIDPreset.match(vendorID: 0x0079, productID: 0x0006, productName: "Generic   USB  Joystick  ",
-                                       userChoice: nil, console: "snes").id, "retrolink-n64")
+                                       userChoice: nil, console: .snes).id, "retrolink-n64")
         XCTAssertEqual(HIDPreset.match(vendorID: 0x0079, productID: 0x0011, productName: "USB Gamepad ",
-                                       userChoice: nil, console: "segacd").id, "retrolink-genesis")
+                                       userChoice: nil, console: .segacd).id, "retrolink-genesis")
         XCTAssertEqual(HIDPreset.match(vendorID: 0x0079, productID: 0x0011, productName: "USB Gamepad ",
-                                       userChoice: nil, console: "snes").id, "retrolink-snes")
+                                       userChoice: nil, console: .snes).id, "retrolink-snes")
         XCTAssertEqual(HIDPreset.match(vendorID: 0x0079, productID: 0x0011, productName: "SEGA Genesis pad",
-                                       userChoice: nil, console: "snes").id, "retrolink-genesis")
+                                       userChoice: nil, console: .snes).id, "retrolink-genesis")
         XCTAssertEqual(HIDPreset.match(vendorID: 0x0079, productID: 0x0011, productName: nil,
-                                       userChoice: "generic", console: "genesis").id, "generic")
+                                       userChoice: "generic", console: .genesis).id, "generic")
         XCTAssertEqual(HIDPreset.match(vendorID: 0x1234, productID: 0x5678, productName: "Mystery pad",
-                                       userChoice: nil, console: "n64").id, "generic")
+                                       userChoice: nil, console: .n64).id, "generic")
         XCTAssertEqual(HIDPreset.retrolinkGenesis.source, .unverified)
     }
 }

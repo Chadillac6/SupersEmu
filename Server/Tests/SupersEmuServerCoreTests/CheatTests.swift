@@ -60,6 +60,10 @@ final class CheatCodecTests: XCTestCase {
         XCTAssertEqual(CheatCodec.parse("7E0DBE05", system: .snes).normalized, "7E0D-BE05")
     }
 
+    func testMultilineCodesOnlyForGBAPSXAndN64() {
+        XCTAssertEqual(Set(SystemID.allCases.filter(CheatCodec.allowsMultiline)), [.gba, .psx, .n64])
+    }
+
     func testEverySystemHasCheatFormats() {
         XCTAssertTrue(SystemID.allCases.allSatisfy(CheatCodec.supportsCheats))
         XCTAssertEqual(CheatCodec.formats(for: .snes), [.snesGameGenie, .proActionReplay])

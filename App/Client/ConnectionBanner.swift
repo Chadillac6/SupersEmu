@@ -9,6 +9,9 @@ struct ConnectionBanner: View {
     @State private var dismissedRecovery: Date?
     @State private var retrying = false
 
+    /// How long "Back online" stays up. `showsRecovery` allows a second more so the pill never outlives the timer.
+    private static let recoveryPillSeconds: TimeInterval = 5
+
     var body: some View {
         Group {
             if let message = server.connection.message(serverName: server.serverName) {
@@ -26,7 +29,7 @@ struct ConnectionBanner: View {
         .animation(.default, value: showsRecovery)
         .task(id: server.recoveredAt) {
             guard let recoveredAt = server.recoveredAt else { return }
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            try? await Task.sleep(for: .seconds(Self.recoveryPillSeconds))
             dismissedRecovery = recoveredAt
         }
         .foregroundStyle(Brand.Colors.ink)
@@ -34,7 +37,7 @@ struct ConnectionBanner: View {
 
     private var showsRecovery: Bool {
         guard let recoveredAt = server.recoveredAt, recoveredAt != dismissedRecovery, server.isOnline else { return false }
-        return Date().timeIntervalSince(recoveredAt) < 6
+        return Date().timeIntervalSince(recoveredAt) < Self.recoveryPillSeconds + 1
     }
 
     private var unavailableCount: Int {
