@@ -31,7 +31,7 @@ final class PairRequestTests: XCTestCase {
     }
 
     private func create() async throws -> PairRequestCreated {
-        let digest = SHA256.hash(data: Data((0..<32).map { _ in UInt8(0x11) })).map { String(format: "%02x", $0) }.joined()
+        let digest = SHA256.hash(data: Data((0..<32).map { _ in UInt8(0x11) })).hexString
         return try await service.create(PairRequestCreate(deviceName: "iPhone", platform: "ios", claimHash: digest),
                                         remoteAddress: "192.0.2.10")
     }
@@ -41,7 +41,7 @@ final class PairRequestTests: XCTestCase {
         let player = try store.createUser(displayName: "Player", role: .player)
         let playerToken = try store.createDeviceToken(userID: player.id, deviceName: "Player Mac").token
         let secret = String(repeating: "11", count: 32)
-        let digest = SHA256.hash(data: Data(repeating: 0x11, count: 32)).map { String(format: "%02x", $0) }.joined()
+        let digest = SHA256.hash(data: Data(repeating: 0x11, count: 32)).hexString
         let body = PairRequestCreate(deviceName: "iPhone", platform: "ios",
                                      claimHash: digest)
         func encoded<T: Encodable>(_ value: T) throws -> ByteBuffer {
@@ -135,7 +135,7 @@ final class PairRequestTests: XCTestCase {
         let clock = TestClock(Date(timeIntervalSince1970: 1_800_000_000))
         let expiring = PairRequestService(store: store, pairing: pairing, now: { clock.now })
         let secret = String(repeating: "11", count: 32)
-        let hash = SHA256.hash(data: Data(repeating: 0x11, count: 32)).map { String(format: "%02x", $0) }.joined()
+        let hash = SHA256.hash(data: Data(repeating: 0x11, count: 32)).hexString
         let request = try await expiring.create(PairRequestCreate(deviceName: "iPad", platform: "ipados", claimHash: hash), remoteAddress: "local")
         clock.now = clock.now.addingTimeInterval(301)
         do {
@@ -147,7 +147,7 @@ final class PairRequestTests: XCTestCase {
     }
 
     func testCreateRateLimitIsPerIPAndDoesNotBlockPairCodePairing() async throws {
-        let digest = SHA256.hash(data: Data(repeating: 0x11, count: 32)).map { String(format: "%02x", $0) }.joined()
+        let digest = SHA256.hash(data: Data(repeating: 0x11, count: 32)).hexString
         let body = PairRequestCreate(deviceName: "iPhone", platform: "ios", claimHash: digest)
         let isolated = PairRequestService(store: store, pairing: pairing)
         for _ in 0..<5 {
@@ -187,7 +187,7 @@ final class PairRequestTests: XCTestCase {
     func testWrongAndUnknownClaimsCostFiveAndAreRateLimited() async throws {
         let claimSecret = String(repeating: "11", count: 32)
         let expectedHash = SHA256.hash(data: Data(repeating: 0x22, count: 32))
-            .map { String(format: "%02x", $0) }.joined()
+            .hexString
         let request = try await service.create(
             PairRequestCreate(deviceName: "iPhone", platform: "ios", claimHash: expectedHash),
             remoteAddress: "192.0.2.10"
@@ -241,7 +241,7 @@ final class PairRequestTests: XCTestCase {
         let clock = TestClock(Date(timeIntervalSince1970: 1_800_000_000))
         let capped = PairRequestService(store: store, pairing: pairing, now: { clock.now },
                                         maximumPendingPerClient: 2)
-        let hash = SHA256.hash(data: Data(repeating: 0x11, count: 32)).map { String(format: "%02x", $0) }.joined()
+        let hash = SHA256.hash(data: Data(repeating: 0x11, count: 32)).hexString
         let body = PairRequestCreate(deviceName: "iPhone", platform: "ios", claimHash: hash)
         let first = try await capped.create(body, remoteAddress: "ip")
         clock.now = clock.now.addingTimeInterval(1)
@@ -267,7 +267,7 @@ final class PairRequestTests: XCTestCase {
     }
 
     func testGlobalPendingCapRejectsWithoutEvictingExistingRequests() async throws {
-        let hash = SHA256.hash(data: Data(repeating: 0x11, count: 32)).map { String(format: "%02x", $0) }.joined()
+        let hash = SHA256.hash(data: Data(repeating: 0x11, count: 32)).hexString
         let body = PairRequestCreate(deviceName: "iPhone", platform: "ios", claimHash: hash)
         let capped = PairRequestService(store: store, pairing: pairing)
         var existingIDs = Set<UUID>()

@@ -68,6 +68,17 @@ fail() {
   exit "$code"
 }
 
+# Maps an api_request failure status to the exit contract: 3 = token rejected, otherwise 1.
+api_fail() {
+  local status=$1 message=$2
+  ((status == 3)) && fail 3 "Cloudflare token was rejected"
+  fail 1 "$message"
+}
+
+urlquote() {
+  python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+}
+
 if [[ ! -f "$token_file" ]]; then
   fail 1 "Cloudflare token file is missing"
 fi
@@ -161,15 +172,13 @@ PY
     )
     [[ -n "$zone_id" ]] && break
   else
-    request_status=$?
-    ((request_status == 3)) && fail 3 "Cloudflare token was rejected"
-    fail 1 "Cloudflare zone lookup failed"
+    api_fail $? "Cloudflare zone lookup failed"
   fi
 done <<<"$suffixes"
 [[ -n "$zone_id" ]] || fail 1 "No Cloudflare zone matched $host"
 
-encoded_host=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$host")
-zone_path=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$zone_id")
+encoded_host=$(urlquote "$host")
+zone_path=$(urlquote "$zone_id")
 records_url="$api/zones/$zone_path/dns_records?type=A&name=$encoded_host"
 if api_request GET "$records_url"; then
   records=$(python3 - "$response_file" <<'PY'
@@ -181,9 +190,7 @@ for item in data:
 PY
   )
 else
-  request_status=$?
-  ((request_status == 3)) && fail 3 "Cloudflare token was rejected"
-  fail 1 "Cloudflare DNS record lookup failed"
+  api_fail $? "Cloudflare DNS record lookup failed"
 fi
 
 payload=$(python3 - "$host" "$ip" <<'PY'
@@ -199,23 +206,19 @@ if [[ -n "$records" ]]; then
     if [[ "$record_ip" == "$ip" && "$record_proxied" == "False" ]]; then
       continue
     fi
-    encoded_record_id=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$record_id")
+    encoded_record_id=$(urlquote "$record_id")
     write_url="$api/zones/$zone_path/dns_records/$encoded_record_id"
     if api_request PATCH "$write_url" "$payload"; then
       records_written=1
     else
-      request_status=$?
-      ((request_status == 3)) && fail 3 "Cloudflare token was rejected"
-      fail 1 "Cloudflare DNS record update failed"
+      api_fail $? "Cloudflare DNS record update failed"
     fi
   done <<<"$records"
 else
   if api_request POST "$api/zones/$zone_path/dns_records" "$payload"; then
     records_written=1
   else
-    request_status=$?
-    ((request_status == 3)) && fail 3 "Cloudflare token was rejected"
-    fail 1 "Cloudflare DNS record creation failed"
+    api_fail $? "Cloudflare DNS record creation failed"
   fi
 fi
 if ((records_written)); then

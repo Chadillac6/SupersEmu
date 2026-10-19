@@ -1,6 +1,7 @@
 import Foundation
 import simd
 import Observation
+import SupersEmuKit
 
 /// Where a remapping applies. Precedence: console default -> controller type -> game.
 enum MappingScope: Equatable, Hashable, Sendable {
@@ -18,7 +19,7 @@ struct InputMappings: Codable, Equatable, Sendable {
 
     /// Built-in controller-type defaults: the keyboard's arrow keys drive the N64 stick.
     static let builtinOverrides: [String: [String: [String: PadInput]]] = [
-        ControllerType.keyboard: ["n64": [
+        ControllerType.keyboard: [SystemID.n64.rawValue: [
             "Stick Up": .dpadUp, "Stick Down": .dpadDown, "Stick Left": .dpadLeft, "Stick Right": .dpadRight,
             "Up": .unbound, "Down": .unbound, "Left": .unbound, "Right": .unbound,
         ]],
@@ -26,23 +27,23 @@ struct InputMappings: Codable, Equatable, Sendable {
 
     func bindings(for layout: ConsoleLayout, controllerType: String, gameID: String?) -> [String: PadInput] {
         var result = layout.defaults
-        result.merge(Self.builtinOverrides[controllerType]?[layout.system] ?? [:]) { $1 }
-        result.merge(controllerOverrides[controllerType]?[layout.system] ?? [:]) { $1 }
+        result.merge(Self.builtinOverrides[controllerType]?[layout.system.rawValue] ?? [:]) { $1 }
+        result.merge(controllerOverrides[controllerType]?[layout.system.rawValue] ?? [:]) { $1 }
         if let gameID { result.merge(gameOverrides[gameID] ?? [:]) { $1 } }
         return result.filter { layout.control($0.key) != nil }
     }
 
-    mutating func set(_ input: PadInput, for control: String, system: String, scope: MappingScope) {
+    mutating func set(_ input: PadInput, for control: String, system: SystemID, scope: MappingScope) {
         switch scope {
-        case .controllerType(let type): controllerOverrides[type, default: [:]][system, default: [:]][control] = input
+        case .controllerType(let type): controllerOverrides[type, default: [:]][system.rawValue, default: [:]][control] = input
         case .game(let gameID): gameOverrides[gameID, default: [:]][control] = input
         }
     }
 
-    mutating func reset(system: String, scope: MappingScope) {
+    mutating func reset(system: SystemID, scope: MappingScope) {
         switch scope {
         case .controllerType(let type):
-            controllerOverrides[type]?[system] = nil
+            controllerOverrides[type]?[system.rawValue] = nil
             if controllerOverrides[type]?.isEmpty == true { controllerOverrides[type] = nil }
         case .game(let gameID):
             gameOverrides[gameID] = nil
@@ -107,10 +108,16 @@ final class InputMappingStore {
 
     init(url: URL) {
         self.url = url
-        if let data = try? Data(contentsOf: url), let decoded = try? JSONDecoder().decode(InputMappings.self, from: data) {
-            mappings = decoded
-        } else {
-            mappings = InputMappings()
+        mappings = Self.load(from: url)
+    }
+
+    private static func load(from url: URL) -> InputMappings {
+        guard let data = try? Data(contentsOf: url) else { return InputMappings() }
+        do {
+            return try JSONDecoder().decode(InputMappings.self, from: data)
+        } catch {
+            AppLog.input.error("Couldn't read controller mappings, using defaults: \(error.localizedDescription, privacy: .public)")
+            return InputMappings()
         }
     }
 
@@ -118,12 +125,12 @@ final class InputMappingStore {
         mappings.bindings(for: layout, controllerType: controllerType, gameID: gameID)
     }
 
-    func set(_ input: PadInput, for control: String, system: String, scope: MappingScope) {
+    func set(_ input: PadInput, for control: String, system: SystemID, scope: MappingScope) {
         mappings.set(input, for: control, system: system, scope: scope)
         save()
     }
 
-    func reset(system: String, scope: MappingScope) {
+    func reset(system: SystemID, scope: MappingScope) {
         mappings.reset(system: system, scope: scope)
         save()
     }
@@ -140,7 +147,7 @@ final class InputMappingStore {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(mappings).write(to: url, options: .atomic)
         } catch {
-            NSLog("SupersEmu: couldn't save controller mappings: \(error)")
+            AppLog.input.error("Couldn't save controller mappings: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

@@ -6,7 +6,7 @@ import Security
 public enum CertificatePin {
     /// Lowercase hex SHA-256 of a DER certificate.
     public static func sha256(ofDER der: Data) -> String {
-        SHA256.hash(data: der).map { String(format: "%02x", $0) }.joined()
+        Hashing.sha256Hex(der)
     }
 
     /// Accepts `AB:CD…`, `abcd…` and whitespace variants.

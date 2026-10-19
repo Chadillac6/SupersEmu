@@ -34,7 +34,7 @@ final class ClientCacheTests: XCTestCase {
     @discardableResult
     /// `servedBytes` lets a test store different bytes than the advertised SHA-256 (corruption).
     func insertGame(title: String, bytes: Data, filename: String = "Test.sfc", servedBytes: Data? = nil) throws -> GameDetail {
-        let sha = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        let sha = SHA256.hash(data: bytes).hexString
         let stored = store.paths.games.appendingPathComponent(sha, isDirectory: true)
         try FileManager.default.createDirectory(at: stored, withIntermediateDirectories: true)
         try (servedBytes ?? bytes).write(to: stored.appendingPathComponent(filename))

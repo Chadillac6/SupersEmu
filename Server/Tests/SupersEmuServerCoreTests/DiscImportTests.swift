@@ -43,7 +43,7 @@ enum DiscFixtures {
         return Data((lines.joined(separator: "\r\n") + "\r\n").utf8)
     }
 
-    static func sha(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    static func sha(_ data: Data) -> String { SHA256.hash(data: data).hexString }
 }
 
 extension LibraryTests {
@@ -395,7 +395,7 @@ extension LibraryTests {
     func testBIOSRecognizedByHashAndServed() async throws {
         let bytes = Data((0..<2048).map { UInt8(truncatingIfNeeded: $0 * 13) })
         let table = [KnownBIOS(filename: "scph5501.bin", system: .psx, region: "US", required: true,
-                               md5: Insecure.MD5.hash(data: bytes).map { String(format: "%02x", $0) }.joined(), size: 2048),
+                               md5: Insecure.MD5.hash(data: bytes).hexString, size: 2048),
                      KnownBIOS(filename: "bios_CD_U.bin", system: .segacd, region: "US", required: true, md5: "00", size: 4096)]
         try write(bytes, "Downloads/some random name.bin")
         try write(Data(count: 99), "Downloads/bios_cd_u.bin")

@@ -58,7 +58,7 @@ final class ServerSession {
             let filteredURLs = ServerAddressLearning.withoutLegacyOverlayAddresses(loaded.urls)
             if filteredURLs != loaded.urls {
                 loaded.urls = filteredURLs
-                try? store.save(loaded)
+                Self.persist(loaded, to: store)
                 saved = loaded
             }
         }
@@ -110,7 +110,7 @@ final class ServerSession {
     func pair(_ payload: PairingPayload, confirmedCertificateSHA256: String? = nil) async throws {
         let request = PairRequest(code: payload.code, deviceName: Self.deviceName, platform: Self.platform)
         // Device tokens are bearer secrets: only pair over HTTPS (plain HTTP is allowed for loopback dev servers).
-        let urls = payload.urls.filter { $0.scheme == "https" || ($0.scheme == "http" && Self.isLoopback($0)) }
+        let urls = payload.urls.filter { $0.scheme == "https" || ($0.scheme == "http" && LoopbackHost.matches($0)) }
         let candidates = urls + [payload.publicURL].compactMap { $0 }.filter { !urls.contains($0) }
         guard !candidates.isEmpty else { throw PairingError.insecureAddress }
         let pin = payload.certificateSHA256 ?? confirmedCertificateSHA256
@@ -129,18 +129,7 @@ final class ServerSession {
                 let credential = ServerCredential(
                     serverName: response.serverName, urls: urls, publicURL: payload.publicURL, certificateSHA256: pin,
                     token: response.token, deviceID: response.deviceID, user: response.user)
-                try store.save(credential)
-                generation += 1
-                refreshTask?.cancel()
-                refreshTask = nil
-                urlSession = nil
-                self.credential = credential
-                libraryRevision = nil
-                activeURL = url
-                self.trust = nil
-                monitor.paired()
-                publish()
-                await refresh()
+                try await commitPairing(credential, at: url)
                 return
             } catch let error as APIClientError {
                 throw error
@@ -183,6 +172,11 @@ final class ServerSession {
         let credential = ServerCredential(serverName: response.serverName, urls: publicURL == nil ? [url] : [],
                                           publicURL: publicURL, certificateSHA256: certificateSHA256, token: response.token,
                                           deviceID: response.deviceID, user: response.user)
+        try await commitPairing(credential, at: url)
+    }
+
+    /// Saves a newly paired credential and switches this session to it, dropping the previous connection's state.
+    private func commitPairing(_ credential: ServerCredential, at url: URL) async throws {
         try store.save(credential)
         generation += 1
         refreshTask?.cancel()
@@ -341,10 +335,6 @@ final class ServerSession {
         }
     }
 
-    static func isLoopback(_ url: URL) -> Bool {
-        ["127.0.0.1", "localhost", "::1"].contains(url.host?.lowercased() ?? "")
-    }
-
     func signOut() {
         // Queued saves belong to this account; never let the next pairing upload them.
         Task { await SaveSync.shared.engine.reset() }
@@ -425,7 +415,7 @@ final class ServerSession {
               url.host?.lowercased() != currentPublicHost else { return }
         var updated = credential
         updated.publicURL = publicURL
-        try? store.save(updated)
+        Self.persist(updated, to: store)
         self.credential = updated
         urlSession = nil
         trust = nil
@@ -438,8 +428,18 @@ final class ServerSession {
               url != credential.publicURL,
               let urls = ServerAddressLearning.merged(current: credential.urls, advertised: advertised, reachedAt: url) else { return }
         credential.urls = urls
-        try? store.save(credential)
+        Self.persist(credential, to: store)
         self.credential = credential
+    }
+
+    /// Best-effort save of a learned address change: the session keeps using it either way, but a failed write is
+    /// logged because the old addresses come back on the next launch.
+    private static func persist(_ credential: ServerCredential, to store: CredentialStore) {
+        do {
+            try store.save(credential)
+        } catch {
+            AppLog.connection.error("Couldn't save the server credential: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private struct Snapshot: Codable {

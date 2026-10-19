@@ -1,11 +1,17 @@
 import Foundation
 import SupersEmuKit
 
+/// The only hosts a device token may be sent to over plain HTTP (local dev servers); everything else needs HTTPS.
+enum LoopbackHost {
+    static func matches(_ url: URL) -> Bool {
+        ["127.0.0.1", "localhost", "::1"].contains(url.host?.lowercased() ?? "")
+    }
+}
+
 enum LaunchEnvironment {
     static func isAllowedLaunchURL(_ url: URL) -> Bool {
         let scheme = url.scheme?.lowercased()
-        return scheme == "https" ||
-            (scheme == "http" && ["127.0.0.1", "localhost", "::1"].contains(url.host?.lowercased() ?? ""))
+        return scheme == "https" || (scheme == "http" && LoopbackHost.matches(url))
     }
 }
 

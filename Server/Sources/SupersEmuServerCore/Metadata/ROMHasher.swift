@@ -67,8 +67,8 @@ enum ROMHasher {
         }
 
         func finish() -> ROMHashes {
-            ROMHashes(crc: String(format: "%08X", UInt32(truncatingIfNeeded: crc)), md5: md5.finalize().hex.uppercased(),
-                      sha1: sha1.finalize().hex.uppercased(), size: size)
+            ROMHashes(crc: String(format: "%08X", UInt32(truncatingIfNeeded: crc)), md5: md5.finalize().hexString.uppercased(),
+                      sha1: sha1.finalize().hexString.uppercased(), size: size)
         }
     }
 

@@ -414,7 +414,11 @@ struct GameDetailView: View {
                     }
                 case .failed(let message):
                     Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    downloadButton(title: "Retry Download")
+                    if downloads.isDownloaded(item.id) {
+                        removeDownloadButton
+                    } else {
+                        downloadButton(title: "Retry Download")
+                    }
                 case nil:
                     if downloads.isDownloaded(item.id) {
                         if playableGame == nil {
@@ -422,10 +426,7 @@ struct GameDetailView: View {
                                 .foregroundStyle(.secondary)
                                 .accessibilityIdentifier("unsupported-system")
                         }
-                        Button(role: .destructive) { downloads.remove(item.id) } label: {
-                            Label("Remove Download", systemImage: "trash")
-                        }
-                        .accessibilityIdentifier("remove-download")
+                        removeDownloadButton
                     } else if item.playable != nil {
                         Label("On this device", systemImage: "internaldrive").foregroundStyle(.secondary)
                     } else if server.isOnline {
@@ -445,6 +446,13 @@ struct GameDetailView: View {
 
     private var playableGame: Game? {
         item.source == .server ? downloads.playableGame(item.id) ?? item.playable : item.playable
+    }
+
+    private var removeDownloadButton: some View {
+        Button(role: .destructive) { downloads.remove(item.id) } label: {
+            Label("Remove Download", systemImage: "trash")
+        }
+        .accessibilityIdentifier("remove-download")
     }
 
     private func downloadButton(title: String) -> some View {

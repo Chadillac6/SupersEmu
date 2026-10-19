@@ -191,7 +191,7 @@ public final class PairingService: Sendable {
     }
 
     static func hash(_ code: String, salt: String) -> String {
-        SHA256.hash(data: Data("\(salt):\(code)".utf8)).map { String(format: "%02x", $0) }.joined()
+        Hashing.sha256Hex(Data("\(salt):\(code)".utf8))
     }
 
     func pairApprovedDevice(userID: String?, request: PendingPairRequest, caller: AuthContext) throws -> PairResponse {
@@ -331,7 +331,7 @@ actor PairRequestService {
         // Every failed claim looks the same (status, message, rate-limit cost), so a probe learns nothing.
         guard let id, var entry = entries[id], entry.exposure == exposure,
               let secretBytes = Self.decodeHex(claimSecret),
-              Self.constantTimeEquals(entry.claimHash, SHA256.hash(data: secretBytes).map { String(format: "%02x", $0) }.joined())
+              Self.constantTimeEquals(entry.claimHash, Hashing.sha256Hex(secretBytes))
         else {
             try recordClaimAttempt(remoteAddress: remoteAddress, cost: 5, at: claimedAt)
             throw HTTPError(.notFound, message: "No such pairing request")

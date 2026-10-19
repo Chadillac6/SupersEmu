@@ -111,7 +111,12 @@ final class DownloadCenter {
     func remove(_ gameID: String) {
         if let task = tasks.removeValue(forKey: gameID) { retire(task, for: gameID) }
         generations[gameID, default: 0] += 1
-        try? cache.remove(gameID)
+        do {
+            try cache.remove(gameID)
+        } catch {
+            states[gameID] = .failed("Couldn't remove the download: \(error.localizedDescription)")
+            return
+        }
         states[gameID] = nil
         setDownloaded(gameID, nil)
     }

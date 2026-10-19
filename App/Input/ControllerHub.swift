@@ -1,5 +1,6 @@
 import GameController
 import Observation
+import SupersEmuKit
 
 extension InputMappingStore {
     static let shared = InputMappingStore(url: AppPaths.root.appendingPathComponent("Controls.json"))
@@ -90,7 +91,7 @@ final class ControllerHub {
         controllers.indices.contains(port) ? controllers[port] : nil
     }
 
-    func state(of controller: Controller, console: String?) -> PadState {
+    func state(of controller: Controller, console: SystemID?) -> PadState {
         switch controller.kind {
         case .gameController:
             guard let pad = gcByID[controller.id]?.extendedGamepad else { return PadState() }
@@ -106,7 +107,7 @@ final class ControllerHub {
     }
 
     #if os(macOS)
-    func preset(for device: HIDGamepad, console: String?) -> HIDPreset {
+    func preset(for device: HIDGamepad, console: SystemID?) -> HIDPreset {
         HIDPreset.match(vendorID: device.vendorID, productID: device.productID, productName: device.productName,
                         userChoice: InputMappingStore.shared.mappings.hidPresets[device.controllerType], console: console)
     }

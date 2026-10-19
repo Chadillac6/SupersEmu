@@ -2,6 +2,7 @@
 import Observation
 import SwiftUI
 import UIKit
+import SupersEmuKit
 
 @MainActor
 @Observable
@@ -67,23 +68,23 @@ struct TouchControls: View {
 
     @ViewBuilder
     private var landscapeLayout: some View {
-        switch input.layout.system {
-        case "n64": legacyN64
-        case "genesis", "segacd", "sega32x": legacyGenesis
-        case "psx": legacyPSX
-        case "gb", "gbc", "gba": legacyHandheld
-        default: legacySNES
+        switch input.layout.system.controlFamily {
+        case .n64: legacyN64
+        case .sega: legacyGenesis
+        case .psx: legacyPSX
+        case .handheld: legacyHandheld
+        case .snes: legacySNES
         }
     }
 
     @ViewBuilder
     private func portraitLayout(scale: CGFloat) -> some View {
-        switch input.layout.system {
-        case "n64": n64Portrait(scale: scale)
-        case "genesis", "segacd", "sega32x": genesisPortrait(scale: scale)
-        case "psx": psxPortrait(scale: scale)
-        case "gb", "gbc", "gba": handheldPortrait(scale: scale)
-        default: snesPortrait(scale: scale)
+        switch input.layout.system.controlFamily {
+        case .n64: n64Portrait(scale: scale)
+        case .sega: genesisPortrait(scale: scale)
+        case .psx: psxPortrait(scale: scale)
+        case .handheld: handheldPortrait(scale: scale)
+        case .snes: snesPortrait(scale: scale)
         }
     }
 
@@ -105,7 +106,7 @@ struct TouchControls: View {
             legacyDpad()
             Spacer(minLength: 0)
             VStack(spacing: 10) {
-                if input.layout.system == "gba" { HStack(spacing: 6) { pill("L"); pill("R") } }
+                if input.layout.system == .gba { HStack(spacing: 6) { pill("L"); pill("R") } }
                 HStack(spacing: 6) { pill("Select"); pill("Start") }
             }
             Spacer(minLength: 0)
@@ -184,7 +185,7 @@ struct TouchControls: View {
             portraitDpad(scale: scale)
             Spacer(minLength: 8 * scale)
             VStack(spacing: 6 * scale) {
-                if input.layout.system == "gba" {
+                if input.layout.system == .gba {
                     pill("L", width: 64 * scale, height: 32 * scale)
                     pill("R", width: 64 * scale, height: 32 * scale)
                 }

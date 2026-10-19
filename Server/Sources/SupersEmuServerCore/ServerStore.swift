@@ -203,6 +203,6 @@ public final class ServerStore: @unchecked Sendable {
     }
 
     public static func hash(_ token: String) -> String {
-        SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
+        Hashing.sha256Hex(Data(token.utf8))
     }
 }

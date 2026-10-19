@@ -3,13 +3,7 @@ set -euo pipefail
 # shellcheck source=scripts/release-common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/release-common.sh"
 
-ossl="$(command -v openssl || true)"
-if command -v brew >/dev/null 2>&1; then
-  brew_prefix=$(brew --prefix openssl@3 2>/dev/null || true)
-  if [ -n "$brew_prefix" ] && [ -x "$brew_prefix/bin/openssl" ]; then
-    ossl="$brew_prefix/bin/openssl"
-  fi
-fi
+ossl="$(release_find_openssl || true)"
 if [ -z "$ossl" ] || ! command -v security >/dev/null 2>&1; then
   echo "FAIL: OpenSSL and macOS security are required" >&2
   exit 2

@@ -444,7 +444,7 @@ public final class LibraryImporter: @unchecked Sendable {
             if header.count < SystemDetector.headerLength { header.append(chunk.prefix(SystemDetector.headerLength - header.count)) }
             hasher.update(data: chunk)
         }
-        return (hasher.finalize().hex, header)
+        return (hasher.finalize().hexString, header)
     }
 
     /// Keeps the original name but never lets it escape `games/<id>/`.
@@ -461,8 +461,4 @@ public final class LibraryImporter: @unchecked Sendable {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
-}
-
-extension Sequence where Element == UInt8 {
-    var hex: String { map { String(format: "%02x", $0) }.joined() }
 }

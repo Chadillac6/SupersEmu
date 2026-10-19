@@ -1,4 +1,5 @@
 import SwiftUI
+import SupersEmuKit
 #if os(macOS)
 import AppKit
 #endif
@@ -6,14 +7,14 @@ import AppKit
 /// Remapping: pick a console control, press the physical input for it, or reset to defaults.
 /// From Settings every console is editable; from the in-game menu it's fixed to the running game.
 struct ControlsView: View {
-    var fixedSystem: String?
+    var fixedSystem: SystemID?
     var gameID: String?
     var gameTitle: String?
     var game: Game?
 
     @State private var store = InputMappingStore.shared
     @State private var hub = ControllerHub.shared
-    @State private var system = "snes"
+    @State private var system = SystemID.snes
     @State private var controllerType = ControllerType.keyboard
     @State private var thisGameOnly = false
     @State private var capturing: String?
@@ -67,7 +68,7 @@ struct ControlsView: View {
                 #endif
                 if fixedSystem == nil {
                     Picker("Console", selection: $system) {
-                        ForEach(ConsoleLayout.systems, id: \.self) { Text(ConsoleLayout.forSystem($0).title).tag($0) }
+                        ForEach(ConsoleLayout.systems, id: \.self) { Text(ConsoleLayout.title(for: $0)).tag($0) }
                     }
                     .accessibilityIdentifier("controls-console")
                 }
@@ -146,7 +147,7 @@ struct ControlsView: View {
     /// Which layer the binding comes from, when it isn't the console default.
     private func origin(of control: ConsoleControl) -> String? {
         if let gameID, store.mappings.gameOverrides[gameID]?[control.id] != nil { return "This game" }
-        if store.mappings.controllerOverrides[controllerType]?[system]?[control.id] != nil { return "Custom" }
+        if store.mappings.controllerOverrides[controllerType]?[system.rawValue]?[control.id] != nil { return "Custom" }
         return nil
     }
 

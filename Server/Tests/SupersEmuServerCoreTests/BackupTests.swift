@@ -145,8 +145,8 @@ final class BackupTests: XCTestCase {
         let keep = await store.backups.config().keep
         XCTAssertEqual(keep, 7)
 
-        let restores = LockedCounter()
-        await store.backups.setRestoreHandler { _ in restores.increment() }
+        let restores = LockedValue(0)
+        await store.backups.setRestoreHandler { _ in restores.withLock { $0 += 1 } }
         do {
             _ = try await store.backups.requestRestore(id: backup.id) { _ in throw AuditDown() }
             XCTFail("an unaudited restore must not be queued")
@@ -391,11 +391,4 @@ final class BackupTests: XCTestCase {
         try reopened.close()
         store = nil
     }
-}
-
-private final class LockedCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var count = 0
-    var value: Int { lock.withLock { count } }
-    func increment() { lock.withLock { count += 1 } }
 }

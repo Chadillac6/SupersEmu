@@ -2,6 +2,7 @@ import CoreGraphics
 import CryptoKit
 import Foundation
 import ImageIO
+import SupersEmuKit
 import XCTest
 
 final class SaveSlotStoreTests: XCTestCase {
@@ -116,7 +117,7 @@ final class SaveSlotStoreTests: XCTestCase {
         let date = Date(timeIntervalSince1970: 1_700_000_000)
         let stateData = Data("legacy metadata".utf8)
         try stateData.write(to: store.stateURL(1))
-        let stateSHA256 = SHA256.hash(data: stateData).map { String(format: "%02x", $0) }.joined()
+        let stateSHA256 = SHA256.hash(data: stateData).hexString
         let metadata = try JSONSerialization.data(withJSONObject: [
             "savedAt": date.timeIntervalSinceReferenceDate,
             "stateSHA256": stateSHA256

@@ -224,13 +224,7 @@ public final class GameDownloader: Sendable {
         let part = cache.partialURL(gameID: gameID, file: file)
         if !FileManager.default.fileExists(atPath: part.path) { FileManager.default.createFile(atPath: part.path, contents: nil) }
         var hasher = SHA256()
-        var offset: Int64 = 0
-        let reader = try FileHandle(forReadingFrom: part)
-        while let chunk = try reader.read(upToCount: 1 << 20), !chunk.isEmpty {
-            hasher.update(data: chunk)
-            offset += Int64(chunk.count)
-        }
-        try reader.close()
+        var offset = try Hashing.update(&hasher, withContentsOf: part)
         if offset > file.size {
             try Data().write(to: part)
             hasher = SHA256()
@@ -244,7 +238,7 @@ public final class GameDownloader: Sendable {
             hasher = try await delegate.stream(request, session: session, to: part, offset: offset, hasher: hasher, progress: progress)
         }
 
-        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        let digest = hasher.finalize().hexString
         guard digest == file.id.lowercased() else {
             try? FileManager.default.removeItem(at: part)
             throw DownloadError.checksumMismatch(filename: file.filename)
@@ -256,11 +250,7 @@ public final class GameDownloader: Sendable {
     }
 
     static func sha256(of url: URL) throws -> String {
-        var hasher = SHA256()
-        let reader = try FileHandle(forReadingFrom: url)
-        defer { try? reader.close() }
-        while let chunk = try reader.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        try Hashing.sha256Hex(ofFileAt: url)
     }
 }
 
