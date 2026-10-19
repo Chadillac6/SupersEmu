@@ -59,4 +59,14 @@ enum LibraryMigrations {
             }
         }
     }
+
+    /// The Review Needed kind the importer recorded. NULL on older rows, which fall back to `LibraryImporter.legacyIssueKind`.
+    static func registerIssueKinds(_ migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v13_library_issue_kinds") { db in
+            try db.execute(sql: """
+                ALTER TABLE import_issues ADD COLUMN kind TEXT;
+                ALTER TABLE games ADD COLUMN review_kind TEXT;
+                """)
+        }
+    }
 }

@@ -61,22 +61,21 @@ extension LibraryImporter {
                     VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, ?)
                     """, arguments: [sha, bios.filename, originalFilename, bios.system.rawValue, bios.region, bios.required, size, Date()])
             }
-            return .unsupported("\(label): named like the \(bios.system.rawValue) \(bios.region) BIOS (\(bios.filename)) but its hash isn't a known good dump")
+            return .unsupported("\(label): named like the \(bios.system.rawValue) \(bios.region) BIOS (\(bios.filename)) but its hash isn't a known good dump",
+                                .wrongBIOS)
         case .known(let bios):
             let info = BIOSFileInfo(id: sha, filename: bios.filename, system: bios.system, region: bios.region, required: bios.required)
             let exists = try store.db.read { try Bool.fetchOne($0, sql: "SELECT 1 FROM bios_files WHERE id = ? AND verified = 1", arguments: [sha]) } ?? false
             if exists { return .duplicate }
-            let directory = store.paths.bios.appendingPathComponent(sha, isDirectory: true)
-            let destination = directory.appendingPathComponent(bios.filename)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
-            try FileManager.default.moveItem(at: staged, to: destination)
-            try store.db.write { db in
-                try db.execute(sql: """
-                    INSERT OR REPLACE INTO bios_files (id, filename, original_filename, system, region, required, verified, size, stored_path, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-                    """, arguments: [sha, bios.filename, originalFilename, bios.system.rawValue, bios.region, bios.required, size,
-                                     "bios/\(sha)/\(bios.filename)", Date()])
+            let destination = store.paths.bios.appendingPathComponent(sha, isDirectory: true).appendingPathComponent(bios.filename)
+            try place(staged, at: destination) {
+                try store.db.write { db in
+                    try db.execute(sql: """
+                        INSERT OR REPLACE INTO bios_files (id, filename, original_filename, system, region, required, verified, size, stored_path, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                        """, arguments: [sha, bios.filename, originalFilename, bios.system.rawValue, bios.region, bios.required, size,
+                                         "bios/\(sha)/\(bios.filename)", Date()])
+                }
             }
             return .bios(info)
         }

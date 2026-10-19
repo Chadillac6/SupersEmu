@@ -21,7 +21,8 @@ public enum ServerInfo {
 public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
                         exposure: RouterExposure = .local, certificateSHA256: String? = nil,
                         publicURL: URL? = nil, pairing: PairingServices? = nil,
-                        remoteAccess: RemoteAccessSource = .storedFile) -> Router<SERequestContext> {
+                        remoteAccess: RemoteAccessSource = .storedFile,
+                        maxUploadFileSize: Int64 = LibraryImporter.defaultMaxUploadFileSize) -> Router<SERequestContext> {
     let router = Router(context: SERequestContext.self)
     router.add(middleware: LogRequestsMiddleware(.info))
     if exposure == .publicInternet {
@@ -72,15 +73,16 @@ public func buildRouter(store: ServerStore, metadata: MetadataService? = nil,
     registerCheatRoutes(authed, store: store)
     if exposure == .local {
         registerAdminLibraryRoutes(authed, store: store, metadata: metadata)
-        registerAdminLibraryManagementRoutes(authed, store: store, metadata: metadata)
+        registerAdminLibraryManagementRoutes(authed, store: store, metadata: metadata, maxUploadFileSize: maxUploadFileSize)
         registerAdminUserRoutes(authed, store: store, remoteAccess: remoteAccess)
         registerBackupRoutes(authed, store: store)
     }
     return router
 }
 
-public func buildApplication(store: ServerStore, metadata: MetadataService? = nil, configuration: ApplicationConfiguration) -> some ApplicationProtocol {
-    Application(router: buildRouter(store: store, metadata: metadata), configuration: configuration)
+public func buildApplication(store: ServerStore, metadata: MetadataService? = nil, configuration: ApplicationConfiguration,
+                             maxUploadFileSize: Int64 = LibraryImporter.defaultMaxUploadFileSize) -> some ApplicationProtocol {
+    Application(router: buildRouter(store: store, metadata: metadata, maxUploadFileSize: maxUploadFileSize), configuration: configuration)
 }
 
 public enum LibraryQueries {

@@ -3,7 +3,8 @@ import Hummingbird
 import SupersEmuKit
 
 /// Server Mode library management: uploads from any paired admin Mac, Review Needed fixes, and storage.
-func registerAdminLibraryManagementRoutes(_ group: RouterGroup<SERequestContext>, store: ServerStore, metadata: MetadataService? = nil) {
+func registerAdminLibraryManagementRoutes(_ group: RouterGroup<SERequestContext>, store: ServerStore, metadata: MetadataService? = nil,
+                                          maxUploadFileSize: Int64 = LibraryImporter.defaultMaxUploadFileSize) {
     let importer = LibraryImporter(store: store)
 
     group.post("admin/library/upload") { request, context -> Response in
@@ -21,9 +22,10 @@ func registerAdminLibraryManagementRoutes(_ group: RouterGroup<SERequestContext>
         try uploadGate { try store.paths.storage.beginUpload(batch: batch, owner: auth.credentialID, stagedOnDisk: staged) }
         defer { store.paths.storage.endUpload(batch: batch) }
         if let length = request.headers[.contentLength].flatMap({ Int64($0) }) {
-            try checkUploadSize(length, store: store)
+            try checkUploadSize(length, limit: maxUploadFileSize, store: store)
         }
-        let size = try await receiveUpload(request.body, to: destination, staging: importer.uploadStagingRoot, store: store)
+        let size = try await receiveUpload(request.body, to: destination, staging: importer.uploadStagingRoot, limit: maxUploadFileSize,
+                                           store: store)
         return try LibraryHTTP.json(UploadResponse(path: parts.joined(separator: "/"), size: size))
     }
 
@@ -109,9 +111,9 @@ private func uploadGate(_ body: () throws -> Void) throws {
     }
 }
 
-private func checkUploadSize(_ size: Int64, store: ServerStore) throws {
-    guard size <= LibraryImporter.maxUploadFileSize else {
-        throw HTTPError(.contentTooLarge, message: "Files over \(LibraryImporter.byteString(LibraryImporter.maxUploadFileSize)) can't be uploaded")
+private func checkUploadSize(_ size: Int64, limit: Int64, store: ServerStore) throws {
+    guard size <= limit else {
+        throw HTTPError(.contentTooLarge, message: "Files over \(LibraryImporter.byteString(limit)) can't be uploaded")
     }
     if let free = ServerStore.freeBytes(at: store.paths.libraryRoot), size + LibraryImporter.uploadFreeSpaceMargin > free {
         throw HTTPError(.init(code: 507, reasonPhrase: "Insufficient Storage"), message: "Not enough free space on the server")
@@ -119,7 +121,7 @@ private func checkUploadSize(_ size: Int64, store: ServerStore) throws {
 }
 
 /// Streams into a hidden partial file and renames it into the batch only once complete.
-private func receiveUpload(_ body: RequestBody, to destination: URL, staging: URL, store: ServerStore) async throws -> Int64 {
+private func receiveUpload(_ body: RequestBody, to destination: URL, staging: URL, limit: Int64, store: ServerStore) async throws -> Int64 {
     let fm = FileManager.default
     try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
     guard !fm.fileExists(atPath: destination.path) else { throw HTTPError(.conflict, message: "That file was already uploaded in this batch") }
@@ -131,7 +133,7 @@ private func receiveUpload(_ body: RequestBody, to destination: URL, staging: UR
         defer { try? handle.close() }
         for try await buffer in body {
             size += Int64(buffer.readableBytes)
-            try checkUploadSize(size, store: store)
+            try checkUploadSize(size, limit: limit, store: store)
             try handle.write(contentsOf: buffer.readableBytesView)
         }
         try handle.close()

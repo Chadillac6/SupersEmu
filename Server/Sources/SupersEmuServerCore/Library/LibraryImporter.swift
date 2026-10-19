@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import GRDB
+import Logging
 import SupersEmuKit
 
 /// Imports game files into content-addressed storage at `games/<gameID>/<filename>`, and BIOS files into
@@ -13,6 +14,7 @@ public final class LibraryImporter: @unchecked Sendable {
     let store: ServerStore
     let knownBIOS: [KnownBIOS]
     private static let queue = DispatchQueue(label: "supersemu.library.import")
+    private static let logger = Logger(label: "supersemu-library")
 
     public init(store: ServerStore, knownBIOS: [KnownBIOS] = KnownBIOS.all) {
         self.store = store
@@ -25,8 +27,8 @@ public final class LibraryImporter: @unchecked Sendable {
     enum Outcome {
         case imported(GameSummary)
         case duplicate
-        case review(ReviewItem)
-        case unsupported(String)
+        case review(ReviewItem, LibraryIssue.Kind)
+        case unsupported(String, LibraryIssue.Kind)
         case ignored
         case bios(BIOSFileInfo)
 
@@ -48,7 +50,7 @@ public final class LibraryImporter: @unchecked Sendable {
             for path in paths {
                 let expanded = (path as NSString).expandingTildeInPath
                 guard expanded.hasPrefix("/") else {
-                    batch.record(.unsupported("\(path): path must be absolute (it is read on the server)"), origins: [])
+                    batch.record(.unsupported("\(path): path must be absolute (it is read on the server)", .other), origins: [])
                     continue
                 }
                 importer.gather(URL(fileURLWithPath: expanded).standardizedFileURL, label: path, into: batch)
@@ -165,7 +167,7 @@ public final class LibraryImporter: @unchecked Sendable {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
-            batch.record(.unsupported("\(label): not found"), origins: [url])
+            batch.record(.unsupported("\(label): not found", .other), origins: [url])
             return
         }
         guard isDirectory.boolValue else { return addFile(url, into: batch) }
@@ -185,9 +187,9 @@ public final class LibraryImporter: @unchecked Sendable {
             return
         }
         let archive: ZipArchive
-        do { archive = try ZipArchive(url: url) } catch { return batch.record(.unsupported("\(filename): \(error)"), origins: [url]) }
+        do { archive = try ZipArchive(url: url) } catch { return batch.record(.unsupported("\(filename): \(error)", .readFailure(error)), origins: [url]) }
         let entries = archive.entries.filter { !$0.isDirectory }
-        guard !entries.isEmpty else { return batch.record(.unsupported("\(filename): empty archive"), origins: [url]) }
+        guard !entries.isEmpty else { return batch.record(.unsupported("\(filename): empty archive", .other), origins: [url]) }
         for entry in entries {
             if entry.path.hasPrefix("__MACOSX/") || SystemDetector.isIgnorable(entry.filename) {
                 batch.record(.ignored, origins: [url])
@@ -219,7 +221,7 @@ public final class LibraryImporter: @unchecked Sendable {
         for cue in batch.candidates where cue.ext == "cue" {
             consumed.insert(cue.key)
             guard let data = try? readSmall(cue), let sheet = CueSheet(data: data) else {
-                batch.record(.unsupported("\(cue.label): not a readable cue sheet"), origins: [cue.origin])
+                batch.record(.unsupported("\(cue.label): not a readable cue sheet", .other), origins: [cue.origin])
                 continue
             }
             var tracks: [Candidate] = [], missing: [String] = [], seen = Set<String>()
@@ -245,7 +247,7 @@ public final class LibraryImporter: @unchecked Sendable {
                     continue
                 }
                 consumed.insert(track.key)
-                batch.record(.unsupported("\(track.label): track of unreadable cue sheet \(cue.filename)"), origins: [track.origin])
+                batch.record(.unsupported("\(track.label): track of unreadable cue sheet \(cue.filename)", .other), origins: [track.origin])
             }
         }
         for disc in batch.candidates where ["chd", "iso"].contains(disc.ext) && !consumed.contains(disc.key) {
@@ -255,7 +257,7 @@ public final class LibraryImporter: @unchecked Sendable {
         for m3u in batch.candidates where m3u.ext == "m3u" {
             consumed.insert(m3u.key)
             guard let data = try? readSmall(m3u) else {
-                batch.record(.unsupported("\(m3u.label): not a readable playlist"), origins: [m3u.origin])
+                batch.record(.unsupported("\(m3u.label): not a readable playlist", .other), origins: [m3u.origin])
                 continue
             }
             let lines = String(decoding: data, as: UTF8.self).components(separatedBy: .newlines)
@@ -308,9 +310,9 @@ public final class LibraryImporter: @unchecked Sendable {
             case .zip(let archive, let entry): try archive.extract(entry, to: staged)
             }
         } catch let error as ZipArchive.ZipError {
-            return .unsupported("\(candidate.label): \(error)")
+            return .unsupported("\(candidate.label): \(error)", .readFailure(error))
         } catch {
-            return .unsupported("\(candidate.label): could not read (\(error.localizedDescription))")
+            return .unsupported("\(candidate.label): could not read (\(error.localizedDescription))", .other)
         }
         return try ingest(staged: staged, filename: candidate.filename, label: candidate.label)
     }
@@ -324,76 +326,120 @@ public final class LibraryImporter: @unchecked Sendable {
         }
         let detection = SystemDetector.detect(filename: filename, header: header, size: size)
 
-        let system: SystemID?, reviewReason: String?
+        let system: SystemID?, review: ImportReason?
         switch detection {
         case .ignored: return .ignored
-        case .unsupported(let reason): return .unsupported("\(label): \(reason)")
-        case .system(let id): (system, reviewReason) = (id, nil)
+        case .unsupported(let reason): return .unsupported("\(label): \(reason.message)", reason.kind)
+        case .system(let id): (system, review) = (id, nil)
         case .needsReview(let reason):
-            guard size <= Self.maxReviewFileSize else { return .unsupported("\(label): \(reason); too large to queue for review") }
-            (system, reviewReason) = (nil, reason)
+            guard size <= Self.maxReviewFileSize else {
+                return .unsupported("\(label): \(reason.message); too large to queue for review", reason.kind)
+            }
+            (system, review) = (nil, reason)
         }
 
         if let existing = try store.db.read({ db in
             try Row.fetchOne(db, sql: """
-                SELECT g.needs_review, g.review_reason, f.filename, f.stored_path FROM games g JOIN game_files f ON f.game_id = g.id WHERE g.id = ? LIMIT 1
+                SELECT g.needs_review, g.review_reason, g.review_kind, f.filename, f.stored_path FROM games g
+                JOIN game_files f ON f.game_id = g.id WHERE g.id = ? LIMIT 1
                 """, arguments: [sha])
         }) {
             if (existing["needs_review"] as Int) == 1 {
                 if let system { return try promoteFromReview(sha: sha, system: system, staged: staged, filename: filename, size: size, oldStoredPath: existing["stored_path"]) }
-                return .review(ReviewItem(id: sha, filename: existing["filename"], reason: existing["review_reason"] ?? "Needs review"))
+                let reason: String = existing["review_reason"] ?? "Needs review"
+                return .review(ReviewItem(id: sha, filename: existing["filename"], reason: reason),
+                               Self.storedIssueKind(existing["review_kind"], reason: reason))
             }
             return .duplicate
         }
 
         let storedName = Self.safeFilename(filename)
-        let directory = store.paths.games.appendingPathComponent(sha, isDirectory: true)
-        let destination = directory.appendingPathComponent(storedName)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
-        try FileManager.default.moveItem(at: staged, to: destination)
-
+        let destination = store.paths.games.appendingPathComponent(sha, isDirectory: true).appendingPathComponent(storedName)
         let title = TitleNormalizer.title(fromFilename: storedName)
         let now = Date()
-        try store.db.write { db in
-            try db.execute(sql: """
-                INSERT INTO games (id, title, system, needs_review, review_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, arguments: [sha, title, system?.rawValue ?? "unknown", reviewReason == nil ? 0 : 1, reviewReason, now, now])
-            try db.execute(sql: """
-                INSERT INTO game_files (id, game_id, filename, role, size, stored_path) VALUES (?, ?, ?, ?, ?, ?)
-                """, arguments: [sha, sha, storedName, GameFileRole.rom.rawValue, size, "games/\(sha)/\(storedName)"])
+        try place(staged, at: destination) {
+            try store.db.write { db in
+                try db.execute(sql: """
+                    INSERT INTO games (id, title, system, needs_review, review_reason, review_kind, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, arguments: [sha, title, system?.rawValue ?? "unknown", review == nil ? 0 : 1, review?.message, review?.kind.rawValue,
+                                     now, now])
+                try db.execute(sql: """
+                    INSERT INTO game_files (id, game_id, filename, role, size, stored_path) VALUES (?, ?, ?, ?, ?, ?)
+                    """, arguments: [sha, sha, storedName, GameFileRole.rom.rawValue, size, Self.storedPath(gameID: sha, name: storedName)])
+            }
         }
-        if let reviewReason { return .review(ReviewItem(id: sha, filename: storedName, reason: reviewReason)) }
+        if let review { return .review(ReviewItem(id: sha, filename: storedName, reason: review.message), review.kind) }
         return .imported(GameSummary(id: sha, title: title, system: system!, year: nil, genre: nil, coverPath: nil, totalSize: size))
     }
 
     /// Same bytes seen again under a name that detects cleanly: take the queued game out of review and store it under the new name.
     func promoteFromReview(sha: String, system: SystemID, staged: URL, filename: String, size: Int64, oldStoredPath: String) throws -> Outcome {
         let storedName = Self.safeFilename(filename)
-        let newStoredPath = "games/\(sha)/\(storedName)"
-        let destination = store.paths.libraryFile(newStoredPath)
+        let newStoredPath = Self.storedPath(gameID: sha, name: storedName)
         let moved = newStoredPath != oldStoredPath
-        if moved {
-            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
-            try FileManager.default.moveItem(at: staged, to: destination)
-        }
         let title = TitleNormalizer.title(fromFilename: storedName)
-        do {
-            try store.db.write { db in
-                try db.execute(sql: "UPDATE games SET title = ?, system = ?, needs_review = 0, review_reason = NULL, updated_at = ? WHERE id = ?",
+        let record = {
+            try self.store.db.write { db in
+                try db.execute(sql: "UPDATE games SET title = ?, system = ?, needs_review = 0, review_reason = NULL, review_kind = NULL, updated_at = ? WHERE id = ?",
                                arguments: [title, system.rawValue, Date(), sha])
                 try db.execute(sql: "UPDATE game_files SET filename = ?, stored_path = ? WHERE game_id = ?",
                                arguments: [storedName, newStoredPath, sha])
             }
-        } catch {
-            if moved { try? FileManager.default.removeItem(at: destination) }
-            throw error
+        }
+        if moved {
+            try place(staged, at: store.paths.libraryFile(newStoredPath), record: record)
+        } else {
+            try record()
         }
         if moved, !oldStoredPath.split(separator: "/").contains("..") {
             try? FileManager.default.removeItem(at: store.paths.libraryFile(oldStoredPath))
         }
         return .imported(GameSummary(id: sha, title: title, system: system, year: nil, genre: nil, coverPath: nil, totalSize: size))
+    }
+
+    /// Where a game file is stored, relative to the library root (`game_files.stored_path`).
+    static func storedPath(gameID: String, name: String) -> String { "games/\(gameID)/\(name)" }
+
+    /// Moves (or copies) `source` to `destination` (a file or a whole game directory), then runs `record` to write its rows.
+    /// Anything already at `destination`, plus each of `replacing` (copies `record` deletes the rows for), is set aside in
+    /// import staging (which Move Library skips) and only deleted once `record` succeeds. If placing or `record` fails, the
+    /// placed item is removed and everything set aside is restored, so storage always matches the rows.
+    func place(_ source: URL, at destination: URL, replacing: [URL] = [], copying: Bool = false,
+               record: () throws -> Void) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var setAside: [(original: URL, aside: URL)] = []
+        func restore() {
+            for item in setAside.reversed() { try? fm.moveItem(at: item.aside, to: item.original) }
+        }
+        do {
+            for original in [destination] + replacing where fm.fileExists(atPath: original.path) {
+                try fm.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+                let aside = stagingDirectory.appendingPathComponent("replaced-" + UUID().uuidString)
+                try fm.moveItem(at: original, to: aside)
+                setAside.append((original, aside))
+            }
+        } catch {
+            restore()
+            throw error
+        }
+        do {
+            if copying { try fm.copyItem(at: source, to: destination) } else { try fm.moveItem(at: source, to: destination) }
+            try record()
+        } catch {
+            try? fm.removeItem(at: destination)
+            restore()
+            throw error
+        }
+        for item in setAside {
+            do {
+                try fm.removeItem(at: item.aside)
+            } catch {
+                // The rows already point at the new copy; the old one is only scratch space under import staging now.
+                Self.logger.warning("Couldn't delete replaced copy \(item.aside.lastPathComponent) in import staging: \(error)")
+            }
+        }
     }
 
     func moveToImported(_ source: URL, incoming: URL, day: String) throws {
@@ -421,8 +467,8 @@ public final class LibraryImporter: @unchecked Sendable {
             switch outcome {
             case .imported(let game): report.imported.append(game)
             case .duplicate: report.duplicates += 1
-            case .review(let item): if !report.needsReview.contains(item) { report.needsReview.append(item) }
-            case .unsupported(let reason): report.unsupported.append(reason)
+            case .review(let item, _): if !report.needsReview.contains(item) { report.needsReview.append(item) }
+            case .unsupported(let reason, _): report.unsupported.append(reason)
             case .ignored: break
             case .bios(let file): bios.append(file)
             }

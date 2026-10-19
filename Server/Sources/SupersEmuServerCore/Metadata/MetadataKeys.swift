@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import SupersEmuKit
 
 /// API keys for the optional providers. Environment variables win over `<data-dir>/metadata.keys` (JSON, mode 0600).
@@ -32,8 +33,11 @@ public struct MetadataKeys: Codable, Sendable, Equatable {
     /// Read on every pass, so `metadata set-key` takes effect without a restart.
     public static func load(paths: ServerPaths, environment: [String: String] = ProcessInfo.processInfo.environment) -> MetadataKeys {
         var keys = MetadataKeys()
-        if let data = try? Data(contentsOf: url(paths)), let stored = try? JSONDecoder().decode([String: String].self, from: data) {
-            keys.values = stored
+        do {
+            keys.values = try readStored(paths: paths)
+        } catch {
+            // The error isn't logged: a JSON error can quote the file's contents.
+            Logger(label: "supersemu-metadata").warning("metadata.keys is unreadable or not valid JSON; using environment keys only")
         }
         for name in Name.allCases {
             if let value = environment[name.environmentVariable]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
@@ -45,7 +49,7 @@ public struct MetadataKeys: Codable, Sendable, Equatable {
 
     /// Stores (or with nil, removes) one key in the file. Environment variables are left alone.
     public static func set(_ name: Name, to value: String?, paths: ServerPaths) throws {
-        var stored = (try? Data(contentsOf: url(paths))).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        var stored = try readStored(paths: paths)
         stored[name.rawValue] = value.flatMap { $0.isEmpty ? nil : $0 }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -59,6 +63,13 @@ public struct MetadataKeys: Codable, Sendable, Equatable {
             try? fm.removeItem(at: temp)
             throw CocoaError(.fileWriteUnknown)
         }
+    }
+
+    /// Only a missing file is an empty key set; an unreadable or corrupt one throws, so `set` never overwrites the other keys.
+    private static func readStored(paths: ServerPaths) throws -> [String: String] {
+        let file = url(paths)
+        guard FileManager.default.fileExists(atPath: file.path) else { return [:] }
+        return try JSONDecoder().decode([String: String].self, from: Data(contentsOf: file))
     }
 
     public var igdb: (clientID: String, secret: String)? {

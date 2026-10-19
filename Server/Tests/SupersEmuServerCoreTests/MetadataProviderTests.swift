@@ -529,6 +529,18 @@ final class MetadataProviderTests: XCTestCase {
         XCTAssertFalse(BackupManager.items(paths: paths, includeROMs: false).contains("metadata.keys"), "keys stay out of backups")
     }
 
+    func testCorruptKeysFileIsNeverOverwritten() throws {
+        let paths = store.paths
+        try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
+        let corrupt = Data("{\"steamgriddb\": \"file-key\", ".utf8)
+        try corrupt.write(to: MetadataKeys.url(paths))
+        XCTAssertThrowsError(try MetadataKeys.set(.igdbClientID, to: "id", paths: paths))
+        XCTAssertEqual(try Data(contentsOf: MetadataKeys.url(paths)), corrupt, "the other keys aren't replaced")
+        let env = ["SUPERSEMU_STEAMGRIDDB_KEY": "env-key"]
+        XCTAssertEqual(MetadataKeys.load(paths: paths, environment: env)[.steamGridDB], "env-key")
+        XCTAssertNil(MetadataKeys.load(paths: paths, environment: [:])[.steamGridDB])
+    }
+
     // MARK: Migration
 
     func testReviewsMigrationKeepsExistingMetadata() throws {

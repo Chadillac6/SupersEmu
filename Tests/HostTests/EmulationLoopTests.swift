@@ -29,13 +29,18 @@ final class EmulationLoopTests: XCTestCase {
         let loop = EmulationLoop(framesPerSecond: 60, runFrame: { _ in counter.increment() })
         defer { loop.stop() }
 
+        let started = Date()
         loop.start(running: true)
         Thread.sleep(forTimeInterval: 1.0)
         loop.setRunning(false)
+        let elapsed = Date().timeIntervalSince(started)
+        let frames = counter.read()
 
-        // Virtualized macOS (CI runners) wakes timers 50–200 ms late; exact rate is covered by FramePacerTests.
-        XCTAssertGreaterThanOrEqual(counter.read(), 5)
-        XCTAssertLessThanOrEqual(counter.read(), 66)
+        // Virtualized macOS (CI runners) wakes timers 50–200 ms late and the sleep itself can overshoot, so the cap
+        // follows the time that really passed. Spinning would still run thousands of frames; exact rate is covered
+        // by FramePacerTests.
+        XCTAssertGreaterThanOrEqual(frames, 5)
+        XCTAssertLessThanOrEqual(frames, Int((elapsed * 60).rounded(.up)) + 6)
     }
 
     func testPerformRunsOnSerializedEmulationThread() throws {
