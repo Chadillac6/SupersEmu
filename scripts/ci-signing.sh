@@ -29,7 +29,8 @@ printf '%s' "$MAC_CERT_P12_BASE64" | base64 -D > "$secrets_dir/certificate.p12" 
   { echo "error: MAC_CERT_P12_BASE64 is not valid base64" >&2; exit 2; }
 release_normalize_p12 "$secrets_dir/certificate.p12" "$secrets_dir/certificate-import.p12" || exit 2
 printf '%s' "$SPARKLE_PRIVATE_KEY" > "$secrets_dir/sparkle.key"
-printf '%s' "$ASC_KEY_P8_BASE64" | base64 -D > "$secrets_dir/notarization.p8"
+printf '%s' "$ASC_KEY_P8_BASE64" | base64 -D > "$secrets_dir/notarization.p8" ||
+  { echo "error: ASC_KEY_P8_BASE64 is not valid base64" >&2; exit 2; }
 release_normalize_p8 "$secrets_dir/notarization.p8" || exit 2
 password=$(openssl rand -hex 32)
 echo "::add-mask::$password"
@@ -40,9 +41,9 @@ security unlock-keychain -p "$password" "$keychain"
 security import "$secrets_dir/certificate-import.p12" -k "$keychain" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
 security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
-# Timestamp versions match the existing release convention; reruns get a fresh version.
+# Always a fresh timestamp from the shared helper, so reruns get a new build number.
 {
-  echo "SUPERSEMU_BUILD_NUMBER=$(date -u +%Y%m%d.%H%M%S)"
+  echo "SUPERSEMU_BUILD_NUMBER=$(SUPERSEMU_BUILD_NUMBER='' release_build_number)"
   echo "ASC_KEY_PATH=$secrets_dir/notarization.p8"
   echo "SPARKLE_ED_KEY_FILE=$secrets_dir/sparkle.key"
   echo "SPARKLE_GENERATE_APPCAST=build/release-mac/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast"

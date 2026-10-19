@@ -55,15 +55,44 @@ release_normalize_p8() {
   fi
 }
 
+# Prints the OpenSSL to use for .p12 work: Homebrew openssl@3 first, then the one on PATH.
+release_find_openssl() {
+  local brew_prefix=""
+  if command -v brew >/dev/null 2>&1; then
+    brew_prefix=$(brew --prefix openssl@3 2>/dev/null || true)
+    if [ -n "$brew_prefix" ] && [ -x "$brew_prefix/bin/openssl" ]; then
+      printf '%s\n' "$brew_prefix/bin/openssl"
+      return 0
+    fi
+  fi
+  command -v openssl
+}
+
+_release_p12_password_mismatch() {
+  echo "error: MAC_CERT_PASSWORD does not match the MAC_CERT_P12_BASE64 certificate; re-export the .p12 and update both secrets" >&2
+}
+
+_release_p12_invalid() {
+  echo "error: MAC_CERT_P12_BASE64 is not a valid .p12 (certificate + private key)" >&2
+}
+
+# Usage: _release_p12_read <ossl> <legacy yes|no> <pkcs12 args...>
+_release_p12_read() {
+  local ossl="$1"
+  local legacy="$2"
+  shift 2
+  if [ "$legacy" = "yes" ]; then
+    "$ossl" pkcs12 "$@" -passin env:MAC_CERT_PASSWORD -legacy
+  else
+    "$ossl" pkcs12 "$@" -passin env:MAC_CERT_PASSWORD
+  fi
+}
+
 _release_p12_decode_for_validation() {
   local ossl="$1"
   local input="$2"
   local legacy="$3"
-  if [ "$legacy" = "yes" ]; then
-    "$ossl" pkcs12 -in "$input" -nodes -passin env:MAC_CERT_PASSWORD -legacy
-  else
-    "$ossl" pkcs12 -in "$input" -nodes -passin env:MAC_CERT_PASSWORD
-  fi
+  _release_p12_read "$ossl" "$legacy" -in "$input" -nodes
 }
 
 _release_p12_export() {
@@ -71,19 +100,11 @@ _release_p12_export() {
   local input="$2"
   local output="$3"
   local legacy="$4"
-  if [ "$legacy" = "yes" ]; then
-    "$ossl" pkcs12 -export \
-      -in <("$ossl" pkcs12 -in "$input" -nokeys -passin env:MAC_CERT_PASSWORD -legacy 2>&3) \
-      -inkey <("$ossl" pkcs12 -in "$input" -nocerts -nodes -passin env:MAC_CERT_PASSWORD -legacy 2>&3) \
-      -out "$output" -passout env:MAC_CERT_PASSWORD \
-      -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 2>&3 >/dev/null
-  else
-    "$ossl" pkcs12 -export \
-      -in <("$ossl" pkcs12 -in "$input" -nokeys -passin env:MAC_CERT_PASSWORD 2>&3) \
-      -inkey <("$ossl" pkcs12 -in "$input" -nocerts -nodes -passin env:MAC_CERT_PASSWORD 2>&3) \
-      -out "$output" -passout env:MAC_CERT_PASSWORD \
-      -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 2>&3 >/dev/null
-  fi
+  "$ossl" pkcs12 -export \
+    -in <(_release_p12_read "$ossl" "$legacy" -in "$input" -nokeys 2>&3) \
+    -inkey <(_release_p12_read "$ossl" "$legacy" -in "$input" -nocerts -nodes 2>&3) \
+    -out "$output" -passout env:MAC_CERT_PASSWORD \
+    -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 2>&3 >/dev/null
 }
 
 release_normalize_p12() (
@@ -94,7 +115,6 @@ release_normalize_p12() (
   local input="$1"
   local output="$2"
   local ossl=""
-  local brew_prefix=""
   local decode_error=""
   local initial_error=""
   local legacy_error=""
@@ -108,15 +128,7 @@ release_normalize_p12() (
     echo "error: MAC_CERT_PASSWORD is required" >&2
     return 2
   fi
-  if command -v brew >/dev/null 2>&1; then
-    brew_prefix=$(brew --prefix openssl@3 2>/dev/null || true)
-    if [ -n "$brew_prefix" ] && [ -x "$brew_prefix/bin/openssl" ]; then
-      ossl="$brew_prefix/bin/openssl"
-    fi
-  fi
-  if [ -z "$ossl" ]; then
-    ossl=$(command -v openssl || true)
-  fi
+  ossl=$(release_find_openssl || true)
   if [ -z "$ossl" ]; then
     echo "error: OpenSSL is required to normalize MAC_CERT_P12_BASE64" >&2
     return 2
@@ -131,13 +143,13 @@ release_normalize_p12() (
       legacy_error="$decode_error"
       diagnostics="${initial_error}"$'\n'"${legacy_error}"
       if [[ "$diagnostics" == *"Mac verify error"* ]]; then
-        echo "error: MAC_CERT_PASSWORD does not match the MAC_CERT_P12_BASE64 certificate; re-export the .p12 and update both secrets" >&2
+        _release_p12_password_mismatch
       else
         version=$("$ossl" version 2>/dev/null || true)
         if [[ "$version" == *LibreSSL* && "$diagnostics" == *"unsupported"* ]]; then
           echo "error: the available LibreSSL cannot read this .p12; install Homebrew openssl@3" >&2
         else
-          echo "error: MAC_CERT_P12_BASE64 is not a valid .p12 (certificate + private key)" >&2
+          _release_p12_invalid
         fi
       fi
       return 2
@@ -156,9 +168,9 @@ release_normalize_p12() (
   else
     rm -f "$temp_output"
     if [[ "$export_error" == *"Mac verify error"* ]]; then
-      echo "error: MAC_CERT_PASSWORD does not match the MAC_CERT_P12_BASE64 certificate; re-export the .p12 and update both secrets" >&2
+      _release_p12_password_mismatch
     else
-      echo "error: MAC_CERT_P12_BASE64 is not a valid .p12 (certificate + private key)" >&2
+      _release_p12_invalid
     fi
     return 2
   fi
