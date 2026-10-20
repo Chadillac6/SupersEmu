@@ -883,6 +883,7 @@ targets:
       - App/EmulationLoop.swift
       - App/Diagnostics/DiagnosticsLog.swift
       - App/Diagnostics/N64Preset.swift
+      - App/Diagnostics/N64Graphics.swift
       - Host/SELibretroHost.h
       - Host/SELibretroHost.mm
     dependencies:

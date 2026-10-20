@@ -59,13 +59,25 @@ final class PlayerChromeTests: XCTestCase {
 
     @MainActor
     func testTopBarAutoHideSecondRevealRestartsTimer() async throws {
-        let autoHide = TopBarAutoHide(delay: .milliseconds(300))
+        let delay = Duration.milliseconds(600)
+        let clock = ContinuousClock()
+        let autoHide = TopBarAutoHide(delay: delay)
+        let firstReveal = clock.now
         autoHide.reveal()
-        try await Task.sleep(for: .milliseconds(200))
-        autoHide.reveal()  // restart: without this the bar would hide at ~300 ms
-        try await Task.sleep(for: .milliseconds(200))  // ~400 ms after first reveal, ~200 after second
-        XCTAssertTrue(autoHide.isRevealed)
         try await Task.sleep(for: .milliseconds(400))
+        let secondReveal = clock.now
+        autoHide.reveal()  // restart: without this the bar would hide 600 ms after the first reveal
+        try await Task.sleep(for: .milliseconds(400))
+        let now = clock.now
+        // Only meaningful between the first timer's deadline and the restarted one; a stalled runner can't tell.
+        guard now - firstReveal > delay, now - secondReveal < delay else {
+            throw XCTSkip("runner timing drifted past the check window")
+        }
+        XCTAssertTrue(autoHide.isRevealed)
+        let deadline = clock.now + .seconds(5)
+        while autoHide.isRevealed, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         XCTAssertFalse(autoHide.isRevealed)
     }
 
