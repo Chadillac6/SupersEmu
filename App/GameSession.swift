@@ -78,6 +78,7 @@ final class GameSession {
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var core: SaveCore?
     @ObservationIgnored private var performanceStats = PerformanceStats()
+    @ObservationIgnored private var autoGraphicsWatch: AutoGraphicsWatch?
     @ObservationIgnored private var hostFramesPerSecond = 60.0
     @ObservationIgnored private var hostSampleRate = 48_000.0
     @ObservationIgnored private var diagnosticsLog: DiagnosticsLog?
@@ -173,7 +174,16 @@ final class GameSession {
         let romURL = game.fileURL
         let gameID = game.id
         do {
-            SELibretroHost.pendingCoreOptionOverrides = n64Preset?.coreOptionOverrides ?? [:]
+            var coreOptionOverrides = n64Preset?.coreOptionOverrides ?? [:]
+            if n64Preset != nil {
+                let graphics = N64Graphics.load(forGameID: gameID)
+                let autoCap = N64Graphics.autoCap(forGameID: gameID)
+                coreOptionOverrides.merge(graphics.coreOptionOverrides(autoCap: autoCap)) { _, graphics in graphics }
+                let resolution = graphics.effectiveResolution(autoCap: autoCap)
+                autoGraphicsWatch = graphics.isAutoResolution && resolution > .native
+                    ? AutoGraphicsWatch(resolution: resolution) : nil
+            }
+            SELibretroHost.pendingCoreOptionOverrides = coreOptionOverrides
             host = try await loop.createHost {
                 try SELibretroHost(
                     coreID: coreID,
@@ -507,6 +517,7 @@ final class GameSession {
         // Never run frames while saves are still syncing or a conflict is waiting for an answer.
         guard let host, hasStarted, !isPresentationRunning, !isChoosingDisc, !isChoosingCheat, !isShowingSaveSlots, !isMenuOpen, disconnectedController == nil else { return }
         performanceStats.resetBaseline()
+        autoGraphicsWatch?.restartGracePeriod()
         emulationLoop?.setRunning(true)
         host.startAudioEngineIfNeeded()
         diagnosticsLog?.appendEvent("resume")
@@ -550,12 +561,44 @@ final class GameSession {
         if let image = emulationLoop?.takeFrameImage() {
             displayLayer?.contents = image
         }
+        checkAutoGraphics()
         if needsFreshCheckpoint {
             needsFreshCheckpoint = false
             scheduleAutosave(preservingStatus: true)
         } else if ContinuousClock.now - lastAutosave >= Self.autosaveInterval {
             scheduleAutosave()
         }
+    }
+
+    /// Screen look for this game; non-N64 consoles keep sharp pixels.
+    func screenLook(_ rawValue: String) -> N64ScreenLook {
+        guard Self.system(for: game) == "n64" else { return .sharp }
+        return N64ScreenLook(rawValue: rawValue) ?? N64Graphics.defaultScreenLook
+    }
+
+    var displayAspectRatio: CGFloat {
+        Self.system(for: game) == "n64" && N64Graphics.isWidescreen(forGameID: game.id) ? 16.0 / 9.0 : 4.0 / 3.0
+    }
+
+    /// Auto N64 graphics: if the game can't hold full speed for several seconds, Auto steps down one level for
+    /// this game. The new resolution applies the next time the game opens.
+    private func checkAutoGraphics() {
+        guard var watch = autoGraphicsWatch else { return }
+        let now = ContinuousClock.now
+        guard now >= watch.nextCheck else { return }
+        watch.nextCheck = now + .seconds(1)
+        let speed = performanceStats.summary(framesPerSecond: hostFramesPerSecond, sampleRate: hostSampleRate).speedPercent
+        watch.slowChecks = speed < AutoGraphicsWatch.slowSpeedPercent ? watch.slowChecks + 1 : 0
+        guard watch.slowChecks >= AutoGraphicsWatch.slowChecksBeforeLowering else {
+            autoGraphicsWatch = watch
+            return
+        }
+        autoGraphicsWatch = nil
+        guard let lower = N64Graphics.lowerAutoCap(forGameID: game.id) else { return }
+        recordEvent(String(format: "auto graphics lowered %d× → %d× (speed %.0f%%)",
+                           locale: Locale(identifier: "en_US_POSIX"),
+                           watch.resolution.rawValue, lower.rawValue, speed))
+        status = "Auto graphics lowered to \(lower.title) to keep full speed. Applies next time you open the game."
     }
 
     /// `SUPERSEMU_LOG_FRAME_TIME=1`: prints a five-second performance summary to stdout.
@@ -1314,5 +1357,20 @@ final class GameSession {
         diagnosticsLog?.stop()
         diagnosticsLog = nil
         if coreSupportsCheats { Task { await CheatLibrary.shared.sync() } }
+    }
+}
+
+struct AutoGraphicsWatch {
+    static let slowSpeedPercent = 92.0
+    static let slowChecksBeforeLowering = 8
+    static let gracePeriod = Duration.seconds(10)
+
+    let resolution: N64Resolution
+    var nextCheck = ContinuousClock.now + gracePeriod
+    var slowChecks = 0
+
+    mutating func restartGracePeriod() {
+        nextCheck = ContinuousClock.now + Self.gracePeriod
+        slowChecks = 0
     }
 }

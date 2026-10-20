@@ -90,6 +90,15 @@ struct ControlsView: View {
                 }
                 .accessibilityIdentifier("controls-reset")
             }
+            Section("Graphics") {
+                NavigationLink {
+                    GraphicsSettingsView(game: game)
+                } label: {
+                    Label("N64 graphics", systemImage: "sparkles.tv")
+                }
+                .accessibilityIdentifier("controls-graphics")
+            }
+
             Section("Diagnostics") {
                 NavigationLink {
                     DiagnosticsView(game: game)

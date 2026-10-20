@@ -48,7 +48,7 @@ struct DiagnosticsView: View {
                     .accessibilityIdentifier("diagnostics-n64-game-preset")
                 }
             } header: {
-                Text("N64 settings")
+                Text("N64 speed settings")
             } footer: {
                 Text("Takes effect the next time you open the game.")
             }
