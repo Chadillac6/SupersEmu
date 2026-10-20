@@ -132,6 +132,7 @@ struct EmulatorScreen: NSViewRepresentable {
 extension CALayer {
     func apply(screenLook: N64ScreenLook, scanlines: ScanlineLayer, aspectRatio: CGFloat) {
         magnificationFilter = screenLook == .sharp ? .nearest : .linear
+        minificationFilter = screenLook == .sharp ? .nearest : .linear
         scanlines.isHidden = screenLook != .crt
         scanlines.aspectRatio = aspectRatio
     }

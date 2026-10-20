@@ -179,6 +179,7 @@ final class GameSession {
                 let graphics = N64Graphics.load(forGameID: gameID)
                 let autoCap = N64Graphics.autoCap(forGameID: gameID)
                 coreOptionOverrides.merge(graphics.coreOptionOverrides(autoCap: autoCap)) { _, graphics in graphics }
+                displayAspectRatio = N64Graphics.isWidescreen(forGameID: gameID) ? 16.0 / 9.0 : 4.0 / 3.0
                 let resolution = graphics.effectiveResolution(autoCap: autoCap)
                 autoGraphicsWatch = graphics.isAutoResolution && resolution > .native
                     ? AutoGraphicsWatch(resolution: resolution) : nil
@@ -576,9 +577,8 @@ final class GameSession {
         return N64ScreenLook(rawValue: rawValue) ?? N64Graphics.defaultScreenLook
     }
 
-    var displayAspectRatio: CGFloat {
-        Self.system(for: game) == "n64" && N64Graphics.isWidescreen(forGameID: game.id) ? 16.0 / 9.0 : 4.0 / 3.0
-    }
+    /// Aspect of the picture the running core produces; fixed at launch because Shape is a core option.
+    private(set) var displayAspectRatio: CGFloat = 4.0 / 3.0
 
     /// Auto N64 graphics: if the game can't hold full speed for several seconds, Auto steps down one level for
     /// this game. The new resolution applies the next time the game opens.
