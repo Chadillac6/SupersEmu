@@ -84,6 +84,8 @@ struct DiscName: Equatable {
     var title: String
     var discNumber: Int?
     var discCount: Int?
+    /// A disc marker outside 1 <= number <= count <= `maxDiscs` ("Disc 0", "Disc 3 of 2"); such discs go to review.
+    var invalidMarker: String?
     /// Lowercased, sorted parenthesised tags other than the disc marker (region, revision, ...).
     var tags: String
     var groupKey: String { title.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ") + "|" + tags }
@@ -92,18 +94,28 @@ struct DiscName: Equatable {
         pattern: #"[\(\[]\s*(?:disc|disk|cd)\s*(\d+)(?:\s*of\s*(\d+))?\s*[\)\]]|\b(?:disc|disk|cd)\s*(\d+)\s*of\s*(\d+)\b"#,
         options: [.caseInsensitive])
     private static let tag = try! NSRegularExpression(pattern: #"\(([^\)]*)\)"#)
+    /// Largest disc number or `of M` count accepted from a filename.
+    static let maxDiscs = 32
 
     init(filename: String, folder: String? = nil) {
         var base = (filename as NSString).deletingPathExtension
         var tagSource = base
-        if let (range, number, count) = Self.match(base) {
+        var marker: (text: String, number: String, count: String?)?
+        if let (range, text, number, count) = Self.match(base) {
             base = (base as NSString).replacingCharacters(in: NSRange(range), with: "")
             tagSource = base
-            discNumber = number; discCount = count
-        } else if let folder, let (range, number, count) = Self.match(folder) {
+            marker = (text, number, count)
+        } else if let folder, let (range, text, number, count) = Self.match(folder) {
             // Generic cue names ("game.cue") take their region/revision tags from the folder too.
             tagSource = base + " " + (folder as NSString).replacingCharacters(in: NSRange(range), with: "")
-            discNumber = number; discCount = count
+            marker = (text, number, count)
+        }
+        if let marker {
+            if let (number, count) = Self.validated(marker.number, marker.count) {
+                discNumber = number; discCount = count
+            } else {
+                invalidMarker = marker.text
+            }
         }
         let ns = tagSource as NSString
         tags = Set(Self.tag.matches(in: tagSource, range: NSRange(location: 0, length: ns.length))
@@ -114,11 +126,19 @@ struct DiscName: Equatable {
         title = cleaned.isEmpty ? (filename as NSString).deletingPathExtension : cleaned
     }
 
-    private static func match(_ text: String) -> (Range<Int>, Int, Int?)? {
+    private static func match(_ text: String) -> (Range<Int>, String, String, String?)? {
         let ns = text as NSString
         guard let m = marker.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
-        func int(_ i: Int) -> Int? { m.range(at: i).location == NSNotFound ? nil : Int(ns.substring(with: m.range(at: i))) }
-        guard let number = int(1) ?? int(3) else { return nil }
-        return (m.range.location..<(m.range.location + m.range.length), number, int(2) ?? int(4))
+        func group(_ i: Int) -> String? { m.range(at: i).location == NSNotFound ? nil : ns.substring(with: m.range(at: i)) }
+        guard let number = group(1) ?? group(3) else { return nil }
+        return (m.range.location..<(m.range.location + m.range.length), ns.substring(with: m.range).trimmingCharacters(in: CharacterSet(charactersIn: "()[] ")), number, group(2) ?? group(4))
+    }
+
+    /// Requires 1 <= number <= count <= `maxDiscs`; digit runs too long for `Int` fail too.
+    private static func validated(_ number: String, _ count: String?) -> (Int, Int?)? {
+        guard let n = Int(number), (1...maxDiscs).contains(n) else { return nil }
+        guard let count else { return (n, nil) }
+        guard let c = Int(count), (n...maxDiscs).contains(c) else { return nil }
+        return (n, c)
     }
 }
