@@ -151,9 +151,20 @@ ensure_service_account() {
 # A directory the service account owns and only it (and root) can enter.
 make_service_dir() {
   mkdir -p "$1"
+  if ((privileged)); then
+    local owner
+    [[ ! -L "$1" ]] || { echo "$1 must not be a symbolic link."; return 6; }
+    owner=$(stat -f '%Su' "$1")
+    if [[ "$owner" == root ]]; then
+      # Only root has ever written here (Caddy used to run as root), so nothing inside can be a planted
+      # link; once the service account owns the folder, root never walks into it again.
+      chown -R "$service_user:$service_user" "$1"
+    elif [[ "$owner" != "$service_user" ]]; then
+      echo "$1 is owned by $owner, not $service_user."
+      return 6
+    fi
+  fi
   chmod 700 "$1"
-  # chown -R doesn't follow symbolic links, so links planted inside can't redirect it.
-  if ((privileged)); then chown -R "$service_user:$service_user" "$1"; fi
 }
 
 # Root-owned copy, replaced atomically so a running daemon never sees a partial file.
@@ -377,6 +388,9 @@ case "$action" in
     if [[ -f "$token_file" ]]; then
       install_root_file 755 "$script_dir/ddns-cloudflare.sh" "$ddns_script"
       make_service_dir "$ddns_dir"
+      if [[ -f "$legacy_ddns_state" && ! -e "$ddns_dir/ddns-state.json" ]]; then
+        run_as_service cp "$legacy_ddns_state" "$ddns_dir/ddns-state.json" || true
+      fi
       if run_as_service "$ddns_script" --host "$host" --data-dir "$ddns_dir" --token-file "$token_file"; then
         :
       else
@@ -397,7 +411,6 @@ case "$action" in
       previous_config_existed=1
     fi
     write_caddyfile
-    rm -f "$caddy_dir/Caddyfile"
     daemon_caddy=$caddy_bin
     if ((no_launchd == 0)); then
       # The daemon runs a root-owned copy, not a binary the Homebrew user can replace.
@@ -533,7 +546,7 @@ PY
       write_access_config true
     if ((no_launchd == 0)); then launchctl_cmd kickstart -k "$server_label"; fi
     rm -rf "$legacy_ddns_bin"
-    rm -f "$legacy_ddns_state" "$data_dir/ddns.log"
+    rm -f "$legacy_ddns_state" "$data_dir/ddns.log" "$caddy_dir/Caddyfile"
     echo "Public HTTPS configured for https://$host; admin routes return 404."
     [[ -z "$previous_config_backup" ]] || rm -f "$previous_config_backup"
     [[ -z "$previous_caddy_plist_backup" ]] || rm -f "$previous_caddy_plist_backup"
@@ -541,17 +554,8 @@ PY
     trap - ERR
     ;;
   disable)
-    # As root, only write into a data folder that already exists; never create one in a user's home.
-    if ((EUID != 0)); then mkdir -p "$data_dir"; fi
-    if [[ -d "$data_dir" ]]; then write_access_config false; fi
     owns_install=0
-    if ((no_launchd)); then
-      if [[ -f "$caddy_dir/caddy.pid" ]]; then
-        pid=$(cat "$caddy_dir/caddy.pid")
-        kill "$pid" 2>/dev/null || true
-        rm -f "$caddy_dir/caddy.pid"
-      fi
-    else
+    if ((!no_launchd)); then
       # Another server's daemons (e.g. the boot server's, when turning off a session setup) stay running.
       [[ "$data_dir" != "$boot_data_dir" ]] || owns_install=1
       if daemon_belongs_here "$plist" "$caddy_dir"; then
@@ -564,11 +568,30 @@ PY
         rm -f "$ddns_plist"
       fi
       launchctl_cmd kickstart -k "$server_label" >/dev/null 2>&1 || true
+      if ((purge && owns_install)); then rm -rf "$install_dir"; fi
+      if ((EUID == 0)) && [[ "$data_dir" != "$boot_data_dir" ]]; then
+        # Root never writes into a folder another account controls; its owner tidies it instead.
+        if ! owner=$(stat -f '%u' "$data_dir" 2>/dev/null) || [[ "$owner" == 0 ]]; then
+          echo "Public access disabled."
+          exit 0
+        fi
+        user_args=(disable --no-launchd --data-dir "$data_dir")
+        if ((purge)); then user_args+=(--purge); fi
+        exec sudo -u "#$owner" /usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin "$0" "${user_args[@]}"
+      fi
+    fi
+    if ((EUID != 0)); then mkdir -p "$data_dir"; fi
+    write_access_config false
+    if ((no_launchd)) && [[ -f "$caddy_dir/caddy.pid" ]]; then
+      pid=$(cat "$caddy_dir/caddy.pid")
+      kill "$pid" 2>/dev/null || true
+      rm -f "$caddy_dir/caddy.pid"
     fi
     if ((purge)); then
-      rm -rf "$caddy_dir" "$ddns_dir" "$legacy_ddns_bin"
-      if ((no_launchd || owns_install)); then rm -rf "$install_dir"; fi
-      rm -f "$token_file" "$legacy_ddns_state" "$data_dir/ddns.log"
+      if ! rm -rf "$caddy_dir" "$ddns_dir" "$legacy_ddns_bin" "$token_file" "$legacy_ddns_state" "$data_dir/ddns.log"; then
+        echo "Warning: some Remote Access files in $data_dir couldn't be removed." >&2
+      fi
+      if ((no_launchd)); then rm -rf "$install_dir"; fi
     fi
     echo "Public access disabled. Existing server and Caddy certificates are retained unless --purge is used."
     ;;
