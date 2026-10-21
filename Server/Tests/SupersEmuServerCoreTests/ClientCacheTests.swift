@@ -187,6 +187,46 @@ final class ClientCacheTests: XCTestCase {
             .path.hasPrefix(cache.directory(for: "game").path + "/"))
     }
 
+    func testRemoveAndSizeStayInsideCache() throws {
+        let victim = cacheRoot.deletingLastPathComponent().appendingPathComponent("victim-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: victim, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: victim) }
+        try Data("keep".utf8).write(to: victim.appendingPathComponent("save.srm"))
+        try FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+        for id in ["../\(victim.lastPathComponent)", "..", ".", "", "a/../../\(victim.lastPathComponent)"] {
+            XCTAssertNil(cache.containedDirectory(for: id), id)
+            XCTAssertEqual(cache.bytesOnDisk(for: id), 0, id)
+            XCTAssertThrowsError(try cache.remove(id), id)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: victim.appendingPathComponent("save.srm").path))
+        XCTAssertEqual(cache.containedDirectory(for: "game")?.lastPathComponent, "game")
+        XCTAssertTrue(GameCache.isDirectChild(cacheRoot.appendingPathComponent("game"), of: cacheRoot))
+        XCTAssertFalse(GameCache.isDirectChild(cacheRoot.appendingPathComponent("a/../../b"), of: cacheRoot))
+    }
+
+    func testDownloadRejectsDetailForAnotherGame() async throws {
+        let detail = try insertGame(title: "Decoy", bytes: Self.randomBytes(1000))
+        let downloader = GameDownloader(client: APIClient(baseURL: URL(string: "http://localhost:1")!, token: "t"), cache: cache)
+        do {
+            _ = try await downloader.download(gameID: "../../..")
+            XCTFail("expected invalidFile")
+        } catch let error as DownloadError {
+            guard case .invalidFile = error else { return XCTFail("\(error)") }
+        }
+        let responder = PathRewritingResponder(inner: buildRouter(store: store).buildResponder(),
+                                               from: "/v1/games/requested", to: "/v1/games/\(detail.game.id)")
+        try await withClient(Application(responder: responder, configuration: .init())) { client in
+            do {
+                _ = try await GameDownloader(client: client, cache: self.cache).download(gameID: "requested")
+                XCTFail("expected invalidFile")
+            } catch let error as DownloadError {
+                guard case .invalidFile = error else { return XCTFail("\(error)") }
+            }
+        }
+        XCTAssertNil(cache.cachedGame(detail.game.id))
+        XCTAssertNil(cache.cachedGame("requested"))
+    }
+
     func testRedownloadsStaleSameNamedFile() async throws {
         let bytes = Self.randomBytes(40_000)
         let detail = try insertGame(title: "Stale", bytes: bytes)
@@ -297,4 +337,17 @@ struct RangeObservingResponder<Inner: HTTPResponder>: HTTPResponder where Inner.
         return try await inner.respond(to: Request(head: head, body: request.body), context: context)
     }
 
+}
+
+/// Answers one game's detail request with another game's detail, as a malicious server could.
+struct PathRewritingResponder<Inner: HTTPResponder>: HTTPResponder where Inner.Context == SERequestContext {
+    let inner: Inner
+    let from: String
+    let to: String
+
+    func respond(to request: Request, context: SERequestContext) async throws -> Response {
+        var head = request.head
+        if head.path == from { head.path = to }
+        return try await inner.respond(to: Request(head: head, body: request.body), context: context)
+    }
 }

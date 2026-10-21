@@ -76,6 +76,10 @@ final class DownloadCenter {
 
     func start(_ gameID: String, session: ServerSession) {
         guard tasks[gameID] == nil, !isDownloaded(gameID) else { return }
+        guard GameCache.isSafeID(gameID) else {
+            states[gameID] = .failed(DownloadError.invalidFile(gameID).description)
+            return
+        }
         guard session.isReachable, let downloader = session.downloader(cache: cache) else {
             states[gameID] = .failed("Unavailable offline. Connect to \(session.serverName) to download it.")
             return
@@ -167,9 +171,11 @@ final class DownloadCenter {
             if tasks[gameID] == nil { try? cache.remove(gameID) }
             return
         }
+        let verifiedID = cached.detail.game.id
+        guard verifiedID == gameID else { return finish(gameID, error: DownloadError.invalidFile(verifiedID), generation: generation) }
         tasks[gameID] = nil
         states[gameID] = nil
-        setDownloaded(gameID, cached)
+        setDownloaded(verifiedID, cached)
     }
 
     /// A canceled or failed replacement may have left the previous copy untouched; show it again if it still verifies.

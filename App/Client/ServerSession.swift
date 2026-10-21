@@ -377,7 +377,17 @@ final class ServerSession {
                               trust: { PinnedCertificateDelegate.disposition(for: $0, pin: pin, webPKIEndpoints: webPKIEndpoints) })
     }
 
+    /// Game IDs become cache, cover and save file names, so drop any a server sends that isn't a plain path component.
+    private static func safeGames(_ games: [GameSummary]) -> [GameSummary] {
+        let safe = games.filter { GameCache.isSafeID($0.id) }
+        if safe.count < games.count {
+            AppLog.connection.error("Ignored \(games.count - safe.count, privacy: .public) library entries with invalid game IDs")
+        }
+        return safe
+    }
+
     private func apply(_ games: [GameSummary]) {
+        let games = Self.safeGames(games)
         let now = Date()
         for game in games where firstSeen[game.id] == nil { firstSeen[game.id] = game.addedAt ?? now }
         firstSeen = firstSeen.filter { id, _ in games.contains { $0.id == id } }
@@ -450,7 +460,7 @@ final class ServerSession {
     private func loadSnapshot() {
         guard let data = try? Data(contentsOf: snapshotURL),
               let snapshot = try? SupersEmuJSON.decoder().decode(Snapshot.self, from: data) else { return }
-        games = snapshot.games
+        games = Self.safeGames(snapshot.games)
         firstSeen = snapshot.firstSeen
     }
 

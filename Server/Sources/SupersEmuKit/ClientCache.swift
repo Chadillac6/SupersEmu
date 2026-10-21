@@ -29,12 +29,24 @@ public struct GameCache: Sendable {
         !id.isEmpty && id != "." && id != ".." && !id.contains("/") && !id.contains("\\") && !id.contains(":") && !id.hasPrefix(".")
     }
 
+    /// True when `url`, with `.`/`..` segments resolved, sits directly inside `parent`.
+    public static func isDirectChild(_ url: URL, of parent: URL) -> Bool {
+        url.standardized.deletingLastPathComponent().standardized.path == parent.standardized.path
+    }
+
+    /// The game's folder, or nil when the ID could resolve anywhere other than directly under `root`.
+    public func containedDirectory(for gameID: String) -> URL? {
+        guard Self.isSafeID(gameID) else { return nil }
+        let dir = directory(for: gameID)
+        return Self.isDirectChild(dir, of: root) ? dir : nil
+    }
+
     static func isSHA256(_ id: String) -> Bool {
         id.count == 64 && id.allSatisfy(\.isHexDigit)
     }
 
     public func cachedGame(_ gameID: String) -> CachedGame? {
-        guard Self.isSafeID(gameID), let data = try? Data(contentsOf: manifestURL(for: gameID)),
+        guard containedDirectory(for: gameID) != nil, let data = try? Data(contentsOf: manifestURL(for: gameID)),
               let cached = try? SupersEmuJSON.decoder().decode(CachedGame.self, from: data) else { return nil }
         let complete = cached.detail.files.allSatisfy { file in
             let url = fileURL(gameID: gameID, file: file)
@@ -87,7 +99,7 @@ public struct GameCache: Sendable {
 
     /// Bytes already on disk for `gameID`, including partial downloads.
     public func bytesOnDisk(for gameID: String) -> Int64 {
-        let dir = directory(for: gameID)
+        guard let dir = containedDirectory(for: gameID) else { return 0 }
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         return names.reduce(0) { total, name in
             let size = (try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(name).path)[.size] as? NSNumber)?.int64Value
@@ -96,7 +108,7 @@ public struct GameCache: Sendable {
     }
 
     public func remove(_ gameID: String) throws {
-        let dir = directory(for: gameID)
+        guard let dir = containedDirectory(for: gameID) else { throw DownloadError.invalidFile(gameID) }
         if FileManager.default.fileExists(atPath: dir.path) { try FileManager.default.removeItem(at: dir) }
     }
 
@@ -179,7 +191,10 @@ public final class GameDownloader: Sendable {
 
     @discardableResult
     public func download(gameID: String, progress: @escaping @Sendable (DownloadProgress) -> Void = { _ in }) async throws -> CachedGame {
+        guard GameCache.isSafeID(gameID) else { throw DownloadError.invalidFile(gameID) }
         let detail = try await client.gameDetail(gameID)
+        // Callers key the result by the ID they asked for, so the server must answer for that game.
+        guard detail.game.id == gameID else { throw DownloadError.invalidFile(detail.game.id) }
         return try await download(detail, progress: progress)
     }
 
@@ -187,7 +202,7 @@ public final class GameDownloader: Sendable {
     public func download(_ detail: GameDetail, progress: @escaping @Sendable (DownloadProgress) -> Void = { _ in }) async throws -> CachedGame {
         let gameID = detail.game.id
         guard !detail.files.isEmpty else { throw DownloadError.noFiles }
-        guard GameCache.isSafeID(gameID) else { throw DownloadError.invalidFile(gameID) }
+        guard cache.containedDirectory(for: gameID) != nil else { throw DownloadError.invalidFile(gameID) }
         try cache.validateLayout(detail.files)
         try FileManager.default.createDirectory(at: cache.directory(for: gameID), withIntermediateDirectories: true)
         let total = detail.files.reduce(0) { $0 + $1.size }

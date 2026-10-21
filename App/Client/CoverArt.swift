@@ -1,5 +1,6 @@
 import SwiftUI
 import Observation
+import SupersEmuKit
 #if os(macOS)
 import AppKit
 #else
@@ -138,7 +139,15 @@ enum ArtworkCache {
     /// Covers keep the bare game ID (older caches); other kinds add their path, e.g. `<id>-screenshot-0`.
     static func key(_ gameID: String, _ path: String?) -> String {
         guard let path, let range = path.range(of: "/artwork/") else { return gameID }
-        return gameID + "-" + path[range.upperBound...].replacingOccurrences(of: "/", with: "-")
+        let suffix = path[range.upperBound...].map { $0 == "/" || $0 == "\\" || $0 == ":" ? "-" : String($0) }.joined()
+        return gameID + "-" + suffix
+    }
+
+    /// Keys come from server-supplied game IDs and paths; only plain names directly inside Covers are used.
+    static func fileURL(forKey key: String) -> URL? {
+        guard GameCache.isSafeID(key) else { return nil }
+        let file = AppPaths.covers.appendingPathComponent(key)
+        return GameCache.isDirectChild(file, of: AppPaths.covers) ? file : nil
     }
 
     /// Reruns artwork tasks on reconnect, so art that couldn't load offline appears.
@@ -156,8 +165,7 @@ enum ArtworkCache {
 
     /// The disk copy straight away (works offline), then once per launch the server's, as replaced art keeps its path.
     @MainActor static func load(_ path: String?, key: String, server: ServerSession, show: (Image?) -> Void) async {
-        guard let path else { return show(nil) }
-        let file = AppPaths.covers.appendingPathComponent(key)
+        guard let path, let file = fileURL(forKey: key) else { return show(nil) }
         let cached = try? Data(contentsOf: file)
         let cachedImage = cached.flatMap(image(from:))
         show(cachedImage)
