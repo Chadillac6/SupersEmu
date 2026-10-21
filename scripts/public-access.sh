@@ -260,6 +260,48 @@ allow_through_firewall() {
   "$firewall" --unblockapp "$1" >/dev/null 2>&1 || true
 }
 
+# For a data folder owned by a user account, prints that account's uid; prints nothing for any other owner.
+# With purge ($2 = 1), first deletes the Remote Access files an older root-run setup left there (root-owned
+# Caddy state, token, DDNS script), which the owner can't remove. Everything goes through a descriptor for the
+# folder itself and never follows a link, so the owner can't point root at anything outside it.
+remove_legacy_root_files() {
+  python3 - "$1" "$2" <<'PY'
+import os
+import stat
+import sys
+
+def remove_tree(parent, name):
+    descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+    try:
+        for entry in os.scandir(descriptor):
+            if entry.is_dir(follow_symlinks=False):
+                remove_tree(descriptor, entry.name)
+            else:
+                os.unlink(entry.name, dir_fd=descriptor)
+    finally:
+        os.close(descriptor)
+    os.rmdir(name, dir_fd=parent)
+
+folder = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+owner = os.fstat(folder).st_uid
+if owner == 0:
+    sys.exit(0)
+if sys.argv[2] == "1":
+    for name in ("caddy", "ddns", "bin", "cloudflare.token", "ddns-state.json", "ddns.log"):
+        try:
+            info = os.stat(name, dir_fd=folder, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if info.st_uid != 0:
+            continue
+        if stat.S_ISDIR(info.st_mode):
+            remove_tree(folder, name)
+        else:
+            os.unlink(name, dir_fd=folder)
+print(owner)
+PY
+}
+
 # Prints the state folder an installed LaunchDaemon was set up with, or nothing if it isn't installed.
 daemon_data_dir() {
   [[ -f "$1" ]] || return 0
@@ -288,16 +330,29 @@ launchctl_cmd() {
   if command -v launchctl >/dev/null 2>&1; then launchctl "$@"; else return 1; fi
 }
 
+# True if a LaunchDaemon plist runs as the service account; older root daemons are never brought back.
+plist_runs_as_service() {
+  ((privileged)) || return 0
+  python3 - "$1" "$service_user" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as stream:
+    sys.exit(0 if plistlib.load(stream).get("UserName") == sys.argv[2] else 1)
+PY
+}
+
 rollback_enable() {
   local status=${1:-$?}
   trap - ERR
   if ((ddns_started)); then
     launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
-    if ((previous_ddns_plist_existed)); then
+    if ((previous_ddns_plist_existed)) && plist_runs_as_service "$previous_ddns_plist_backup"; then
       cp -p "$previous_ddns_plist_backup" "$ddns_plist" || true
       launchctl_cmd bootstrap system "$ddns_plist" >/dev/null 2>&1 || echo "Couldn't restore the previous DDNS LaunchDaemon." >&2
     else
       rm -f "$ddns_plist"
+      ((!previous_ddns_plist_existed)) || echo "The previous DDNS LaunchDaemon ran as root, so it wasn't restored; run enable again." >&2
     fi
   fi
   if ((caddy_started)); then
@@ -309,11 +364,12 @@ rollback_enable() {
       rm -f "$caddy_dir/caddy.pid"
     else
       launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
-      if ((previous_caddy_plist_existed)); then
+      if ((previous_caddy_plist_existed)) && plist_runs_as_service "$previous_caddy_plist_backup"; then
         cp -p "$previous_caddy_plist_backup" "$plist" || true
         launchctl_cmd bootstrap system "$plist" >/dev/null 2>&1 || echo "Couldn't restore the previous Caddy LaunchDaemon." >&2
       else
         rm -f "$plist"
+        ((!previous_caddy_plist_existed)) || echo "The previous Caddy LaunchDaemon ran as root, so it wasn't restored; run enable again." >&2
       fi
     fi
   fi
@@ -569,15 +625,26 @@ PY
       fi
       launchctl_cmd kickstart -k "$server_label" >/dev/null 2>&1 || true
       if ((purge && owns_install)); then rm -rf "$install_dir"; fi
-      if ((EUID == 0)) && [[ "$data_dir" != "$boot_data_dir" ]]; then
-        # Root never writes into a folder another account controls; its owner tidies it instead.
-        if ! owner=$(stat -f '%u' "$data_dir" 2>/dev/null) || [[ "$owner" == 0 ]]; then
+      if ((EUID == 0)); then
+        # Nothing saved means nothing to turn off; never create a data folder just to disable access.
+        if [[ ! -d "$data_dir" ]]; then
           echo "Public access disabled."
           exit 0
         fi
-        user_args=(disable --no-launchd --data-dir "$data_dir")
-        if ((purge)); then user_args+=(--purge); fi
-        exec sudo -u "#$owner" /usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin "$0" "${user_args[@]}"
+        if ! require_root_owned_path "$data_dir" >/dev/null; then
+          # Root never writes into a folder another account controls; its owner tidies it instead.
+          owner=$(remove_legacy_root_files "$data_dir" "$purge") || {
+            echo "Couldn't remove the old Remote Access files in $data_dir." >&2
+            exit 1
+          }
+          if [[ -z "$owner" ]]; then
+            echo "Public access disabled; $data_dir isn't owned by a user account, so its files were left alone."
+            exit 0
+          fi
+          user_args=(disable --no-launchd --data-dir "$data_dir")
+          if ((purge)); then user_args+=(--purge); fi
+          exec sudo -u "#$owner" /usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin "$0" "${user_args[@]}"
+        fi
       fi
     fi
     if ((EUID != 0)); then mkdir -p "$data_dir"; fi
@@ -589,7 +656,8 @@ PY
     fi
     if ((purge)); then
       if ! rm -rf "$caddy_dir" "$ddns_dir" "$legacy_ddns_bin" "$token_file" "$legacy_ddns_state" "$data_dir/ddns.log"; then
-        echo "Warning: some Remote Access files in $data_dir couldn't be removed." >&2
+        echo "Some Remote Access files in $data_dir couldn't be removed." >&2
+        exit 1
       fi
       if ((no_launchd)); then rm -rf "$install_dir"; fi
     fi
