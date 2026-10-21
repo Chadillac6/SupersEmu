@@ -150,6 +150,12 @@ extension LibraryImporter {
                 batch.record(try review(disc), origins: disc.unit.origins)
                 continue
             }
+            if let marker = disc.name.invalidMarker {
+                var disc = disc
+                disc.reason = ImportReason("Disc marker \"\(marker)\" isn't valid (disc 1 to \(DiscName.maxDiscs), not above the disc count)", .other)
+                batch.record(try review(disc), origins: disc.unit.origins)
+                continue
+            }
             guard disc.name.discNumber != nil else {
                 batch.record(try commitGame([disc], title: disc.name.title), origins: disc.unit.origins)
                 continue
@@ -166,16 +172,22 @@ extension LibraryImporter {
             set.sort { $0.name.discNumber! < $1.name.discNumber! }
             let numbers = set.map { $0.name.discNumber! }
             let declared = Set(set.compactMap(\.name.discCount))
-            let expected = Array(1...max(declared.max() ?? 0, numbers.last ?? 1))
-            if numbers == expected, declared.allSatisfy({ $0 == numbers.count }) {
-                batch.record(try commitGame(set, title: set[0].name.title), origins: set.flatMap(\.unit.origins))
-                continue
+            let top = max(declared.max() ?? 0, numbers.last ?? 1)
+            let reason: ImportReason
+            if let first = numbers.first, first >= 1, top <= DiscName.maxDiscs {
+                let expected = Array(1...top)
+                if numbers == expected, declared.allSatisfy({ $0 == numbers.count }) {
+                    batch.record(try commitGame(set, title: set[0].name.title), origins: set.flatMap(\.unit.origins))
+                    continue
+                }
+                let missing = expected.filter { !numbers.contains($0) }.map { "Disc \($0)" }
+                let repeated = Dictionary(grouping: numbers, by: { $0 }).first { $0.value.count > 1 }?.key
+                reason = !missing.isEmpty ? ImportReason("Disc set is missing \(missing.joined(separator: ", "))", .missingFiles)
+                    : repeated.map { ImportReason("Disc set has more than one Disc \($0)", .other) }
+                    ?? ImportReason("Disc set says \(declared.sorted().map(String.init).joined(separator: "/")) discs but has \(numbers.count)", .other)
+            } else {
+                reason = ImportReason("Disc set numbers are out of range (discs 1 to \(DiscName.maxDiscs))", .other)
             }
-            let missing = expected.filter { !numbers.contains($0) }.map { "Disc \($0)" }
-            let repeated = Dictionary(grouping: numbers, by: { $0 }).first { $0.value.count > 1 }?.key
-            let reason = !missing.isEmpty ? ImportReason("Disc set is missing \(missing.joined(separator: ", "))", .missingFiles)
-                : repeated.map { ImportReason("Disc set has more than one Disc \($0)", .other) }
-                ?? ImportReason("Disc set says \(declared.sorted().map(String.init).joined(separator: "/")) discs but has \(numbers.count)", .other)
             for var disc in set {
                 disc.reason = reason
                 batch.record(try review(disc), origins: disc.unit.origins)

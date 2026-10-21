@@ -95,6 +95,24 @@ extension LibraryTests {
         XCTAssertEqual(DiscName(filename: "game.cue", folder: "Game (USA) (Disc 2)").discNumber, 2)
         XCTAssertEqual(DiscName(filename: "game.cue", folder: "Game (USA) (Rev 1) (Disc 2)").tags, "rev 1|usa")
         XCTAssertEqual(DiscName(filename: "Game (USA).cue", folder: "Game (USA) (Disc 2)").tags, "usa")
+
+        let top = DiscName(filename: "Game (Disc 32 of 32).cue")
+        XCTAssertEqual(top.discNumber, 32)
+        XCTAssertEqual(top.discCount, 32)
+        XCTAssertNil(top.invalidMarker)
+        for (name, marker) in [("Game (USA) (Disc 0).iso", "Disc 0"), ("Game (Disc 33).cue", "Disc 33"),
+                               ("Game Disc 3 of 2.cue", "Disc 3 of 2"), ("Game (Disc 1 of 0).cue", "Disc 1 of 0"),
+                               ("Game (Disc 1 of 999999999999999).cue", "Disc 1 of 999999999999999"),
+                               ("Game [CD 99999999999999999999999].cue", "CD 99999999999999999999999")] {
+            let parsed = DiscName(filename: name)
+            XCTAssertNil(parsed.discNumber, name)
+            XCTAssertNil(parsed.discCount, name)
+            XCTAssertEqual(parsed.invalidMarker, marker, name)
+            XCTAssertEqual(parsed.title, "Game", name)
+        }
+        let folder = DiscName(filename: "game.cue", folder: "Game (USA) (Disc 0)")
+        XCTAssertNil(folder.discNumber)
+        XCTAssertEqual(folder.invalidMarker, "Disc 0")
     }
 
     func testDiscHeaderDetection() {
@@ -242,10 +260,29 @@ extension LibraryTests {
         XCTAssertEqual(loneRows.compactMap(\.disc), [1, 1])
 
         let other = sources.appendingPathComponent("counts", isDirectory: true)
-        for disc in 1...2 { try writeCueGame("", name: "Odd Disc \(disc) of 1", tracks: [DiscFixtures.psxTrack(seed: UInt8(70 + disc))], in: other) }
+        for disc in 1...2 { try writeCueGame("", name: "Odd Disc \(disc) of \(disc)", tracks: [DiscFixtures.psxTrack(seed: UInt8(70 + disc))], in: other) }
         let counts = try await importer.importPaths([other.path], auth: nil)
         XCTAssertEqual(counts.imported, [])
-        XCTAssertEqual(Set(counts.needsReview.map(\.reason)), ["Disc set says 1 discs but has 2"])
+        XCTAssertEqual(Set(counts.needsReview.map(\.reason)), ["Disc set says 1/2 discs but has 2"])
+    }
+
+    func testOutOfRangeDiscNumbersGoToReviewWithoutCrashing() async throws {
+        // "Disc 0" used to trap building 1...0; a huge "of N" used to allocate an N-element array.
+        try write(DiscFixtures.psxTrack(seed: 80, sectorSize: 2048), "Bad/Zero (USA) (Disc 0).iso")
+        try writeCueGame("Bad", name: "Huge (USA) (Disc 1 of 999999999999999)", tracks: [DiscFixtures.psxTrack(seed: 81)])
+        try writeCueGame("Bad", name: "Overflow (USA) (Disc 99999999999999999999999)", tracks: [DiscFixtures.psxTrack(seed: 82)])
+        try writeCueGame("Bad", name: "Past (USA) (Disc 2 of 1)", tracks: [DiscFixtures.psxTrack(seed: 83)])
+        try writeCueGame("Bad", name: "Past (USA) (Disc 1 of 1)", tracks: [DiscFixtures.psxTrack(seed: 84)])
+        let report = try await importer.importPaths([sources.path], auth: nil)
+        XCTAssertEqual(report.imported.map(\.title), ["Past"], "the valid Disc 1 of 1 still imports on its own")
+        let rule = "isn't valid (disc 1 to \(DiscName.maxDiscs), not above the disc count)"
+        XCTAssertEqual(Set(report.needsReview.map(\.reason)), [
+            "Disc marker \"Disc 0\" \(rule)",
+            "Disc marker \"Disc 1 of 999999999999999\" \(rule)",
+            "Disc marker \"Disc 99999999999999999999999\" \(rule)",
+            "Disc marker \"Disc 2 of 1\" \(rule)",
+        ])
+        XCTAssertEqual(report.needsReview.count, 4)
     }
 
     func testUnreadableCueKeepsItsTracksInIncoming() async throws {
