@@ -44,8 +44,9 @@ public final class LibraryImporter: @unchecked Sendable {
     // MARK: Public API (serialised on one queue so concurrent imports can't race on the same hash)
 
     public func importPaths(_ paths: [String], auth: AuthContext?) async throws -> ImportReport {
+        let roots = await importRoots()
         let report = try await run { importer in
-            let batch = Batch()
+            let batch = Batch(roots: roots)
             defer { batch.cleanUp() }
             for path in paths {
                 let expanded = (path as NSString).expandingTildeInPath
@@ -53,7 +54,12 @@ public final class LibraryImporter: @unchecked Sendable {
                     batch.record(.unsupported("\(path): path must be absolute (it is read on the server)", .other), origins: [])
                     continue
                 }
-                importer.gather(URL(fileURLWithPath: expanded).standardizedFileURL, label: path, into: batch)
+                let url = URL(fileURLWithPath: expanded).standardizedFileURL
+                if let reason = roots.violation(url) {
+                    batch.record(.unsupported("\(path): \(reason)", .other), origins: [])
+                    continue
+                }
+                importer.gather(url, label: path, into: batch)
             }
             try importer.process(batch)
             return Self.report(batch.outcomes)
@@ -67,11 +73,12 @@ public final class LibraryImporter: @unchecked Sendable {
     /// Anything queued for review, unsupported or failed stays in `Incoming` untouched so nothing is lost.
     public func scanIncoming(auth: AuthContext?) async throws -> ImportReport {
         let incoming = store.paths.incoming
+        let roots = await importRoots()
         let report = try await run { importer in
             try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
             let items = try FileManager.default.contentsOfDirectory(at: incoming, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            let batch = Batch()
+            let batch = Batch(roots: roots)
             defer { batch.cleanUp() }
             for item in items { importer.gather(item, label: item.lastPathComponent, into: batch) }
             try importer.process(batch)
@@ -85,6 +92,11 @@ public final class LibraryImporter: @unchecked Sendable {
         }
         try store.audit(auth, action: "library.scan", detail: Self.auditDetail(report, paths: ["Incoming"]))
         return report
+    }
+
+    func importRoots() async -> ImportRoots {
+        let backups = await store.backups.destination(for: store.backups.config())
+        return ImportRoots(paths: store.paths, alsoDenied: [backups])
     }
 
     public func reviewQueue() throws -> [ReviewItem] {
@@ -135,6 +147,8 @@ public final class LibraryImporter: @unchecked Sendable {
 
     /// Everything one import call found and decided. `origins` track which sources may leave `Incoming`.
     final class Batch {
+        /// Every file is checked again after symlinks resolve, so links inside an allowed folder can't escape it.
+        let roots: ImportRoots?
         var candidates: [Candidate] = []
         var outcomes: [Outcome] = []
         private(set) var originOrder: [URL] = []
@@ -160,6 +174,8 @@ public final class LibraryImporter: @unchecked Sendable {
             originOrder.filter { !isSettled($0) }.map { ($0, originOutcomes[$0] ?? []) }
         }
 
+        init(roots: ImportRoots? = nil) { self.roots = roots }
+
         func cleanUp() { for url in staged { try? FileManager.default.removeItem(at: url) } }
     }
 
@@ -181,13 +197,21 @@ public final class LibraryImporter: @unchecked Sendable {
 
     private func addFile(_ url: URL, into batch: Batch) {
         let filename = url.lastPathComponent
+        // Read from the checked real path, so a symlink swapped after the check can't redirect the read.
+        var source = url
+        if let roots = batch.roots {
+            switch roots.check(url) {
+            case .refused(let reason): return batch.record(.unsupported("\(filename): \(reason)", .other), origins: [url])
+            case .allowed(let resolved): source = resolved
+            }
+        }
         if SystemDetector.isIgnorable(filename) { return batch.record(.ignored, origins: [url]) }
         guard url.pathExtension.lowercased() == "zip" else {
-            batch.candidates.append(Candidate(filename: filename, container: url.deletingLastPathComponent().path, label: filename, origin: url, source: .file(url)))
+            batch.candidates.append(Candidate(filename: filename, container: url.deletingLastPathComponent().path, label: filename, origin: url, source: .file(source)))
             return
         }
         let archive: ZipArchive
-        do { archive = try ZipArchive(url: url) } catch { return batch.record(.unsupported("\(filename): \(error)", .readFailure(error)), origins: [url]) }
+        do { archive = try ZipArchive(url: source) } catch { return batch.record(.unsupported("\(filename): \(error)", .readFailure(error)), origins: [url]) }
         let entries = archive.entries.filter { !$0.isDirectory }
         guard !entries.isEmpty else { return batch.record(.unsupported("\(filename): empty archive", .other), origins: [url]) }
         for entry in entries {

@@ -354,7 +354,8 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(report.unsupported.count, 2, "\(report.unsupported)")
         XCTAssertFalse(report.unsupported.contains { $0.contains("readme.txt") }, "notes are skipped silently")
         XCTAssertTrue(report.unsupported.contains { $0.contains("must be absolute") })
-        XCTAssertTrue(report.unsupported.contains { $0.contains("not found") })
+        XCTAssertTrue(report.unsupported.contains { $0.hasPrefix("/does/not/exist.sfc:") && $0.contains("--import-root") },
+                      "paths outside the import roots are refused before they're looked up")
     }
 
     func testUnknownAndAmbiguousFilesGoToReviewQueue() async throws {

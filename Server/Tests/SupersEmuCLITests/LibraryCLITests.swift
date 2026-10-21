@@ -4,7 +4,8 @@ import XCTest
 
 extension CLIEndToEndTests {
     func testLibraryCommandsThroughCLI() async throws {
-        let sources = store.paths.root.appendingPathComponent("cli-src", isDirectory: true)
+        let sources = store.paths.root.deletingLastPathComponent().appendingPathComponent("cli-src-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: sources) }
         try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
         var snes = [UInt8](repeating: 0, count: 0x8000)
         for i in 0..<64 { snes[i] = UInt8(i) }
@@ -55,7 +56,8 @@ extension CLIEndToEndTests {
 
 extension CLIEndToEndTests {
     func testBIOSStatusThroughCLI() async throws {
-        let sources = store.paths.root.appendingPathComponent("cli-bios", isDirectory: true)
+        let sources = store.paths.root.deletingLastPathComponent().appendingPathComponent("cli-bios-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: sources) }
         try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
         try Data(count: 524_288).write(to: sources.appendingPathComponent("scph5501.bin"))
 

@@ -123,6 +123,7 @@ public final class PairingService: Sendable {
         } else {
             user = caller.user
         }
+        try caller.requireCanMintDevice(for: user)
 
         let created = now()
         let expires = created.addingTimeInterval(Self.codeLifetime)
@@ -151,10 +152,18 @@ public final class PairingService: Sendable {
     /// Consumes `request.code` and issues a device token for the code's user.
     public func pair(_ request: PairRequest, client: String = "local",
                      exposure: RouterExposure = .local) throws -> PairResponse {
+        // Reserve the attempt before any guess is checked, so concurrent requests can't all pass the limit and
+        // only record their failures afterwards. Only a wrong code keeps the reservation, as the recorded failure;
+        // success, a bad request or a database error gives it back.
+        guard let reservation = limiter.reserveAttempt(client: client, exposure: exposure) else {
+            throw HTTPError(.tooManyRequests, message: "Too many pairing attempts. Wait a minute and try again.")
+        }
+        var wrongCode = false
+        defer { if !wrongCode { limiter.release(reservation) } }
         let code = request.code.filter(\.isNumber)
         let deviceName = request.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard code.count == 6 else {
-            limiter.recordFailure(client: client, exposure: exposure)
+            wrongCode = true
             throw HTTPError(.unauthorized, message: "Invalid or expired pairing code")
         }
         guard !deviceName.isEmpty, deviceName.count <= 100 else { throw HTTPError(.badRequest, message: "deviceName is required") }
@@ -179,7 +188,7 @@ public final class PairingService: Sendable {
             return (user, device.deviceID, device.token)
         }
         guard let paired else {
-            limiter.recordFailure(client: client, exposure: exposure)
+            wrongCode = true
             throw HTTPError(.unauthorized, message: "Invalid or expired pairing code")
         }
         return PairResponse(token: paired.token, deviceID: paired.deviceID, user: paired.user, serverName: store.serverName)
@@ -205,6 +214,7 @@ public final class PairingService: Sendable {
             guard let owner = try store.adminUser() else { throw HTTPError(.notFound, message: "No owner user") }
             user = owner
         }
+        try caller.requireCanMintDevice(for: user)
         let at = now()
         let device = try store.db.write { db in
             let device = try Self.mintDevice(db: db, user: user, deviceName: request.deviceName, platform: request.platform, at: at)
@@ -433,11 +443,44 @@ actor PairRequestService {
 
 /// Limits failed `/v1/pair` attempts per client IP (5 a minute by default), with a higher global ceiling so many
 /// addresses can't brute-force together: at 60 failures a minute a 10-minute code faces at most ~600 guesses of
-/// 1,000,000. One client's failures don't lock out others until the ceiling is reached.
+/// 1,000,000. One client's failures don't lock out others until the ceiling is reached. Every guess reserves its
+/// slot atomically before it is checked (`reserveAttempt`), so in-flight requests count against the limit too.
 public final class PairingRateLimiter: Sendable {
+    /// A slot taken by one in-flight attempt. Release it when the attempt turned out not to be a failed guess.
+    public struct Reservation: Sendable, Equatable {
+        let id: UUID
+        let client: String
+        let exposure: RouterExposure
+    }
+
+    private struct Attempt {
+        let id: UUID
+        let at: Date
+    }
+
     private struct FailureState {
-        var clients: [String: [Date]] = [:]
-        var global: [RouterExposure: [Date]] = [:]
+        var clients: [String: [Attempt]] = [:]
+        var global: [RouterExposure: [Attempt]] = [:]
+
+        mutating func prune(olderThan cutoff: Date) {
+            for key in Array(clients.keys) {
+                clients[key]?.removeAll { $0.at < cutoff }
+                if clients[key]?.isEmpty == true { clients[key] = nil }
+            }
+            for key in Array(global.keys) {
+                global[key]?.removeAll { $0.at < cutoff }
+                if global[key]?.isEmpty == true { global[key] = nil }
+            }
+        }
+
+        func allows(client: String, exposure: RouterExposure, maxFailures: Int, maxGlobalFailures: Int) -> Bool {
+            (clients[client]?.count ?? 0) < maxFailures && (global[exposure]?.count ?? 0) < maxGlobalFailures
+        }
+
+        mutating func append(_ attempt: Attempt, client: String, exposure: RouterExposure) {
+            clients[client, default: []].append(attempt)
+            global[exposure, default: []].append(attempt)
+        }
     }
 
     let maxFailures: Int
@@ -454,19 +497,35 @@ public final class PairingRateLimiter: Sendable {
         self.now = now
     }
 
+    /// A cheap early check (e.g. before reading a request body). It reserves nothing; use `reserveAttempt` to guess.
     public func allowAttempt(client: String, exposure: RouterExposure = .local) -> Bool {
         let cutoff = now().addingTimeInterval(-window)
         return failures.withLock { failures in
-            for key in Array(failures.clients.keys) {
-                failures.clients[key]?.removeAll { $0 < cutoff }
-                if failures.clients[key]?.isEmpty == true { failures.clients[key] = nil }
-            }
-            for key in Array(failures.global.keys) {
-                failures.global[key]?.removeAll { $0 < cutoff }
-                if failures.global[key]?.isEmpty == true { failures.global[key] = nil }
-            }
-            return (failures.clients[client]?.count ?? 0) < maxFailures
-                && (failures.global[exposure]?.count ?? 0) < maxGlobalFailures
+            failures.prune(olderThan: cutoff)
+            return failures.allows(client: client, exposure: exposure, maxFailures: maxFailures, maxGlobalFailures: maxGlobalFailures)
+        }
+    }
+
+    /// Checks the limits and takes a slot in one step, or returns nil when the client or the exposure is at its limit.
+    public func reserveAttempt(client: String, exposure: RouterExposure = .local) -> Reservation? {
+        let at = now()
+        return failures.withLock { failures in
+            failures.prune(olderThan: at.addingTimeInterval(-window))
+            guard failures.allows(client: client, exposure: exposure, maxFailures: maxFailures,
+                                  maxGlobalFailures: maxGlobalFailures) else { return nil }
+            let attempt = Attempt(id: UUID(), at: at)
+            failures.append(attempt, client: client, exposure: exposure)
+            return Reservation(id: attempt.id, client: client, exposure: exposure)
+        }
+    }
+
+    /// Gives a reserved slot back (the attempt succeeded, or was rejected before any code was checked).
+    public func release(_ reservation: Reservation) {
+        failures.withLock { failures in
+            failures.clients[reservation.client]?.removeAll { $0.id == reservation.id }
+            if failures.clients[reservation.client]?.isEmpty == true { failures.clients[reservation.client] = nil }
+            failures.global[reservation.exposure]?.removeAll { $0.id == reservation.id }
+            if failures.global[reservation.exposure]?.isEmpty == true { failures.global[reservation.exposure] = nil }
         }
     }
 
@@ -475,11 +534,8 @@ public final class PairingRateLimiter: Sendable {
     }
 
     public func recordAttempt(client: String, exposure: RouterExposure = .local) {
-        let at = now()
-        failures.withLock {
-            $0.clients[client, default: []].append(at)
-            $0.global[exposure, default: []].append(at)
-        }
+        let attempt = Attempt(id: UUID(), at: now())
+        failures.withLock { $0.append(attempt, client: client, exposure: exposure) }
     }
 }
 

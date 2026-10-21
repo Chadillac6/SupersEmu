@@ -123,7 +123,8 @@ final class PairingTests: XCTestCase {
         let player = try store.createUser(displayName: "Alex", role: .player)
         let playerToken = try store.createDeviceToken(userID: player.id, deviceName: "Alex's iPhone").token
         let (_, readOnlyBot) = try store.createAPIToken(ownerUserID: admin.id, name: "bot", scopes: [.libraryRead])
-        let (_, adminBot) = try store.createAPIToken(ownerUserID: admin.id, name: "openclaw", scopes: [.usersAdmin])
+        let (_, usersAdminBot) = try store.createAPIToken(ownerUserID: admin.id, name: "openclaw", scopes: [.usersAdmin])
+        let (_, adminBot) = try store.createAPIToken(ownerUserID: admin.id, name: "openclaw-full", scopes: Scope.allCases)
         try await app().test(.router) { client in
             let body = try self.json(CreatePairingCodeRequest())
             try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: [.contentType: "application/json"], body: body) {
@@ -134,6 +135,9 @@ final class PairingTests: XCTestCase {
             }
             try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: self.bearer(readOnlyBot), body: body) {
                 XCTAssertEqual($0.status, .forbidden)
+            }
+            try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: self.bearer(usersAdminBot), body: body) {
+                XCTAssertEqual($0.status, .forbidden, "users:admin alone can't mint an admin device (it would add library:write)")
             }
             try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: self.bearer(adminBot), body: body) {
                 XCTAssertEqual($0.status, .created)
@@ -186,6 +190,79 @@ final class PairingTests: XCTestCase {
         XCTAssertTrue(limiter.allowAttempt(client: "b"), "one client's failures don't lock out others")
         clock.now = clock.now.addingTimeInterval(61)
         XCTAssertTrue(limiter.allowAttempt(client: "a"))
+    }
+
+    func testReservationChecksAndCountsInOneStep() async {
+        let limiter = PairingRateLimiter(maxFailures: 5, maxGlobalFailures: 8)
+        let granted = await withTaskGroup(of: Bool.self) { group in
+            for i in 0..<50 { group.addTask { limiter.reserveAttempt(client: i.isMultiple(of: 2) ? "a" : "b") != nil } }
+            return await group.reduce(0) { $0 + ($1 ? 1 : 0) }
+        }
+        XCTAssertEqual(granted, 8, "concurrent attempts can't exceed the global limit")
+        XCTAssertNil(limiter.reserveAttempt(client: "c"))
+
+        let single = PairingRateLimiter(maxFailures: 1)
+        let reservation = try? XCTUnwrap(single.reserveAttempt(client: "a"))
+        XCTAssertNil(single.reserveAttempt(client: "a"), "an in-flight attempt holds its slot")
+        if let reservation { single.release(reservation) }
+        XCTAssertNotNil(single.reserveAttempt(client: "a"), "a released slot is free again")
+    }
+
+    func testConcurrentWrongGuessesAreLimited() async throws {
+        let service = PairingService(store: store, limiter: PairingRateLimiter(maxFailures: 5))
+        _ = try service.createCode(for: nil, caller: try adminAuth())
+        let statuses = await withTaskGroup(of: HTTPResponse.Status?.self) { group in
+            for _ in 0..<30 {
+                group.addTask {
+                    do {
+                        _ = try service.pair(PairRequest(code: "000000", deviceName: "x", platform: "iOS"), client: "attacker")
+                        return nil
+                    } catch { return (error as? HTTPError)?.status }
+                }
+            }
+            return await group.reduce(into: [HTTPResponse.Status?]()) { $0.append($1) }
+        }
+        XCTAssertEqual(statuses.filter { $0 == .unauthorized }.count, 5, "only 5 guesses are checked")
+        XCTAssertEqual(statuses.filter { $0 == .tooManyRequests }.count, 25)
+    }
+
+    func testSuccessfulPairAndBadRequestDontUseUpTheLimit() throws {
+        let service = PairingService(store: store, limiter: PairingRateLimiter(maxFailures: 1))
+        let code = try service.createCode(for: nil, caller: try adminAuth()).code
+        XCTAssertThrowsError(try service.pair(PairRequest(code: code, deviceName: " ", platform: "iOS"))) {
+            XCTAssertEqual(($0 as? HTTPError)?.status, .badRequest)
+        }
+        _ = try service.pair(PairRequest(code: code, deviceName: "Phone", platform: "iOS"))
+        let next = try service.createCode(for: nil, caller: try adminAuth()).code
+        _ = try service.pair(PairRequest(code: next, deviceName: "Tablet", platform: "iOS"))
+    }
+
+    func testScopedTokenCantMintDeviceWithMoreRights() async throws {
+        let service = PairingService(store: store)
+        let usersAdminOnly = try store.createAPIToken(ownerUserID: admin.id, name: "bot", scopes: [.usersAdmin]).token
+        let caller = try XCTUnwrap(store.authenticate(token: usersAdminOnly))
+        XCTAssertThrowsError(try service.createCode(for: nil, caller: caller), "an admin device would add library:write") {
+            XCTAssertEqual(($0 as? HTTPError)?.status, .forbidden)
+        }
+        let player = try store.createUser(displayName: "Alex", role: .player)
+        XCTAssertThrowsError(try service.createCode(for: player.id, caller: caller)) {
+            XCTAssertEqual(($0 as? HTTPError)?.status, .forbidden)
+        }
+
+        let playerInviter = try store.createAPIToken(ownerUserID: admin.id, name: "inviter",
+                                                     scopes: [.usersAdmin, .libraryRead, .savesRead]).token
+        XCTAssertNoThrow(try service.createCode(for: player.id, caller: try XCTUnwrap(store.authenticate(token: playerInviter))))
+        XCTAssertThrowsError(try service.createCode(for: nil, caller: try XCTUnwrap(store.authenticate(token: playerInviter))))
+
+        let full = try store.createAPIToken(ownerUserID: admin.id, name: "full", scopes: Scope.allCases).token
+        XCTAssertNoThrow(try service.createCode(for: nil, caller: try XCTUnwrap(store.authenticate(token: full))))
+
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: self.bearer(usersAdminOnly),
+                                     body: try self.json(CreatePairingCodeRequest(userID: nil))) {
+                XCTAssertEqual($0.status, .forbidden)
+            }
+        }
     }
 
     // MARK: QR payload
@@ -262,5 +339,18 @@ extension PairingTests {
         try store.db.write { try $0.execute(sql: "DROP TRIGGER fail_devices") }
         let paired = try service.pair(PairRequest(code: code.code, deviceName: "iPhone", platform: "iOS"))
         XCTAssertNotNil(try store.authenticate(token: paired.token))
+    }
+
+    func testDatabaseFailuresDontUseUpTheLimit() throws {
+        let service = PairingService(store: store, limiter: PairingRateLimiter(maxFailures: 2))
+        let code = try service.createCode(for: nil, caller: try adminAuth())
+        try store.db.write { try $0.execute(sql: "CREATE TRIGGER fail_devices BEFORE INSERT ON devices BEGIN SELECT RAISE(ABORT, 'boom'); END") }
+        for _ in 0..<5 {
+            XCTAssertThrowsError(try service.pair(PairRequest(code: code.code, deviceName: "iPhone", platform: "iOS"))) {
+                XCTAssertNotEqual(($0 as? HTTPError)?.status, .tooManyRequests)
+            }
+        }
+        try store.db.write { try $0.execute(sql: "DROP TRIGGER fail_devices") }
+        XCTAssertNoThrow(try service.pair(PairRequest(code: code.code, deviceName: "iPhone", platform: "iOS")))
     }
 }

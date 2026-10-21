@@ -116,6 +116,22 @@ final class PairRequestTests: XCTestCase {
         }
     }
 
+    func testScopedTokenCantApproveDeviceWithMoreRights() async throws {
+        let request = try await create()
+        let token = try store.createAPIToken(ownerUserID: admin.id, name: "bot", scopes: [.usersAdmin]).token
+        let caller = try XCTUnwrap(store.authenticate(token: token))
+        do {
+            try await service.approve(id: request.requestID, userID: nil, caller: caller)
+            XCTFail("users:admin alone can't approve an admin device")
+        } catch {
+            XCTAssertEqual((error as? HTTPError)?.status, .forbidden)
+        }
+        let secret = String(repeating: "11", count: 32)
+        let stillPending = try await service.claim(id: request.requestID, claimSecret: secret)
+        XCTAssertEqual(stillPending, .pending)
+        try await service.approve(id: request.requestID, userID: nil, caller: try makeCaller())
+    }
+
     func testDeniedExpiredAndWrongSecretStatuses() async throws {
         let denied = try await create()
         do {
