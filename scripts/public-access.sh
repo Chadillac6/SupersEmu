@@ -352,8 +352,7 @@ rollback_enable() {
       launchctl_cmd bootstrap system "$ddns_plist" >/dev/null 2>&1 || echo "Couldn't restore the previous DDNS LaunchDaemon." >&2
     else
       rm -f "$ddns_plist"
-      ((!previous_ddns_plist_existed)) || stranded=1
-      ((!previous_ddns_plist_existed)) || echo "The previous DDNS LaunchDaemon ran as root, so it wasn't restored; run enable again." >&2
+      ((!previous_ddns_plist_existed)) || echo "The previous DDNS LaunchDaemon ran as root, so it wasn't restored; DNS won't update until enable succeeds." >&2
     fi
   fi
   if ((caddy_started)); then
@@ -384,8 +383,8 @@ rollback_enable() {
   fi
   [[ -z "$previous_config_backup" ]] || rm -f "$previous_config_backup"
   if ((stranded)) && [[ -f "$config_file" ]]; then
-    # The old daemon is gone, so don't leave Remote Access marked as on.
-    write_access_config false || true
+    # The old Caddy daemon is gone, so don't leave Remote Access marked as on; keep the saved endpoint as it was.
+    host= port_explicit=0 write_access_config false || true
     launchctl_cmd kickstart -k "$server_label" >/dev/null 2>&1 || true
   fi
   if ((new_token_written)); then
