@@ -343,7 +343,7 @@ PY
 }
 
 rollback_enable() {
-  local status=${1:-$?}
+  local status=${1:-$?} stranded=0
   trap - ERR
   if ((ddns_started)); then
     launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
@@ -352,6 +352,7 @@ rollback_enable() {
       launchctl_cmd bootstrap system "$ddns_plist" >/dev/null 2>&1 || echo "Couldn't restore the previous DDNS LaunchDaemon." >&2
     else
       rm -f "$ddns_plist"
+      ((!previous_ddns_plist_existed)) || stranded=1
       ((!previous_ddns_plist_existed)) || echo "The previous DDNS LaunchDaemon ran as root, so it wasn't restored; run enable again." >&2
     fi
   fi
@@ -369,6 +370,7 @@ rollback_enable() {
         launchctl_cmd bootstrap system "$plist" >/dev/null 2>&1 || echo "Couldn't restore the previous Caddy LaunchDaemon." >&2
       else
         rm -f "$plist"
+        ((!previous_caddy_plist_existed)) || stranded=1
         ((!previous_caddy_plist_existed)) || echo "The previous Caddy LaunchDaemon ran as root, so it wasn't restored; run enable again." >&2
       fi
     fi
@@ -381,6 +383,11 @@ rollback_enable() {
     fi
   fi
   [[ -z "$previous_config_backup" ]] || rm -f "$previous_config_backup"
+  if ((stranded)) && [[ -f "$config_file" ]]; then
+    # The old daemon is gone, so don't leave Remote Access marked as on.
+    write_access_config false || true
+    launchctl_cmd kickstart -k "$server_label" >/dev/null 2>&1 || true
+  fi
   if ((new_token_written)); then
     if ((previous_token_existed)); then
       mv -f "$previous_token_backup" "$token_file" || true
