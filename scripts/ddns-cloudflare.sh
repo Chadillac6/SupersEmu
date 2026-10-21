@@ -35,6 +35,7 @@ import datetime
 import json
 import os
 import sys
+import tempfile
 
 path, error, ip, wrote = sys.argv[1:]
 try:
@@ -49,12 +50,17 @@ value = {
     "lastCheckAt": now,
     "lastError": error or None,
 }
-temporary = path + ".tmp"
-with open(temporary, "w", encoding="utf-8") as stream:
-    json.dump(value, stream)
-    stream.write("\n")
-os.chmod(temporary, 0o644)
-os.replace(temporary, path)
+# mkstemp never follows or reuses an existing name, so a planted symlink can't redirect the write.
+descriptor, temporary = tempfile.mkstemp(prefix=".ddns-state.", dir=os.path.dirname(path))
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        os.fchmod(stream.fileno(), 0o644)
+        json.dump(value, stream)
+        stream.write("\n")
+    os.replace(temporary, path)
+except BaseException:
+    os.unlink(temporary)
+    raise
 PY
 }
 

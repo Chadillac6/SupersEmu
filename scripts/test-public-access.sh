@@ -106,12 +106,18 @@ PATH="$tmp/bin:/usr/bin:/bin" TEST_EVENTS="$events" REJECT_TOKEN=0 \
 
 assert "Cloudflare token stored with mode 0600" bash -c '[[ "$(stat -f "%Lp" "$1")" == 600 ]]' _ "$data/cloudflare.token"
 assert "DDNS runs before Caddy starts" bash -c '[[ "$(sed -n "1p" "$1")" == ddns && "$(sed -n "2p" "$1")" == caddy ]]' _ "$events"
-assert "DDNS state created during enable" test -f "$data/ddns-state.json"
+assert "DDNS state created during enable" test -f "$data/ddns/ddns-state.json"
+assert "Caddyfile is installed outside Caddy's writable data folder" bash -c \
+  '[[ -f "$1/remote-access/Caddyfile" && ! -e "$1/caddy/Caddyfile" ]]' _ "$data"
+assert "DDNS script is installed outside the data folder root" bash -c \
+  '[[ -x "$1/remote-access/bin/ddns-cloudflare.sh" && ! -e "$1/bin" ]]' _ "$data"
+assert "Caddy admin API is off" grep -Eq '^[[:space:]]*admin off$' "$data/remote-access/Caddyfile"
 assert "public-access config is readable by the data-dir owner" test -r "$data/public-access.json"
 assert "public-access config is mode 0600" bash -c '[[ "$(stat -f "%Lp" "$1")" == 600 ]]' _ "$data/public-access.json"
 
 "$script_dir/public-access.sh" disable --no-launchd --purge --data-dir "$data" >/dev/null
-assert "purge removes token and DDNS state" bash -c '[[ ! -e "$1/cloudflare.token" && ! -e "$1/ddns-state.json" && ! -e "$1/bin" ]]' _ "$data"
+assert "purge removes token and DDNS state" bash -c \
+  '[[ ! -e "$1/cloudflare.token" && ! -e "$1/ddns" && ! -e "$1/bin" && ! -e "$1/remote-access" ]]' _ "$data"
 
 path_data="$tmp/path-data"
 caddy_calls="$tmp/caddy-calls"
@@ -155,7 +161,7 @@ printf '%s\n' 'old-ddns-plist' >"$rollback_launchd/com.chadillac6.supersemu.ddns
 : >"$events"
 if PATH="$tmp/bin:/usr/bin:/bin" TEST_EVENTS="$events" REJECT_TOKEN=0 \
   SUPERSEMU_CLOUDFLARE_API=https://cloudflare.test/client/v4 \
-  SUPERSEMU_LAUNCHD_DIR="$rollback_launchd" \
+  SUPERSEMU_LAUNCHD_DIR="$rollback_launchd" SUPERSEMU_REMOTE_ACCESS_DIR="$tmp/rollback-install" \
   "$script_dir/public-access.sh" enable --host games.supersemu.com --data-dir "$rollback_data" \
   >"$tmp/rollback.log" 2>&1; then
   rollback_status=0
@@ -169,6 +175,54 @@ assert "failed Caddy bootstrap restores the previous plists" bash -c \
   "$rollback_launchd/com.chadillac6.supersemu.ddns.plist"
 assert "failed Caddy bootstrap re-bootstraps both previous jobs" bash -c \
   'grep -Fq "bootstrap-old-caddy" "$1" && grep -Fq "bootstrap-old-ddns" "$1"' _ "$events"
+
+launchd_data="$tmp/launchd-data"
+launchd_dir="$tmp/launchd"
+launchd_install="$tmp/launchd-install"
+mkdir -p "$launchd_data" "$launchd_dir"
+printf '%s\n' 'launchd-token' >"$launchd_data/cloudflare.token"
+mkdir -p "$launchd_data/bin"
+printf '%s\n' '{"ip":"192.0.2.1"}' >"$launchd_data/ddns-state.json"
+plist_value() {
+  python3 - "$1" "$2" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as stream:
+    value = plistlib.load(stream)
+for key in sys.argv[2].split("."):
+    value = value[int(key)] if isinstance(value, list) else value[key]
+print(value)
+PY
+}
+: >"$events"
+cat >"$tmp/bin/launchctl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s|%s\n' "$1" "${*:2}" >>"$TEST_EVENTS"
+STUB
+if PATH="$tmp/bin:/usr/bin:/bin" TEST_EVENTS="$events" REJECT_TOKEN=0 \
+  SUPERSEMU_CLOUDFLARE_API=https://cloudflare.test/client/v4 SUPERSEMU_CADDY_PATH="$tmp/bin/caddy" \
+  SUPERSEMU_LAUNCHD_DIR="$launchd_dir" SUPERSEMU_REMOTE_ACCESS_DIR="$launchd_install" \
+  "$script_dir/public-access.sh" enable --host games.supersemu.com --data-dir "$launchd_data" \
+  >"$tmp/launchd-ok.log" 2>&1; then
+  launchd_status=0
+else
+  launchd_status=$?
+fi
+assert "launchd enable succeeds" test "$launchd_status" -eq 0
+caddy_plist="$launchd_dir/com.chadillac6.supersemu.caddy.plist"
+assert "Caddy daemon runs as the service account" bash -c \
+  '[[ "$1" == _supersemu && "$2" == _supersemu ]]' _ "$(plist_value "$caddy_plist" UserName)" "$(plist_value "$caddy_plist" GroupName)"
+assert "Caddy daemon runs the installed copy" test "$(plist_value "$caddy_plist" ProgramArguments.0)" == "$launchd_install/bin/caddy"
+assert "Caddy daemon loads the installed Caddyfile" test "$(plist_value "$caddy_plist" ProgramArguments.3)" == "$launchd_install/Caddyfile"
+ddns_plist="$launchd_dir/com.chadillac6.supersemu.ddns.plist"
+assert "DDNS daemon runs as the service account" bash -c \
+  '[[ "$1" == _supersemu && "$2" == _supersemu ]]' _ "$(plist_value "$ddns_plist" UserName)" "$(plist_value "$ddns_plist" GroupName)"
+assert "DDNS daemon runs the installed script" test "$(plist_value "$ddns_plist" ProgramArguments.4)" == "$launchd_install/bin/ddns-cloudflare.sh"
+assert "DDNS daemon keeps its state in ddns/" test "$(plist_value "$ddns_plist" ProgramArguments.8)" == "$launchd_data/ddns"
+assert "Caddy is copied out of Homebrew for the daemon" cmp -s "$tmp/bin/caddy" "$launchd_install/bin/caddy"
+assert "launchd Caddyfile is installed with admin off" grep -Eq '^[[:space:]]*admin off$' "$launchd_install/Caddyfile"
+assert "legacy DDNS script and state are removed" bash -c '[[ ! -e "$1/bin" && ! -e "$1/ddns-state.json" ]]' _ "$launchd_data"
 
 missing="$tmp/missing"
 if PATH="$tmp/empty-path:/usr/bin:/bin" SUPERSEMU_CADDY_PATH="$tmp/empty-path/caddy" \

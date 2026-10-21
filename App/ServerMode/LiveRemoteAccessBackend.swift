@@ -18,6 +18,7 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
 
     private static let selectLocalServerMessage = "Select a local server to manage Remote Access"
     private static let startServerMessage = "Start the SupersEmu server to manage Remote Access"
+    private static let bootServerMessage = "Remote Access needs the boot server. Register Boot Daemon, then turn it on."
 
     private weak var attachedServer: ServerModeModel?
     private var latestStatus: RemoteAccessStatusResponse?
@@ -57,7 +58,7 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
         lastHost = host
         let server = server
         let script: URL
-        switch await prepareHelper(server, requiringCaddy: true) {
+        switch await prepareHelper(server, enabling: true) {
         case .ready(let helper): script = helper
         case .unavailable(let phase): return phase
         }
@@ -167,7 +168,7 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
         let host = lastHost
         let server = server
         let script: URL
-        switch await prepareHelper(server, requiringCaddy: false) {
+        switch await prepareHelper(server, enabling: false) {
         case .ready(let helper): script = helper
         case .unavailable(let phase): return phase
         }
@@ -231,16 +232,21 @@ final class LiveRemoteAccessBackend: RemoteAccessBackend {
     }
 
     /// The checks turnOn and turnOff share before running the bundled helper as root.
-    private func prepareHelper(_ server: ServerModeModel, requiringCaddy: Bool) async -> HelperPreparation {
+    private func prepareHelper(_ server: ServerModeModel, enabling: Bool) async -> HelperPreparation {
         guard server.isLocal else {
             return .unavailable(.error(.other(Self.selectLocalServerMessage), steps: nil))
+        }
+        // The root daemons may only use the boot server's root-owned data folder, never a session server's
+        // folder in the user's home. Turning off stays available so an older session setup can be removed.
+        if enabling, server.source != .daemon {
+            return .unavailable(.error(.other(Self.bootServerMessage), steps: nil))
         }
         do {
             try await checkServerIsRunning(server)
         } catch {
             return .unavailable(.error(.other(Self.startServerMessage), steps: nil))
         }
-        if requiringCaddy, Self.findCaddy() == nil {
+        if enabling, Self.findCaddy() == nil {
             return .unavailable(.error(.caddyMissing(homebrewInstalled: Self.findBrew() != nil), steps: nil))
         }
         guard let script = Bundle.main.resourceURL?.appendingPathComponent("public-access.sh"),

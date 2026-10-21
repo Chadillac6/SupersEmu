@@ -1,6 +1,10 @@
 {
 	# SUPERSEMU_ACME_EMAIL
+	admin off
 	skip_install_trust
+	log {
+		output file "{$SUPERSEMU_CADDY_DATA_DIR}/caddy.log"
+	}
 	servers {
 		timeouts {
 			read_header 10s
