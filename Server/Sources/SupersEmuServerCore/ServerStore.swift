@@ -20,6 +20,9 @@ public struct ServerPaths: Sendable {
     public var metadata: URL { root.appendingPathComponent("metadata", isDirectory: true) }
     public var adminToken: URL { root.appendingPathComponent("admin.token") }
     public var storageConfig: URL { root.appendingPathComponent("storage.json") }
+    /// Folders on the server an admin may import from by absolute path (`supersemu-server run --import-root`).
+    /// `Incoming` is always allowed; the data folder and the library's own folders never are.
+    public var importRoots: [URL] = []
 
     /// A library file recorded in the database (`games/…`, `bios/…`, `artwork/…`), relative to the library root.
     public func libraryFile(_ storedPath: String) -> URL { libraryRoot.appendingPathComponent(storedPath) }
@@ -84,8 +87,11 @@ public final class ServerStore: @unchecked Sendable {
         }
     }
 
-    public static func inMemory(root: URL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)) throws -> ServerStore {
-        let paths = ServerPaths(root: root)
+    /// Test store. Absolute-path imports may read anywhere under the temporary folder (minus the store's own root).
+    public static func inMemory(root: URL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+                                importRoots: [URL] = [FileManager.default.temporaryDirectory]) throws -> ServerStore {
+        var paths = ServerPaths(root: root)
+        paths.importRoots = importRoots
         try paths.createDirectories()
         return try ServerStore(db: DatabaseQueue(), paths: paths, serverName: "Test Server")
     }

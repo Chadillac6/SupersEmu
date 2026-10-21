@@ -41,6 +41,19 @@ public struct AuthContext: Sendable, Equatable {
         }
     }
 
+    /// Scopes a paired device of `user` holds.
+    public static func deviceScopes(for user: UserInfo) -> [Scope] {
+        let device = AuthContext(user: user, credential: .device(id: ""))
+        return Scope.allCases.filter(device.has)
+    }
+
+    /// A scoped token can't mint a device credential with more rights than it has.
+    public func requireCanMintDevice(for user: UserInfo) throws {
+        if let missing = Self.deviceScopes(for: user).first(where: { !has($0) }) {
+            throw HTTPError(.forbidden, message: "Caller lacks scope \(missing.rawValue) that a device for this user would get")
+        }
+    }
+
     public func require(_ scope: Scope) throws {
         guard has(scope) else { throw HTTPError(.forbidden, message: "Missing scope \(scope.rawValue)") }
     }

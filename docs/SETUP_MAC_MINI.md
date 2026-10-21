@@ -75,7 +75,9 @@ sudo cp .build/release/supersemu /usr/local/bin/
 supersemu server status
 ```
 
-- Import a folder, files or .zip archives: `supersemu library import ~/ROMs`.
+- Import a folder, files or .zip archives: `supersemu library import ~/ROMs`. The server only reads its
+  Incoming folder and folders the daemon was started with `--import-root` for (e.g. add
+  `--import-root /Users/chad/ROMs` to the `supersemu-server run` arguments). It never reads its own data folder.
 - Or drop files into the server's Incoming folder and run `supersemu library scan`.
 - See what needs attention: `supersemu library review`.
 - BIOS files import like games (they're recognised by their contents).

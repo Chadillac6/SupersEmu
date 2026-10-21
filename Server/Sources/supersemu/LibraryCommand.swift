@@ -25,7 +25,8 @@ struct Library: AsyncParsableCommand {
 
     struct Import: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Import files, folders or .zip archives. The server reads these paths, so run this on the Mac mini or pass server-side paths.")
+            abstract: "Import files, folders or .zip archives. The server reads these paths, so run this on the Mac mini or pass server-side paths.",
+            discussion: "The server only reads its Incoming folder and folders it was started with --import-root for.")
         @Argument(help: "Files, folders or .zip archives.") var paths: [String]
         @OptionGroup var connection: Connection
 

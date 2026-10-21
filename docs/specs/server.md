@@ -72,6 +72,9 @@ Player devices (Mac, iPhone, iPad)
 ```
 - Import sources: a watched `Incoming` folder on the Mac mini, drag-drop in the admin UI, and
   `supersemu library import <path>`. The pipeline in `import-and-library.md` now runs on the server.
+  Server-side paths must resolve (after symlinks) inside `Incoming` or a `supersemu-server run --import-root`
+  folder, and never inside the data folder, the library's own folders, the backup destination, hidden folders
+  or system folders.
 - Every active friend sees every game Chad imports by default. Chad can hide individual games for
   each friend in Server Mode; hiding a game never deletes that friend's saves. New imports are
   shared automatically. Admins always see every game.

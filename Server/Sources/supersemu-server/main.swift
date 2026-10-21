@@ -15,7 +15,14 @@ struct SupersEmuServerCommand: AsyncParsableCommand {
     struct Options: ParsableArguments {
         @Option(help: "Data directory (library, games, saves).")
         var dataDir: String = ServerPaths.defaultRoot.path
-        var paths: ServerPaths { ServerPaths(root: URL(fileURLWithPath: dataDir, isDirectory: true)) }
+        @Option(name: .customLong("import-root"),
+                help: "Folder `supersemu library import --server-path` may read on this Mac (repeatable; Incoming is always allowed).")
+        var importRoots: [String] = []
+        var paths: ServerPaths {
+            var paths = ServerPaths(root: URL(fileURLWithPath: dataDir, isDirectory: true))
+            paths.importRoots = importRoots.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
+            return paths
+        }
     }
 
     struct Run: AsyncParsableCommand {
