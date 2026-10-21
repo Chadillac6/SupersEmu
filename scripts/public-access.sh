@@ -544,6 +544,7 @@ PY
     # As root, only write into a data folder that already exists; never create one in a user's home.
     if ((EUID != 0)); then mkdir -p "$data_dir"; fi
     if [[ -d "$data_dir" ]]; then write_access_config false; fi
+    owns_install=0
     if ((no_launchd)); then
       if [[ -f "$caddy_dir/caddy.pid" ]]; then
         pid=$(cat "$caddy_dir/caddy.pid")
@@ -552,7 +553,6 @@ PY
       fi
     else
       # Another server's daemons (e.g. the boot server's, when turning off a session setup) stay running.
-      owns_install=0
       [[ "$data_dir" != "$boot_data_dir" ]] || owns_install=1
       if daemon_belongs_here "$plist" "$caddy_dir"; then
         [[ ! -f "$plist" ]] || owns_install=1
