@@ -13,7 +13,8 @@ shift
 host=
 port=8489
 port_explicit=0
-data_dir=${SUPERSEMU_DATA_DIR:-"/Library/Application Support/SupersEmu Server"}
+boot_data_dir="/Library/Application Support/SupersEmu Server"
+data_dir=${SUPERSEMU_DATA_DIR:-"$boot_data_dir"}
 no_launchd=0
 purge=0
 local_test=0
@@ -47,7 +48,7 @@ fi
 if ((no_launchd)) && [[ $action != status ]]; then
   # Without launchd, Caddy runs as the caller; it must never run as root.
   ((EUID != 0)) || { echo "--no-launchd runs Caddy as the calling user; don't run it as root."; exit 2; }
-elif [[ "$data_dir" == "/Library/Application Support/SupersEmu Server" && $EUID -ne 0 && $action != status ]]; then
+elif [[ "$data_dir" == "$boot_data_dir" && $EUID -ne 0 && $action != status ]]; then
   echo "This operation needs administrator access; rerunning with sudo."
   exec sudo env SUPERSEMU_DATA_DIR="$data_dir" "$0" "${original_args[@]}"
 fi
@@ -248,6 +249,30 @@ allow_through_firewall() {
   "$firewall" --unblockapp "$1" >/dev/null 2>&1 || true
 }
 
+# Prints the state folder an installed LaunchDaemon was set up with, or nothing if it isn't installed.
+daemon_data_dir() {
+  [[ -f "$1" ]] || return 0
+  python3 - "$1" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as stream:
+    value = plistlib.load(stream)
+arguments = value.get("ProgramArguments", [])
+if "--data-dir" in arguments[:-1]:
+    print(arguments[arguments.index("--data-dir") + 1])
+else:
+    print(value.get("EnvironmentVariables", {}).get("SUPERSEMU_CADDY_DATA_DIR", ""))
+PY
+}
+
+# True if the installed daemon (or none at all) belongs to this data folder, so disabling it here is safe.
+daemon_belongs_here() {
+  local served
+  served=$(daemon_data_dir "$1")
+  [[ -z "$served" || "$served" == "$2" || "$served" == "$data_dir" ]]
+}
+
 launchctl_cmd() {
   if command -v launchctl >/dev/null 2>&1; then launchctl "$@"; else return 1; fi
 }
@@ -310,7 +335,12 @@ case "$action" in
     fi
     [[ -f "$template" ]] || { echo "Missing Caddy template: $template"; exit 1; }
     if ((privileged)); then
-      # Root daemons must not load anything from a folder another account controls (e.g. a session server's).
+      # Root daemons must not load anything from a folder another account controls (e.g. a session server's),
+      # and the shared install folder belongs to the boot server alone.
+      if [[ "$data_dir" != "$boot_data_dir" ]]; then
+        echo "Remote Access needs the boot server's data folder ($boot_data_dir), not $data_dir."
+        exit 6
+      fi
       require_root_owned_path "$data_dir" || exit 6
       ensure_service_account
       install -d -o root -g wheel -m 755 "$install_dir" "$install_dir/bin"
@@ -521,14 +551,23 @@ PY
         rm -f "$caddy_dir/caddy.pid"
       fi
     else
-      launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
-      rm -f "$plist"
-      launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
-      rm -f "$ddns_plist"
+      # Another server's daemons (e.g. the boot server's, when turning off a session setup) stay running.
+      owns_install=0
+      [[ "$data_dir" != "$boot_data_dir" ]] || owns_install=1
+      if daemon_belongs_here "$plist" "$caddy_dir"; then
+        [[ ! -f "$plist" ]] || owns_install=1
+        launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
+        rm -f "$plist"
+      fi
+      if daemon_belongs_here "$ddns_plist" "$ddns_dir"; then
+        launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
+        rm -f "$ddns_plist"
+      fi
       launchctl_cmd kickstart -k "$server_label" >/dev/null 2>&1 || true
     fi
     if ((purge)); then
-      rm -rf "$caddy_dir" "$ddns_dir" "$install_dir" "$legacy_ddns_bin"
+      rm -rf "$caddy_dir" "$ddns_dir" "$legacy_ddns_bin"
+      if ((no_launchd || owns_install)); then rm -rf "$install_dir"; fi
       rm -f "$token_file" "$legacy_ddns_state" "$data_dir/ddns.log"
     fi
     echo "Public access disabled. Existing server and Caddy certificates are retained unless --purge is used."

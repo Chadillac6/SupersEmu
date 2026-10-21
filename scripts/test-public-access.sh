@@ -224,6 +224,21 @@ assert "Caddy is copied out of Homebrew for the daemon" cmp -s "$tmp/bin/caddy" 
 assert "launchd Caddyfile is installed with admin off" grep -Eq '^[[:space:]]*admin off$' "$launchd_install/Caddyfile"
 assert "legacy DDNS script and state are removed" bash -c '[[ ! -e "$1/bin" && ! -e "$1/ddns-state.json" ]]' _ "$launchd_data"
 
+other_data="$tmp/other-data"
+mkdir -p "$other_data"
+PATH="$tmp/bin:/usr/bin:/bin" TEST_EVENTS="$events" SUPERSEMU_CADDY_PATH="$tmp/bin/caddy" \
+  SUPERSEMU_LAUNCHD_DIR="$launchd_dir" SUPERSEMU_REMOTE_ACCESS_DIR="$launchd_install" \
+  "$script_dir/public-access.sh" disable --purge --data-dir "$other_data" >/dev/null
+assert "purging another data folder keeps this server's daemons and install" bash -c \
+  '[[ -f "$1/com.chadillac6.supersemu.caddy.plist" && -f "$1/com.chadillac6.supersemu.ddns.plist" && -x "$2/bin/caddy" ]]' \
+  _ "$launchd_dir" "$launchd_install"
+PATH="$tmp/bin:/usr/bin:/bin" TEST_EVENTS="$events" SUPERSEMU_CADDY_PATH="$tmp/bin/caddy" \
+  SUPERSEMU_LAUNCHD_DIR="$launchd_dir" SUPERSEMU_REMOTE_ACCESS_DIR="$launchd_install" \
+  "$script_dir/public-access.sh" disable --purge --data-dir "$launchd_data" >/dev/null
+assert "purging this server's data folder removes its daemons and install" bash -c \
+  '[[ ! -e "$1/com.chadillac6.supersemu.caddy.plist" && ! -e "$1/com.chadillac6.supersemu.ddns.plist" && ! -e "$2" ]]' \
+  _ "$launchd_dir" "$launchd_install"
+
 missing="$tmp/missing"
 if PATH="$tmp/empty-path:/usr/bin:/bin" SUPERSEMU_CADDY_PATH="$tmp/empty-path/caddy" \
   "$script_dir/public-access.sh" enable --no-launchd --host games.supersemu.com \
