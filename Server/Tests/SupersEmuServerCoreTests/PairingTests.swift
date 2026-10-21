@@ -340,4 +340,17 @@ extension PairingTests {
         let paired = try service.pair(PairRequest(code: code.code, deviceName: "iPhone", platform: "iOS"))
         XCTAssertNotNil(try store.authenticate(token: paired.token))
     }
+
+    func testDatabaseFailuresDontUseUpTheLimit() throws {
+        let service = PairingService(store: store, limiter: PairingRateLimiter(maxFailures: 2))
+        let code = try service.createCode(for: nil, caller: try adminAuth())
+        try store.db.write { try $0.execute(sql: "CREATE TRIGGER fail_devices BEFORE INSERT ON devices BEGIN SELECT RAISE(ABORT, 'boom'); END") }
+        for _ in 0..<5 {
+            XCTAssertThrowsError(try service.pair(PairRequest(code: code.code, deviceName: "iPhone", platform: "iOS"))) {
+                XCTAssertNotEqual(($0 as? HTTPError)?.status, .tooManyRequests)
+            }
+        }
+        try store.db.write { try $0.execute(sql: "DROP TRIGGER fail_devices") }
+        XCTAssertNoThrow(try service.pair(PairRequest(code: code.code, deviceName: "iPhone", platform: "iOS")))
+    }
 }

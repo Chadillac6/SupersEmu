@@ -197,14 +197,21 @@ public final class LibraryImporter: @unchecked Sendable {
 
     private func addFile(_ url: URL, into batch: Batch) {
         let filename = url.lastPathComponent
-        if let reason = batch.roots?.violation(url) { return batch.record(.unsupported("\(filename): \(reason)", .other), origins: [url]) }
+        // Read from the checked real path, so a symlink swapped after the check can't redirect the read.
+        var source = url
+        if let roots = batch.roots {
+            switch roots.check(url) {
+            case .refused(let reason): return batch.record(.unsupported("\(filename): \(reason)", .other), origins: [url])
+            case .allowed(let resolved): source = resolved
+            }
+        }
         if SystemDetector.isIgnorable(filename) { return batch.record(.ignored, origins: [url]) }
         guard url.pathExtension.lowercased() == "zip" else {
-            batch.candidates.append(Candidate(filename: filename, container: url.deletingLastPathComponent().path, label: filename, origin: url, source: .file(url)))
+            batch.candidates.append(Candidate(filename: filename, container: url.deletingLastPathComponent().path, label: filename, origin: url, source: .file(source)))
             return
         }
         let archive: ZipArchive
-        do { archive = try ZipArchive(url: url) } catch { return batch.record(.unsupported("\(filename): \(error)", .readFailure(error)), origins: [url]) }
+        do { archive = try ZipArchive(url: source) } catch { return batch.record(.unsupported("\(filename): \(error)", .readFailure(error)), origins: [url]) }
         let entries = archive.entries.filter { !$0.isDirectory }
         guard !entries.isEmpty else { return batch.record(.unsupported("\(filename): empty archive", .other), origins: [url]) }
         for entry in entries {

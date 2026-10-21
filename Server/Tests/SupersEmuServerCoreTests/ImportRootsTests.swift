@@ -95,6 +95,34 @@ final class ImportRootsTests: XCTestCase {
         XCTAssertEqual(report.unsupported.count, 2)
     }
 
+    func testIncomingReplacedBySymlinkGrantsNothing() async throws {
+        let (store, importer) = try makeStore(importRoots: [])
+        let secret = try write(Data("secret".utf8), "admin.token", in: store.paths.root)
+        try FileManager.default.removeItem(at: store.paths.incoming)
+        try FileManager.default.createSymbolicLink(at: store.paths.incoming, withDestinationURL: store.paths.root)
+        let report = try await importer.importPaths([store.paths.incoming.appendingPathComponent("admin.token").path, secret.path], auth: nil)
+        XCTAssertEqual(report.needsReview.count, 0)
+        XCTAssertEqual(report.unsupported.count, 2, "\(report.unsupported)")
+    }
+
+    func testHiddenFilesInIncomingAreRejected() async throws {
+        let (store, importer) = try makeStore(importRoots: [])
+        let hidden = try write(ROMFixtures.snes(seed: 7), ".staging/Hidden.sfc", in: store.paths.incoming)
+        let report = try await importer.importPaths([hidden.path], auth: nil)
+        XCTAssertEqual(report.imported.count, 0)
+        XCTAssertTrue(report.unsupported.first?.contains("hidden") == true, "\(report.unsupported)")
+    }
+
+    func testDanglingSymlinkIsNotFound() async throws {
+        let roms = try folder()
+        let (_, importer) = try makeStore(importRoots: [roms])
+        try FileManager.default.createSymbolicLink(at: roms.appendingPathComponent("gone.sfc"),
+                                                   withDestinationURL: URL(fileURLWithPath: "/no/such/target.sfc"))
+        let report = try await importer.importPaths([roms.appendingPathComponent("gone.sfc").path], auth: nil)
+        XCTAssertEqual(report.unsupported.count, 1)
+        XCTAssertTrue(report.unsupported[0].contains("not found"), "\(report.unsupported)")
+    }
+
     func testIncomingIsAlwaysAllowedButItsSymlinksAreChecked() async throws {
         let elsewhere = try folder()
         let (store, importer) = try makeStore(importRoots: [])

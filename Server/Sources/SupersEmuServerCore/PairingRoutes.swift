@@ -153,19 +153,20 @@ public final class PairingService: Sendable {
     public func pair(_ request: PairRequest, client: String = "local",
                      exposure: RouterExposure = .local) throws -> PairResponse {
         // Reserve the attempt before any guess is checked, so concurrent requests can't all pass the limit and
-        // only record their failures afterwards. A miss keeps the reservation as the recorded failure.
+        // only record their failures afterwards. Only a wrong code keeps the reservation, as the recorded failure;
+        // success, a bad request or a database error gives it back.
         guard let reservation = limiter.reserveAttempt(client: client, exposure: exposure) else {
             throw HTTPError(.tooManyRequests, message: "Too many pairing attempts. Wait a minute and try again.")
         }
-        var releaseReservation = false
-        defer { if releaseReservation { limiter.release(reservation) } }
+        var wrongCode = false
+        defer { if !wrongCode { limiter.release(reservation) } }
         let code = request.code.filter(\.isNumber)
         let deviceName = request.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard code.count == 6 else { throw HTTPError(.unauthorized, message: "Invalid or expired pairing code") }
-        guard !deviceName.isEmpty, deviceName.count <= 100 else {
-            releaseReservation = true
-            throw HTTPError(.badRequest, message: "deviceName is required")
+        guard code.count == 6 else {
+            wrongCode = true
+            throw HTTPError(.unauthorized, message: "Invalid or expired pairing code")
         }
+        guard !deviceName.isEmpty, deviceName.count <= 100 else { throw HTTPError(.badRequest, message: "deviceName is required") }
 
         let at = now()
         let platform = String(request.platform.prefix(40))
@@ -186,8 +187,10 @@ public final class PairingService: Sendable {
             try db.execute(sql: "UPDATE pairing_codes SET device_id = ? WHERE id = ?", arguments: [device.deviceID, codeID])
             return (user, device.deviceID, device.token)
         }
-        guard let paired else { throw HTTPError(.unauthorized, message: "Invalid or expired pairing code") }
-        releaseReservation = true
+        guard let paired else {
+            wrongCode = true
+            throw HTTPError(.unauthorized, message: "Invalid or expired pairing code")
+        }
         return PairResponse(token: paired.token, deviceID: paired.deviceID, user: paired.user, serverName: store.serverName)
     }
 
