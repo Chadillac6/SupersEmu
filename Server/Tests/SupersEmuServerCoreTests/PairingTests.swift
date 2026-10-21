@@ -123,7 +123,8 @@ final class PairingTests: XCTestCase {
         let player = try store.createUser(displayName: "Alex", role: .player)
         let playerToken = try store.createDeviceToken(userID: player.id, deviceName: "Alex's iPhone").token
         let (_, readOnlyBot) = try store.createAPIToken(ownerUserID: admin.id, name: "bot", scopes: [.libraryRead])
-        let (_, adminBot) = try store.createAPIToken(ownerUserID: admin.id, name: "openclaw", scopes: [.usersAdmin])
+        let (_, usersAdminBot) = try store.createAPIToken(ownerUserID: admin.id, name: "openclaw", scopes: [.usersAdmin])
+        let (_, adminBot) = try store.createAPIToken(ownerUserID: admin.id, name: "openclaw-full", scopes: Scope.allCases)
         try await app().test(.router) { client in
             let body = try self.json(CreatePairingCodeRequest())
             try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: [.contentType: "application/json"], body: body) {
@@ -134,6 +135,9 @@ final class PairingTests: XCTestCase {
             }
             try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: self.bearer(readOnlyBot), body: body) {
                 XCTAssertEqual($0.status, .forbidden)
+            }
+            try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: self.bearer(usersAdminBot), body: body) {
+                XCTAssertEqual($0.status, .forbidden, "users:admin alone can't mint an admin device (it would add library:write)")
             }
             try await client.execute(uri: "/v1/admin/pairing-codes", method: .post, headers: self.bearer(adminBot), body: body) {
                 XCTAssertEqual($0.status, .created)
