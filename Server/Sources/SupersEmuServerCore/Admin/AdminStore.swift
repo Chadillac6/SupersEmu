@@ -29,7 +29,8 @@ extension ServerStore {
             config = active ?? stored.map { var off = $0; off.enabled = false; return off }
         }
         let publicURL = config?.publicURL
-        let ddnsURL = paths.root.appendingPathComponent("ddns-state.json")
+        // Written by the DDNS daemon, which runs as its own service account and owns only `ddns/`.
+        let ddnsURL = paths.root.appendingPathComponent("ddns", isDirectory: true).appendingPathComponent("ddns-state.json")
         let ddns = (try? Data(contentsOf: ddnsURL)).flatMap {
             try? SupersEmuJSON.decoder().decode(RemoteAccessDDNSState.self, from: $0)
         }

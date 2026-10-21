@@ -13,7 +13,8 @@ shift
 host=
 port=8489
 port_explicit=0
-data_dir=${SUPERSEMU_DATA_DIR:-"/Library/Application Support/SupersEmu Server"}
+boot_data_dir="/Library/Application Support/SupersEmu Server"
+data_dir=${SUPERSEMU_DATA_DIR:-"$boot_data_dir"}
 no_launchd=0
 purge=0
 local_test=0
@@ -44,7 +45,10 @@ if [[ "$action" == enable ]]; then
   fi
 fi
 
-if [[ "$data_dir" == "/Library/Application Support/SupersEmu Server" && $EUID -ne 0 && $action != status ]]; then
+if ((no_launchd)) && [[ $action != status ]]; then
+  # Without launchd, Caddy runs as the caller; it must never run as root.
+  ((EUID != 0)) || { echo "--no-launchd runs Caddy as the calling user; don't run it as root."; exit 2; }
+elif [[ "$data_dir" == "$boot_data_dir" && $EUID -ne 0 && $action != status ]]; then
   echo "This operation needs administrator access; rerunning with sudo."
   exec sudo env SUPERSEMU_DATA_DIR="$data_dir" "$0" "${original_args[@]}"
 fi
@@ -52,17 +56,34 @@ fi
 script_dir=$(cd "$(dirname "$0")" && pwd)
 template="$script_dir/Caddyfile.template"
 [[ -f "$template" ]] || template="$script_dir/../Server/Resources/Caddyfile.template"
+# Root installs the daemons; they run as this unprivileged account. Everything they execute or load
+# (Caddy, its Caddyfile, the DDNS script) lives in a root-owned directory; only their state is theirs.
+service_user=${SUPERSEMU_SERVICE_USER:-_supersemu}
+privileged=0
+((EUID != 0 || no_launchd)) || privileged=1
+if [[ -n ${SUPERSEMU_REMOTE_ACCESS_DIR:-} ]]; then
+  install_dir=$SUPERSEMU_REMOTE_ACCESS_DIR
+elif ((no_launchd)); then
+  install_dir="$data_dir/remote-access"
+else
+  install_dir="/Library/Application Support/SupersEmu Remote Access"
+fi
 caddy_dir="$data_dir/caddy"
+ddns_dir="$data_dir/ddns"
 config_file="$data_dir/public-access.json"
-caddyfile="$caddy_dir/Caddyfile"
+caddyfile="$install_dir/Caddyfile"
+installed_caddy="$install_dir/bin/caddy"
 label="com.chadillac6.supersemu.caddy"
 launchd_dir=${SUPERSEMU_LAUNCHD_DIR:-/Library/LaunchDaemons}
 plist="$launchd_dir/$label.plist"
 ddns_label="com.chadillac6.supersemu.ddns"
 ddns_plist="$launchd_dir/$ddns_label.plist"
-ddns_script="$data_dir/bin/ddns-cloudflare.sh"
+ddns_script="$install_dir/bin/ddns-cloudflare.sh"
 token_file="$data_dir/cloudflare.token"
 server_label="system/com.chadillac6.supersemu.server"
+# Before 2026-10 the DDNS script and its state lived directly in the data directory.
+legacy_ddns_bin="$data_dir/bin"
+legacy_ddns_state="$data_dir/ddns-state.json"
 
 find_caddy() {
   if [[ ${SUPERSEMU_CADDY_PATH+x} ]]; then
@@ -77,27 +98,114 @@ find_caddy() {
   }
 }
 caddy_bin=$(find_caddy || true)
-if [[ "$action" != status ]]; then
-  mkdir -p "$caddy_dir"
-  chmod 700 "$caddy_dir"
-fi
 
-set_data_owner() {
-  if ((EUID == 0)); then
+# Every directory from $1 up to / must be owned by root and not writable by group or others, so no
+# other account can swap what root (or the service account) reads from it.
+require_root_owned_path() {
+  local path uid mode
+  if ! path=$(cd "$1" 2>/dev/null && pwd -P); then
+    echo "Remote Access needs the boot server's data folder, and $1 doesn't exist."
+    return 6
+  fi
+  while :; do
+    read -r uid mode < <(stat -f '%u %Lp' "$path")
+    if [[ "$uid" != 0 ]] || ((8#$mode & 022)); then
+      echo "Remote Access needs the boot server: $path must be owned by root and writable only by root."
+      return 6
+    fi
+    [[ "$path" != / ]] || return 0
+    path=$(dirname "$path")
+  done
+}
+
+# A hidden system account (no shell, no password, no home) for the Caddy and DDNS daemons.
+ensure_service_account() {
+  local id gid used
+  if ! dscl . -read "/Groups/$service_user" PrimaryGroupID >/dev/null 2>&1 \
+    || ! dscl . -read "/Users/$service_user" UniqueID >/dev/null 2>&1; then
+    used=$({ dscl . -list /Users UniqueID; dscl . -list /Groups PrimaryGroupID; } | awk '{print $2}')
+    for id in {300..499}; do
+      grep -qx "$id" <<<"$used" || break
+    done
+    grep -qx "$id" <<<"$used" && { echo "No free system account ID for $service_user."; return 1; }
+  fi
+  if ! dscl . -read "/Groups/$service_user" PrimaryGroupID >/dev/null 2>&1; then
+    dscl . -create "/Groups/$service_user"
+    dscl . -create "/Groups/$service_user" PrimaryGroupID "$id"
+    dscl . -create "/Groups/$service_user" RealName "SupersEmu Remote Access"
+    dscl . -create "/Groups/$service_user" Password '*'
+  fi
+  gid=$(dscl . -read "/Groups/$service_user" PrimaryGroupID | awk '{print $2}')
+  if ! dscl . -read "/Users/$service_user" UniqueID >/dev/null 2>&1; then
+    dscl . -create "/Users/$service_user"
+    dscl . -create "/Users/$service_user" UniqueID "$id"
+    dscl . -create "/Users/$service_user" PrimaryGroupID "$gid"
+    dscl . -create "/Users/$service_user" UserShell /usr/bin/false
+    dscl . -create "/Users/$service_user" NFSHomeDirectory /var/empty
+    dscl . -create "/Users/$service_user" RealName "SupersEmu Remote Access"
+    dscl . -create "/Users/$service_user" Password '*'
+    dscl . -create "/Users/$service_user" IsHidden 1
+  fi
+}
+
+# A directory the service account owns and only it (and root) can enter.
+make_service_dir() {
+  mkdir -p "$1"
+  if ((privileged)); then
     local owner
-    owner=$(stat -f '%u:%g' "$data_dir")
-    chown "$owner" "$@"
+    [[ ! -L "$1" ]] || { echo "$1 must not be a symbolic link."; return 6; }
+    owner=$(stat -f '%Su' "$1")
+    if [[ "$owner" == root ]]; then
+      # Only root has ever written here (Caddy used to run as root), so nothing inside can be a planted
+      # link; once the service account owns the folder, root never walks into it again.
+      chown -R "$service_user:$service_user" "$1"
+    elif [[ "$owner" != "$service_user" ]]; then
+      echo "$1 is owned by $owner, not $service_user."
+      return 6
+    fi
+  fi
+  chmod 700 "$1"
+}
+
+# Root-owned copy, replaced atomically so a running daemon never sees a partial file.
+install_root_file() {
+  local mode=$1 source=$2 target=$3
+  if ((privileged)); then
+    install -o root -g wheel -m "$mode" "$source" "$target.new"
+  else
+    install -m "$mode" "$source" "$target.new"
+  fi
+  mv -f "$target.new" "$target"
+}
+
+run_as_service() {
+  if ((privileged)); then
+    (cd / && sudo -u "$service_user" /usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin "$@")
+  else
+    "$@"
+  fi
+}
+
+# Root keeps the token; the service account's group may only read it.
+share_token_with_service() {
+  [[ -f "$token_file" ]] || return 0
+  if ((privileged)); then
+    chown "root:$service_user" "$token_file"
+    chmod 640 "$token_file"
   fi
 }
 
 write_access_config() {
-  local enabled=$1
-  python3 - "$config_file" "$enabled" "$host" "$port" "$port_explicit" <<'PY'
+  local enabled=$1 owner=
+  # Same owner as the data directory, so a session server can still read its own config.
+  if ((EUID == 0)); then owner=$(stat -f '%u:%g' "$data_dir"); fi
+  python3 - "$config_file" "$enabled" "$host" "$port" "$port_explicit" "$owner" <<'PY'
 import json
 import os
 import sys
+import tempfile
 
-path, enabled, host, port, port_explicit = sys.argv[1:]
+path, enabled, host, port, port_explicit, owner = sys.argv[1:]
 try:
     with open(path, encoding="utf-8") as stream:
         value = json.load(stream)
@@ -109,14 +217,21 @@ value.setdefault("publicURL", "https://localhost")
 if port and (enabled == "true" or host or port_explicit == "1"):
     value["listenPort"] = int(port)
 value["enabled"] = enabled == "true"
-temporary = path + ".tmp"
-with open(temporary, "w", encoding="utf-8") as stream:
-    json.dump(value, stream, indent=2)
-    stream.write("\n")
-os.chmod(temporary, 0o600)
-os.replace(temporary, path)
+# mkstemp never follows or reuses an existing name, and the descriptor-based chmod/chown can't be redirected.
+descriptor, temporary = tempfile.mkstemp(prefix=".public-access.", dir=os.path.dirname(path))
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        if owner:
+            uid, gid = (int(part) for part in owner.split(":"))
+            os.fchown(stream.fileno(), uid, gid)
+        json.dump(value, stream, indent=2)
+        stream.write("\n")
+    os.replace(temporary, path)
+except BaseException:
+    os.unlink(temporary)
+    raise
 PY
-  set_data_owner "$config_file"
 }
 
 write_caddyfile() {
@@ -125,29 +240,119 @@ write_caddyfile() {
     echo "SUPERSEMU_ACME_EMAIL must be a valid email address."
     return 2
   fi
+  local rendered
+  rendered=$(mktemp "$install_dir/.Caddyfile.XXXXXX")
   if [[ -n "$email" ]]; then
-    sed "s|# SUPERSEMU_ACME_EMAIL|email $email|" "$template" | sed "s|# SUPERSEMU_TLS_DIRECTIVE|$([[ $local_test == 1 ]] && echo 'tls internal')|" >"$caddyfile"
+    sed "s|# SUPERSEMU_ACME_EMAIL|email $email|" "$template" | sed "s|# SUPERSEMU_TLS_DIRECTIVE|$([[ $local_test == 1 ]] && echo 'tls internal')|" >"$rendered"
   else
-    sed '/# SUPERSEMU_ACME_EMAIL/d' "$template" | sed "s|# SUPERSEMU_TLS_DIRECTIVE|$([[ $local_test == 1 ]] && echo 'tls internal')|" >"$caddyfile"
+    sed '/# SUPERSEMU_ACME_EMAIL/d' "$template" | sed "s|# SUPERSEMU_TLS_DIRECTIVE|$([[ $local_test == 1 ]] && echo 'tls internal')|" >"$rendered"
   fi
-  chmod 600 "$caddyfile"
-  set_data_owner "$caddyfile"
+  # Holds no secrets; the service account needs to read it.
+  chmod 644 "$rendered"
+  mv -f "$rendered" "$caddyfile"
+}
+
+allow_through_firewall() {
+  local firewall=/usr/libexec/ApplicationFirewall/socketfilterfw
+  ((privileged)) && [[ -x "$firewall" ]] || return 0
+  "$firewall" --getglobalstate 2>/dev/null | grep -qi enabled || return 0
+  "$firewall" --add "$1" >/dev/null 2>&1 || true
+  "$firewall" --unblockapp "$1" >/dev/null 2>&1 || true
+}
+
+# For a data folder owned by a user account, prints that account's uid; prints nothing for any other owner.
+# With purge ($2 = 1), first deletes the Remote Access files an older root-run setup left there (root-owned
+# Caddy state, token, DDNS script), which the owner can't remove. Everything goes through a descriptor for the
+# folder itself and never follows a link, so the owner can't point root at anything outside it.
+remove_legacy_root_files() {
+  python3 - "$1" "$2" <<'PY'
+import os
+import stat
+import sys
+
+def remove_tree(parent, name):
+    descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+    try:
+        for entry in os.scandir(descriptor):
+            if entry.is_dir(follow_symlinks=False):
+                remove_tree(descriptor, entry.name)
+            else:
+                os.unlink(entry.name, dir_fd=descriptor)
+    finally:
+        os.close(descriptor)
+    os.rmdir(name, dir_fd=parent)
+
+folder = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+owner = os.fstat(folder).st_uid
+if owner == 0:
+    sys.exit(0)
+if sys.argv[2] == "1":
+    for name in ("caddy", "ddns", "bin", "cloudflare.token", "ddns-state.json", "ddns.log"):
+        try:
+            info = os.stat(name, dir_fd=folder, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if info.st_uid != 0:
+            continue
+        if stat.S_ISDIR(info.st_mode):
+            remove_tree(folder, name)
+        else:
+            os.unlink(name, dir_fd=folder)
+print(owner)
+PY
+}
+
+# Prints the state folder an installed LaunchDaemon was set up with, or nothing if it isn't installed.
+daemon_data_dir() {
+  [[ -f "$1" ]] || return 0
+  python3 - "$1" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as stream:
+    value = plistlib.load(stream)
+arguments = value.get("ProgramArguments", [])
+if "--data-dir" in arguments[:-1]:
+    print(arguments[arguments.index("--data-dir") + 1])
+else:
+    print(value.get("EnvironmentVariables", {}).get("SUPERSEMU_CADDY_DATA_DIR", ""))
+PY
+}
+
+# True if the installed daemon (or none at all) belongs to this data folder, so disabling it here is safe.
+daemon_belongs_here() {
+  local served
+  served=$(daemon_data_dir "$1")
+  [[ -z "$served" || "$served" == "$2" || "$served" == "$data_dir" ]]
 }
 
 launchctl_cmd() {
   if command -v launchctl >/dev/null 2>&1; then launchctl "$@"; else return 1; fi
 }
 
+# True if a LaunchDaemon plist runs as the service account; older root daemons are never brought back.
+plist_runs_as_service() {
+  ((privileged)) || return 0
+  python3 - "$1" "$service_user" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as stream:
+    sys.exit(0 if plistlib.load(stream).get("UserName") == sys.argv[2] else 1)
+PY
+}
+
 rollback_enable() {
-  local status=${1:-$?}
+  local status=${1:-$?} stranded=0
   trap - ERR
   if ((ddns_started)); then
     launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
-    if ((previous_ddns_plist_existed)); then
+    if ((previous_ddns_plist_existed)) && plist_runs_as_service "$previous_ddns_plist_backup"; then
       cp -p "$previous_ddns_plist_backup" "$ddns_plist" || true
       launchctl_cmd bootstrap system "$ddns_plist" >/dev/null 2>&1 || echo "Couldn't restore the previous DDNS LaunchDaemon." >&2
     else
       rm -f "$ddns_plist"
+      ((!previous_ddns_plist_existed)) || echo "The previous DDNS LaunchDaemon ran as root, so it wasn't restored; DNS won't update until enable succeeds." >&2
     fi
   fi
   if ((caddy_started)); then
@@ -159,11 +364,13 @@ rollback_enable() {
       rm -f "$caddy_dir/caddy.pid"
     else
       launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
-      if ((previous_caddy_plist_existed)); then
+      if ((previous_caddy_plist_existed)) && plist_runs_as_service "$previous_caddy_plist_backup"; then
         cp -p "$previous_caddy_plist_backup" "$plist" || true
         launchctl_cmd bootstrap system "$plist" >/dev/null 2>&1 || echo "Couldn't restore the previous Caddy LaunchDaemon." >&2
       else
         rm -f "$plist"
+        ((!previous_caddy_plist_existed)) || stranded=1
+        ((!previous_caddy_plist_existed)) || echo "The previous Caddy LaunchDaemon ran as root, so it wasn't restored; run enable again." >&2
       fi
     fi
   fi
@@ -175,6 +382,11 @@ rollback_enable() {
     fi
   fi
   [[ -z "$previous_config_backup" ]] || rm -f "$previous_config_backup"
+  if ((stranded)) && [[ -f "$config_file" ]]; then
+    # The old Caddy daemon is gone, so don't leave Remote Access marked as on; keep the saved endpoint as it was.
+    host= port_explicit=0 write_access_config false || true
+    launchctl_cmd kickstart -k "$server_label" >/dev/null 2>&1 || true
+  fi
   if ((new_token_written)); then
     if ((previous_token_existed)); then
       mv -f "$previous_token_backup" "$token_file" || true
@@ -195,6 +407,21 @@ case "$action" in
       exit 5
     fi
     [[ -f "$template" ]] || { echo "Missing Caddy template: $template"; exit 1; }
+    if ((privileged)); then
+      # Root daemons must not load anything from a folder another account controls (e.g. a session server's),
+      # and the shared install folder belongs to the boot server alone.
+      if [[ "$data_dir" != "$boot_data_dir" ]]; then
+        echo "Remote Access needs the boot server's data folder ($boot_data_dir), not $data_dir."
+        exit 6
+      fi
+      require_root_owned_path "$data_dir" || exit 6
+      ensure_service_account
+      install -d -o root -g wheel -m 755 "$install_dir" "$install_dir/bin"
+      require_root_owned_path "$install_dir" || exit 6
+    else
+      mkdir -p "$data_dir" "$install_dir/bin"
+    fi
+    make_service_dir "$caddy_dir"
     caddy_started=0
     config_write_attempted=0
     previous_config_existed=0
@@ -219,10 +446,14 @@ case "$action" in
       install -m 600 "$cloudflare_token_file" "$token_file"
       new_token_written=1
     fi
+    share_token_with_service
     if [[ -f "$token_file" ]]; then
-      mkdir -p "$data_dir/bin"
-      install -m 755 "$script_dir/ddns-cloudflare.sh" "$ddns_script"
-      if "$ddns_script" --host "$host" --data-dir "$data_dir"; then
+      install_root_file 755 "$script_dir/ddns-cloudflare.sh" "$ddns_script"
+      make_service_dir "$ddns_dir"
+      if [[ -f "$legacy_ddns_state" && ! -e "$ddns_dir/ddns-state.json" ]]; then
+        run_as_service cp "$legacy_ddns_state" "$ddns_dir/ddns-state.json" || true
+      fi
+      if run_as_service "$ddns_script" --host "$host" --data-dir "$ddns_dir" --token-file "$token_file"; then
         :
       else
         ddns_status=$?
@@ -237,13 +468,27 @@ case "$action" in
       echo "Warning: no Cloudflare token; DNS will not be kept up to date." >&2
     fi
     if [[ -f "$config_file" ]]; then
-      previous_config_backup=$(mktemp "$caddy_dir/public-access.XXXXXX")
+      previous_config_backup=$(mktemp "$data_dir/public-access.XXXXXX")
       cp -p "$config_file" "$previous_config_backup"
       previous_config_existed=1
     fi
     write_caddyfile
-    SUPERSEMU_PUBLIC_HOST=$host SUPERSEMU_PUBLIC_PORT=$port SUPERSEMU_CADDY_DATA_DIR=$caddy_dir \
-      XDG_DATA_HOME=$caddy_dir "$caddy_bin" validate --config "$caddyfile" --adapter caddyfile
+    daemon_caddy=$caddy_bin
+    if ((no_launchd == 0)); then
+      # The daemon runs a root-owned copy, not a binary the Homebrew user can replace.
+      install_root_file 755 "$caddy_bin" "$installed_caddy"
+      daemon_caddy=$installed_caddy
+    fi
+    # Validation writes nothing into Caddy's real storage, so root never touches the service account's files.
+    validate_dir=$(mktemp -d)
+    if SUPERSEMU_PUBLIC_HOST=$host SUPERSEMU_PUBLIC_PORT=$port SUPERSEMU_CADDY_DATA_DIR=$validate_dir \
+      XDG_DATA_HOME=$validate_dir XDG_CONFIG_HOME=$validate_dir \
+      "$daemon_caddy" validate --config "$caddyfile" --adapter caddyfile; then
+      rm -rf "$validate_dir"
+    else
+      rm -rf "$validate_dir"
+      false
+    fi
     if ((no_launchd)); then
       if [[ -f "$caddy_dir/caddy.pid" ]]; then
         old_pid=$(cat "$caddy_dir/caddy.pid")
@@ -261,8 +506,8 @@ case "$action" in
         rm -f "$caddy_dir/caddy.pid"
       fi
       SUPERSEMU_PUBLIC_HOST=$host SUPERSEMU_PUBLIC_PORT=$port SUPERSEMU_CADDY_DATA_DIR=$caddy_dir \
-        XDG_DATA_HOME=$caddy_dir nohup "$caddy_bin" run --config "$caddyfile" --adapter caddyfile \
-        >>"$caddy_dir/caddy.log" 2>&1 &
+        XDG_DATA_HOME=$caddy_dir XDG_CONFIG_HOME=$caddy_dir nohup "$caddy_bin" run --config "$caddyfile" --adapter caddyfile \
+        >>"$caddy_dir/caddy.out" 2>&1 &
       started_caddy_pid=$!
       caddy_started=1
       printf '%s\n' "$started_caddy_pid" >"$caddy_dir/caddy.pid"
@@ -283,19 +528,24 @@ case "$action" in
           previous_ddns_plist_existed=1
         fi
         ddns_started=1
-        python3 - "$ddns_plist" "$ddns_script" "$host" "$data_dir" <<'PY'
+        python3 - "$ddns_plist" "$ddns_script" "$host" "$ddns_dir" "$token_file" "$service_user" <<'PY'
 import os
 import plistlib
 import sys
 
-path, script, host, data = sys.argv[1:]
+path, script, host, data, token, user = sys.argv[1:]
 value = {
     "Label": "com.chadillac6.supersemu.ddns",
-    "ProgramArguments": [script, "--host", host, "--data-dir", data],
+    # The shell opens the log after launchd has switched to the service account.
+    "ProgramArguments": [
+        "/bin/bash", "-c", 'exec "$@" >>"$SUPERSEMU_DDNS_LOG" 2>&1', "ddns-cloudflare",
+        script, "--host", host, "--data-dir", data, "--token-file", token,
+    ],
+    "UserName": user,
+    "GroupName": user,
+    "EnvironmentVariables": {"SUPERSEMU_DDNS_LOG": os.path.join(data, "ddns.log")},
     "RunAtLoad": False,
     "StartInterval": 300,
-    "StandardOutPath": os.path.join(data, "ddns.log"),
-    "StandardErrorPath": os.path.join(data, "ddns.log"),
 }
 with open(path, "wb") as stream:
     plistlib.dump(value, stream)
@@ -316,15 +566,19 @@ PY
         previous_caddy_plist_existed=1
       fi
       caddy_started=1
-      python3 - "$plist" "$caddy_bin" "$caddyfile" "$caddy_dir" "$host" "$port" <<'PY'
+      allow_through_firewall "$daemon_caddy"
+      python3 - "$plist" "$daemon_caddy" "$caddyfile" "$caddy_dir" "$host" "$port" "$service_user" <<'PY'
 import os
 import plistlib
 import sys
 
-path, binary, config, data, host, port = sys.argv[1:]
+path, binary, config, data, host, port, user = sys.argv[1:]
 value = {
     "Label": "com.chadillac6.supersemu.caddy",
     "ProgramArguments": [binary, "run", "--config", config, "--adapter", "caddyfile"],
+    # Unprivileged processes can bind ports 80 and 443 on macOS. Caddy logs to caddy.log itself.
+    "UserName": user,
+    "GroupName": user,
     "RunAtLoad": True,
     "KeepAlive": True,
     "EnvironmentVariables": {
@@ -332,9 +586,9 @@ value = {
         "SUPERSEMU_PUBLIC_PORT": port,
         "SUPERSEMU_CADDY_DATA_DIR": data,
         "XDG_DATA_HOME": data,
+        "XDG_CONFIG_HOME": data,
+        "HOME": data,
     },
-    "StandardOutPath": os.path.join(data, "caddy.log"),
-    "StandardErrorPath": os.path.join(data, "caddy.log"),
 }
 with open(path, "wb") as stream:
     plistlib.dump(value, stream)
@@ -353,6 +607,8 @@ PY
     SUPERSEMU_PUBLIC_HOST=$host SUPERSEMU_PUBLIC_PORT=$port SUPERSEMU_CADDY_DATA_DIR=$caddy_dir \
       write_access_config true
     if ((no_launchd == 0)); then launchctl_cmd kickstart -k "$server_label"; fi
+    rm -rf "$legacy_ddns_bin"
+    rm -f "$legacy_ddns_state" "$data_dir/ddns.log" "$caddy_dir/Caddyfile"
     echo "Public HTTPS configured for https://$host; admin routes return 404."
     [[ -z "$previous_config_backup" ]] || rm -f "$previous_config_backup"
     [[ -z "$previous_caddy_plist_backup" ]] || rm -f "$previous_caddy_plist_backup"
@@ -360,23 +616,56 @@ PY
     trap - ERR
     ;;
   disable)
-    write_access_config false
-    if ((no_launchd)); then
-      if [[ -f "$caddy_dir/caddy.pid" ]]; then
-        pid=$(cat "$caddy_dir/caddy.pid")
-        kill "$pid" 2>/dev/null || true
-        rm -f "$caddy_dir/caddy.pid"
+    owns_install=0
+    if ((!no_launchd)); then
+      # Another server's daemons (e.g. the boot server's, when turning off a session setup) stay running.
+      [[ "$data_dir" != "$boot_data_dir" ]] || owns_install=1
+      if daemon_belongs_here "$plist" "$caddy_dir"; then
+        [[ ! -f "$plist" ]] || owns_install=1
+        launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
+        rm -f "$plist"
       fi
-    else
-      launchctl_cmd bootout "system/$label" >/dev/null 2>&1 || true
-      rm -f "$plist"
-      launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
-      rm -f "$ddns_plist"
+      if daemon_belongs_here "$ddns_plist" "$ddns_dir"; then
+        launchctl_cmd bootout "system/$ddns_label" >/dev/null 2>&1 || true
+        rm -f "$ddns_plist"
+      fi
       launchctl_cmd kickstart -k "$server_label" >/dev/null 2>&1 || true
+      if ((purge && owns_install)); then rm -rf "$install_dir"; fi
+      if ((EUID == 0)); then
+        # Nothing saved means nothing to turn off; never create a data folder just to disable access.
+        if [[ ! -d "$data_dir" ]]; then
+          echo "Public access disabled."
+          exit 0
+        fi
+        if ! require_root_owned_path "$data_dir" >/dev/null; then
+          # Root never writes into a folder another account controls; its owner tidies it instead.
+          owner=$(remove_legacy_root_files "$data_dir" "$purge") || {
+            echo "Couldn't remove the old Remote Access files in $data_dir." >&2
+            exit 1
+          }
+          if [[ -z "$owner" ]]; then
+            echo "Public access disabled; $data_dir isn't owned by a user account, so its files were left alone."
+            exit 0
+          fi
+          user_args=(disable --no-launchd --data-dir "$data_dir")
+          if ((purge)); then user_args+=(--purge); fi
+          exec sudo -u "#$owner" /usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin "$0" "${user_args[@]}"
+        fi
+      fi
+    fi
+    if ((EUID != 0)); then mkdir -p "$data_dir"; fi
+    write_access_config false
+    if ((no_launchd)) && [[ -f "$caddy_dir/caddy.pid" ]]; then
+      pid=$(cat "$caddy_dir/caddy.pid")
+      kill "$pid" 2>/dev/null || true
+      rm -f "$caddy_dir/caddy.pid"
     fi
     if ((purge)); then
-      rm -rf "$caddy_dir" "$data_dir/bin"
-      rm -f "$token_file" "$data_dir/ddns-state.json"
+      if ! rm -rf "$caddy_dir" "$ddns_dir" "$legacy_ddns_bin" "$token_file" "$legacy_ddns_state" "$data_dir/ddns.log"; then
+        echo "Some Remote Access files in $data_dir couldn't be removed." >&2
+        exit 1
+      fi
+      if ((no_launchd)); then rm -rf "$install_dir"; fi
     fi
     echo "Public access disabled. Existing server and Caddy certificates are retained unless --purge is used."
     ;;
@@ -396,9 +685,9 @@ PY
     fi
     if [[ ! -f "$config_file" ]]; then echo "Public access config: absent (disabled)"; exit 0; fi
     cat "$config_file"
-    if [[ -f "$data_dir/ddns-state.json" ]]; then
+    if [[ -f "$ddns_dir/ddns-state.json" ]]; then
       echo "DDNS state:"
-      cat "$data_dir/ddns-state.json"
+      cat "$ddns_dir/ddns-state.json"
     fi
     public_url=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["publicURL"])' "$config_file")
     public_port=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["listenPort"])' "$config_file")

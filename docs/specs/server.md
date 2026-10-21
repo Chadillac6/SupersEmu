@@ -104,6 +104,10 @@ built on the same pairing code.
 - Caddy terminates public HTTPS and proxies to a second HTTP listener bound only to loopback. That
   router serves player, pairing and health routes only; admin endpoints remain private, API tokens
   are rejected, and device-token player access remains permission-checked. See `docs/SETUP_MAC_MINI.md`.
+- Caddy and the DDNS updater are LaunchDaemons that run as the unprivileged `_supersemu` account,
+  with Caddy's admin API off. Everything they execute or load lives in root-owned
+  `/Library/Application Support/SupersEmu Remote Access`, and Remote Access only accepts the boot
+  server's root-owned data folder.
 - TLS: the server presents its own certificate and the app pins its identity fingerprint from the
   invite on LAN. For the public hostname, the client validates Caddy's renewed certificate with
   system WebPKI trust and still pairs against the server identity pin.

@@ -69,7 +69,9 @@ final class AdminUserRoutesTests: XCTestCase {
         let ddns = """
         {"ip":"203.0.113.10","updatedAt":"2025-01-02T03:04:05Z","lastCheckAt":"2025-01-02T03:05:05Z","lastError":null}
         """
-        try Data(ddns.utf8).write(to: root.appendingPathComponent("ddns-state.json"))
+        let ddnsDirectory = root.appendingPathComponent("ddns", isDirectory: true)
+        try FileManager.default.createDirectory(at: ddnsDirectory, withIntermediateDirectories: true)
+        try Data(ddns.utf8).write(to: ddnsDirectory.appendingPathComponent("ddns-state.json"))
         let identity = try TLSIdentity.generate(
             commonName: "games.supersemu.com", dnsNames: ["games.supersemu.com"], validFor: 2, now: expectedNow)
         let base64 = identity.certificateDER.base64EncodedString()

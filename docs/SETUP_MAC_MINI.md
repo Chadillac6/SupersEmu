@@ -26,7 +26,8 @@ ditto build/mac/Build/Products/Debug/SupersEmu.app /Applications/SupersEmu.app
 5. A **SupersEmu Server** icon appears in the menu bar and shows the server status. Use it to open the Server window or jump straight to its Add Games, Review Needed, BIOS and Storage sections. Hide or show the icon from the Server window.
 
 ## 4. Remote Access
-1. In Server Mode, open **Remote Access**.
+1. In Server Mode, open **Remote Access**. Remote Access needs the boot server (**Register Boot
+   Daemon**); it can't be turned on for a session server running from your home folder.
 2. Create a Cloudflare API token from the **Edit zone DNS** template and limit it to the
    `supersemu.com` zone. Paste it into the panel; the token is stored locally on the server.
 3. In the Eero app, open **Settings → Network settings → Reservations & port forwarding**, reserve
@@ -38,6 +39,11 @@ ditto build/mac/Build/Products/Debug/SupersEmu.app /Applications/SupersEmu.app
 
 Use **Turn Off** in the same panel to disable Remote Access. The optional purge removes its saved
 Cloudflare token and local DDNS state as well.
+
+Caddy and the DDNS updater run as the hidden `_supersemu` system account, not as root. Their
+program, Caddyfile and DDNS script are copied to the root-owned
+`/Library/Application Support/SupersEmu Remote Access`; the account can only write its own `caddy/`
+and `ddns/` folders inside the server data folder. Caddy's admin API is turned off.
 
 ## 5. Add games and BIOS files
 Everything below is in the Server Mode window; no Terminal needed.
