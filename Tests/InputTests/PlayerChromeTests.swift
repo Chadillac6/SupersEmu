@@ -99,4 +99,36 @@ final class PlayerChromeTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertFalse(autoHide.isRevealed)
     }
+
+    @MainActor
+    func testTopBarAutoHidePinnedStaysUpThenHidesAfterUnpin() async throws {
+        let autoHide = TopBarAutoHide(delay: .milliseconds(100))
+        autoHide.setPinned(true)
+        XCTAssertTrue(autoHide.isRevealed)
+        autoHide.hide()
+        autoHide.reveal()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(autoHide.isRevealed, "a pinned bar ignores hide() and its timer")
+        autoHide.setPinned(false)
+        XCTAssertTrue(autoHide.isRevealed)
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(5)
+        while autoHide.isRevealed, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertFalse(autoHide.isRevealed)
+    }
+
+    @MainActor
+    func testTopBarAutoHideManyRevealsKeepOneTimer() async throws {
+        let autoHide = TopBarAutoHide(delay: .milliseconds(150))
+        for _ in 0..<500 { autoHide.reveal() }
+        XCTAssertTrue(autoHide.isRevealed)
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(5)
+        while autoHide.isRevealed, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertFalse(autoHide.isRevealed)
+    }
 }

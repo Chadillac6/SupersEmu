@@ -55,7 +55,7 @@ struct ControlsView: View {
                 Toggle("Hide on-screen controls when a controller is connected", isOn: $hideTouchControls)
                     .accessibilityIdentifier("controls-hide-touch-with-controller")
             } footer: {
-                Text("The game goes full screen; tap the screen to show the toolbar.")
+                Text("The game fills the screen. Tap the game any time to show the toolbar.")
             }
             #endif
             Section {
