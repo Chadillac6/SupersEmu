@@ -17,6 +17,10 @@ struct PlayerView: View {
     private var showPerformanceOverlay = DiagnosticsSettings.Default.showPerformanceOverlay
     @State private var performanceOverlayText = ""
     @State private var topBarAutoHide = TopBarAutoHide()
+    @State private var isPointerOnTopBar = false
+    #if os(macOS)
+    @State private var playerWindow = PlayerWindow()
+    #endif
 
     private var chrome: PlayerChrome {
         #if os(iOS)
@@ -32,7 +36,6 @@ struct PlayerView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 0) {
-                if !chrome.isFullScreen { topBar }
                 EmulatorScreen(session: session)
                     .accessibilityIdentifier("emulator-screen")
                     #if os(iOS)
@@ -54,7 +57,7 @@ struct PlayerView: View {
                     }
                     #if os(iOS)
                     .contentShape(Rectangle())
-                    .onTapGesture { if chrome.isFullScreen { topBarAutoHide.toggle() } }
+                    .onTapGesture { topBarAutoHide.toggle() }
                     #endif
                 #if os(iOS)
                 if chrome.showsTouchControls {
@@ -64,13 +67,13 @@ struct PlayerView: View {
                 }
                 #endif
             }
-            #if os(iOS)
             .overlay(alignment: .top) {
-                if chrome.isFullScreen && topBarAutoHide.isRevealed {
-                    topBar.transition(.move(edge: .top).combined(with: .opacity))
+                if topBarAutoHide.isRevealed {
+                    topBar
+                        .onHover { isPointerOnTopBar = $0 }
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            #endif
             if session.isChoosingDisc {
                 DiscPicker(session: session)
             }
@@ -138,17 +141,24 @@ struct PlayerView: View {
         }
         .defersSystemGestures(on: .all)
         .persistentSystemOverlays(.hidden)
-        .statusBarHidden(chrome.isFullScreen)
+        .statusBarHidden(true)
+        #else
+        .background(PlayerWindowReader(playerWindow: playerWindow))
+        .onContinuousHover { phase in
+            if case .active = phase { topBarAutoHide.reveal() }
+        }
+        .onChange(of: topBarAutoHide.isRevealed) { _, revealed in
+            if revealed { playerWindow.showCursor() } else { playerWindow.hideCursorUntilMouseMoves() }
+        }
         #endif
         .animation(.easeInOut(duration: 0.25), value: chrome)
         .animation(.easeInOut(duration: 0.25), value: topBarAutoHide.isRevealed)
         .onChange(of: chrome.isFullScreen) { _, fullScreen in
             session.recordEvent("PlayerChrome full-screen \(fullScreen ? "on" : "off")")
-            if fullScreen {
-                topBarAutoHide.reveal()
-            } else {
-                topBarAutoHide.hide()
-            }
+            topBarAutoHide.reveal()
+        }
+        .onChange(of: keepsTopBarUp, initial: true) { _, pinned in
+            topBarAutoHide.setPinned(pinned)
         }
         #if os(iOS)
         .onChange(of: hub.controllers.count) { oldCount, newCount in
@@ -192,9 +202,14 @@ struct PlayerView: View {
         .onAppear {
             session.start()
             session.recordEvent("PlayerChrome full-screen \(chrome.isFullScreen ? "on" : "off")")
-            if chrome.isFullScreen { topBarAutoHide.reveal() }
+            topBarAutoHide.reveal()
         }
-        .onDisappear { session.stop() }
+        .onDisappear {
+            session.stop()
+            #if os(macOS)
+            playerWindow.detach()
+            #endif
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background:
@@ -208,6 +223,13 @@ struct PlayerView: View {
                 break
             }
         }
+    }
+
+    /// Menus, prompts and the pointer resting on the bar keep the bar (and the Mac pointer) on screen.
+    private var keepsTopBarUp: Bool {
+        isPointerOnTopBar || session.isMenuOpen || session.isShowingSaveSlots || session.isChoosingDisc
+            || session.isChoosingCheat || session.isShowingControls || session.isSyncing
+            || session.pendingConflict != nil || session.errorMessage != nil || session.disconnectedController != nil
     }
 
     private var topBar: some View {
@@ -462,3 +484,67 @@ struct DisconnectPrompt: View {
     private static let fallback = "the keyboard"
     #endif
 }
+
+#if os(macOS)
+/// The Mac player's window: full screen while a game runs (back to a window on exit if the game put it there),
+/// and the pointer hides with the top bar.
+@MainActor
+final class PlayerWindow {
+    private weak var window: NSWindow?
+    private var enteredFullScreen = false
+
+    func attach(_ newWindow: NSWindow?) {
+        guard let newWindow, newWindow !== window else { return }
+        window = newWindow
+        guard !newWindow.styleMask.contains(.fullScreen),
+              ProcessInfo.processInfo.environment["SUPERSEMU_PLAYER_FULLSCREEN"] != "off" else { return }
+        enteredFullScreen = true
+        // Next run loop pass: the window may still be laying out the new player view.
+        DispatchQueue.main.async { [weak newWindow] in
+            guard let newWindow, !newWindow.styleMask.contains(.fullScreen) else { return }
+            newWindow.toggleFullScreen(nil)
+        }
+    }
+
+    func detach() {
+        defer { enteredFullScreen = false }
+        guard enteredFullScreen, let window, window.styleMask.contains(.fullScreen) else { return }
+        window.toggleFullScreen(nil)
+    }
+
+    func hideCursorUntilMouseMoves() {
+        guard NSApp.isActive, let window, window.isKeyWindow, window.frame.contains(NSEvent.mouseLocation) else { return }
+        NSCursor.setHiddenUntilMouseMoves(true)
+    }
+
+    /// A menu or prompt opened from the keyboard brings the pointer back with the bar.
+    func showCursor() {
+        NSCursor.setHiddenUntilMouseMoves(false)
+    }
+}
+
+struct PlayerWindowReader: NSViewRepresentable {
+    let playerWindow: PlayerWindow
+
+    final class ReaderView: NSView {
+        var onWindow: ((NSWindow?) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindow?(window)
+        }
+    }
+
+    func makeNSView(context: Context) -> ReaderView {
+        let view = ReaderView()
+        view.onWindow = { [playerWindow] in playerWindow.attach($0) }
+        return view
+    }
+
+    func updateNSView(_ view: ReaderView, context: Context) {}
+
+    static func dismantleNSView(_ view: ReaderView, coordinator: ()) {
+        view.onWindow = nil
+    }
+}
+#endif
