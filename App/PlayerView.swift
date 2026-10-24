@@ -148,7 +148,7 @@ struct PlayerView: View {
             if case .active = phase { topBarAutoHide.reveal() }
         }
         .onChange(of: topBarAutoHide.isRevealed) { _, revealed in
-            if !revealed { playerWindow.hideCursorUntilMouseMoves() }
+            if revealed { playerWindow.showCursor() } else { playerWindow.hideCursorUntilMouseMoves() }
         }
         #endif
         .animation(.easeInOut(duration: 0.25), value: chrome)
@@ -515,6 +515,11 @@ final class PlayerWindow {
     func hideCursorUntilMouseMoves() {
         guard NSApp.isActive, let window, window.isKeyWindow, window.frame.contains(NSEvent.mouseLocation) else { return }
         NSCursor.setHiddenUntilMouseMoves(true)
+    }
+
+    /// A menu or prompt opened from the keyboard brings the pointer back with the bar.
+    func showCursor() {
+        NSCursor.setHiddenUntilMouseMoves(false)
     }
 }
 
