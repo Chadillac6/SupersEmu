@@ -52,7 +52,15 @@ final class GameSession {
     private(set) var coreSupportsCheats = false
     var menuSelection = 0
     var isConfirmingRestart = false
-    var isShowingControls = false
+    var isShowingControls = false {
+        didSet {
+            guard oldValue, !isShowingControls, controlsFromTopBar else { return }
+            controlsFromTopBar = false
+            closeMenu()
+        }
+    }
+    /// Controls opened from the top bar go straight back to the game when closed, not to the menu.
+    @ObservationIgnored private var controlsFromTopBar = false
     /// Set when the player picks "Exit to Library" from the in-game menu.
     private(set) var wantsExit = false
     /// A player's controller went away mid-game; the game stays paused until they resume.
@@ -987,6 +995,13 @@ final class GameSession {
         isShowingControls = false
         if disconnectedController == nil { stopOverlayPolling() }
         resume()
+    }
+
+    func openControls() {
+        openMenu()
+        guard isMenuOpen else { return }
+        controlsFromTopBar = true
+        isShowingControls = true
     }
 
     func choose(_ item: MenuItem) {
