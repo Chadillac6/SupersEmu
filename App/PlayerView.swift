@@ -93,7 +93,7 @@ struct PlayerView: View {
                !session.isMenuOpen, !session.isShowingSaveSlots {
                 NewerSaveBanner(revision: newer, load: session.loadNewerSave, dismiss: session.dismissNewerSave)
                     .padding(.horizontal, 16)
-                    // Clears the Library / Menu / Save / Load bar.
+                    // Clears the Library / Menu / Controls / Save bar.
                     .padding(.top, 56)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -128,6 +128,7 @@ struct PlayerView: View {
                     }
             }
         }
+        .background { keyboardShortcuts }
         .preferredColorScheme(.dark)
         #if os(iOS)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
@@ -270,19 +271,6 @@ struct PlayerView: View {
                     .accessibilityIdentifier("cheats-on-badge")
             }
             if !compact { Spacer(minLength: 0) }
-            if !compact {
-                if session.supportsCheats {
-                    Button { session.openCheatPicker() } label: {
-                        toolbarLabel("Cheats", systemImage: "wand.and.stars", compact: compact)
-                    }
-                    .fixedSize()
-                    .keyboardShortcut("c", modifiers: [.command, .shift])
-                    .disabled(session.isSyncing || session.pendingConflict != nil)
-                    .help("Cheats (Shift-Command-C)")
-                    .accessibilityLabel("Cheats")
-                    .accessibilityIdentifier("open-cheats")
-                }
-            }
             Button { session.openMenu() } label: {
                 toolbarLabel("Menu", systemImage: "line.3.horizontal", compact: compact)
             }
@@ -291,40 +279,46 @@ struct PlayerView: View {
             .help("In-game menu (hold Select + Start for 1 second, or hold Home on a controller)")
             .accessibilityLabel("Menu")
             .accessibilityIdentifier("open-menu")
-            if !compact {
-                Button { session.openSaveSlots(preferEmpty: true) } label: {
-                    toolbarLabel("Save", systemImage: "square.and.arrow.down", compact: compact)
-                }
-                .fixedSize()
-                .disabled(session.isSyncing || session.pendingConflict != nil)
-                .accessibilityLabel("Save")
-                .accessibilityIdentifier("save-state")
-                Button { session.openSaveSlots(preferEmpty: false) } label: {
-                    toolbarLabel("Load", systemImage: "arrow.counterclockwise", compact: compact)
-                }
-                .fixedSize()
-                .disabled(!session.hasManualState || session.isSyncing)
-                .accessibilityLabel("Load")
-                .accessibilityIdentifier("load-state")
-                if session.diskCount > 1 {
-                    Button { session.openDiscPicker() } label: {
-                        toolbarLabel("Swap disc", systemImage: "opticaldisc", compact: compact)
-                    }
-                    .fixedSize()
-                    .keyboardShortcut("d", modifiers: .command)
-                    .disabled(session.isSyncing || session.pendingConflict != nil)
-                    .help("Swap disc (Command-D, or L + R + Select on a controller)")
-                    .accessibilityValue("Disc \(session.currentDisk + 1) of \(session.diskCount)")
-                    .accessibilityLabel("Swap disc")
-                    .accessibilityIdentifier("swap-disc")
-                }
+            Button { session.openControls() } label: {
+                toolbarLabel("Controls", systemImage: "gamecontroller", compact: compact)
             }
+            .fixedSize()
+            .disabled(session.isSyncing || session.pendingConflict != nil)
+            .accessibilityLabel("Controls")
+            .accessibilityIdentifier("open-controls")
+            Button { session.openSaveSlots(preferEmpty: true) } label: {
+                toolbarLabel("Save", systemImage: "square.and.arrow.down", compact: compact)
+            }
+            .fixedSize()
+            .disabled(session.isSyncing || session.pendingConflict != nil)
+            .help("Save or load a save state")
+            .accessibilityLabel("Save")
+            .accessibilityIdentifier("save-state")
         }
         .buttonStyle(.borderless)
         .lineLimit(1)
         .padding(.horizontal, compact ? 8 : 16)
         .padding(.vertical, 10)
         .background(.black)
+    }
+
+    /// Cheats and Swap Disc live in the in-game menu; their keyboard shortcuts still work from the game.
+    private var keyboardShortcuts: some View {
+        ZStack {
+            if session.supportsCheats {
+                Button("Cheats") { session.openCheatPicker() }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+            }
+            if session.diskCount > 1 {
+                Button("Swap disc") { session.openDiscPicker() }
+                    .keyboardShortcut("d", modifiers: .command)
+            }
+        }
+        .disabled(session.isSyncing || session.pendingConflict != nil)
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     @ViewBuilder private func toolbarLabel(_ title: String, systemImage: String, compact: Bool) -> some View {
