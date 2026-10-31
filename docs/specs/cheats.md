@@ -7,7 +7,7 @@ Replay and other systems are not supported yet.
 - Game details → **Cheats** (Shift-Command-C on the Mac): saved codes for that exact ROM, each with an on/off toggle.
   Add one code with live validation, or **Paste Several Codes** (one per line; other words on the line become the
   name, blank names become "Cheat N"), review what was understood, untick any and save. New cheats start on.
-- In game: **Cheats** in the in-game menu or the toolbar (Shift-Command-C). The game pauses; d-pad/arrows move,
+- In game: **Cheats** in the in-game menu (or Shift-Command-C). The game pauses; d-pad/arrows move,
   A/Start/Return toggles, B/Select/Esc closes. Each row says Applied, Sent, Rejected by core, Invalid code or Off.
 - A **Cheats on** badge in the player toolbar while any code is active. Saves made with cheats on sync as usual.
 
