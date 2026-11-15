@@ -45,7 +45,8 @@ static bool isContentCard(void) {
 static bool readCard(u8 *dest, size_t offset, size_t length) {
     u64 checksum;
     size_t from, to;
-    if (!FileMcd_Read(0, 0, dest, (u32)offset, (int)length)) return false;
+    /* A closed card reads as zeros, which must never be flushed over the game's save. */
+    if (!FileMcd_IsPresent(0, 0) || !FileMcd_Read(0, 0, dest, (u32)offset, (int)length)) return false;
     checksum = FileMcd_GetCRC(0, 0);
     from = offset > CARD_CHECKSUM_AT ? offset : CARD_CHECKSUM_AT;
     to = offset + length < CARD_CHECKSUM_AT + sizeof(checksum) ? offset + length : CARD_CHECKSUM_AT + sizeof(checksum);
@@ -102,7 +103,7 @@ static void applyHostLoad(void) {
         replaced = remove(cardPath) == 0 || errno == ENOENT;
     }
     FileMcd_EmuOpen();
-    cardUnavailable = !replaced;
+    cardUnavailable = !replaced || !FileMcd_IsPresent(0, 0);
 }
 
 bool se_lrps2_load_game(const struct retro_game_info *game) {
@@ -154,4 +155,9 @@ size_t se_lrps2_get_memory_size(unsigned type) {
 /* Test hook: a game's write to card 1 (what the SIO does when a game saves). */
 bool se_core_lrps2_write_card(unsigned address, const void *data, int size) {
     return FileMcd_Save(0, 0, (const u8 *)data, address, size) == 1;
+}
+
+void se_core_lrps2_set_cards_open(bool open) {
+    if (open) FileMcd_EmuOpen();
+    else FileMcd_EmuClose();
 }

@@ -9,6 +9,7 @@
 
 // Host/CoreEntry/lrps2/se_memcard.c: what the SIO does when a game saves to memory card 1.
 extern "C" bool se_core_lrps2_write_card(unsigned address, const void *data, int size);
+extern "C" void se_core_lrps2_set_cards_open(bool open);
 
 /// PlayStation 2 (LRPS2, macOS on Apple Silicon). No Sony BIOS or commercial disc is ever used:
 /// the boot tests generate a synthetic 4 MB BIOS image (RESET/ROMDIR/ROMVER entries that pass the
@@ -411,6 +412,22 @@ static NSData *BlankBytes() {
     [host shutdown];
     XCTAssertEqualObjects([NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]], stored,
                           @"the game's save is not overwritten with a card that is not its own");
+}
+
+- (void)testClosedCardIsNotFlushedOverSaveRAM {
+    NSError *error = nil;
+    NSData *stored = [self storeCardWithSave:SaveBytes(0x5a) gameID:@"ps2-game"];
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    // What a reopen that failed after the restore leaves behind: slot 1 closed, reads as zeros.
+    se_core_lrps2_set_cards_open(false);
+    XCTAssertTrue([host flushSaveRAMWithError:&error], @"%@", error);
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]], stored,
+                          @"a closed card is not flushed as zeros over the game's save");
+    se_core_lrps2_set_cards_open(true);
+    [host shutdown];
 }
 
 - (void)testSameFileNameInDifferentFoldersGetsSeparateCards {
