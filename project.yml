@@ -796,6 +796,344 @@ targets:
           - "$(SRCROOT)/Vendor/cores/mupen64plus_next/mupen64plus-core/subprojects/md5"
           - "$(SRCROOT)/Host/CoreEntry"
 
+  # PlayStation 2 (macOS, Apple Silicon only). LRPS2 (libretro PCSX2) with its native arm64 EE/IOP/VU
+  # recompilers (MAP_JIT + pthread_jit_write_protect_np via libretro-common memjit_*; needs the allow-jit
+  # entitlement) and the software GS renderer ("Software (SW)"): no OpenGL/Vulkan (HAVE_OPENGL=0 HAVE_VULKAN=0).
+  # Source list = upstream Makefile/Makefile.common for `make platform=osx arch=arm64 HAVE_OPENGL=0 HAVE_VULKAN=0`.
+  # arm64 only: the x86_64 slice of a universal Mac build has no PS2 core (CoreRegistry/kCores are arm64-gated).
+  LRPS2Core:
+    type: library.static
+    platform: macOS
+    preBuildScripts:
+      - name: Generate LRPS2 game database
+        basedOnDependencyAnalysis: true
+        inputFiles:
+          - $(SRCROOT)/Vendor/cores/lrps2/bin/resources/GameIndex.yaml
+          - $(SRCROOT)/Vendor/cores/lrps2/tools/gen_gamedb_builtin.sh
+        outputFiles:
+          - $(SRCROOT)/Vendor/cores/lrps2/pcsx2/GameDatabaseBuiltin.c
+        script: |
+          cd "$SRCROOT/Vendor/cores/lrps2"
+          sh tools/gen_gamedb_builtin.sh bin/resources/GameIndex.yaml pcsx2/GameDatabaseBuiltin.c
+    sources:
+      - path: Host/CoreEntry/SECoreEntry.c
+        compilerFlags: ["-DSE_CORE_ID=lrps2", "-DSE_CORE_REVISION=3053b13"]
+      # Generated before compiling (gitignored upstream): the game-compatibility database as a C array.
+      - path: Vendor/cores/lrps2/pcsx2/GameDatabaseBuiltin.c
+        optional: true
+      - path: Vendor/cores/lrps2/pcsx2/GS/Renderers/Common/GSVertexTrace.c
+        compilerFlags: ["-ffp-contract=off"]
+      - path: Vendor/cores/lrps2/pcsx2/GS/Renderers/Common/GSVertexTraceFMM.c
+        compilerFlags: ["-ffp-contract=off"]
+      - path: Vendor/cores/lrps2/pcsx2/GS/Renderers/SW/GSDeviceSW.cpp
+        compilerFlags: ["-ffp-contract=off"]
+      - path: Vendor/cores/lrps2/pcsx2/GS/Renderers/SW/GSDrawScanline.cpp
+        compilerFlags: ["-ffp-contract=off"]
+      - path: Vendor/cores/lrps2/pcsx2/GS/Renderers/SW/GSRasterizer.cpp
+        compilerFlags: ["-ffp-contract=off"]
+      - path: Vendor/cores/lrps2/pcsx2/GS/Renderers/SW/GSRendererSW.cpp
+        compilerFlags: ["-ffp-contract=off"]
+      - path: Vendor/cores/lrps2/pcsx2/GS/Renderers/SW/GSTextureCacheSW.cpp
+        compilerFlags: ["-ffp-contract=off"]
+      - path: Vendor/cores/lrps2
+        includes:
+          - "3rdparty/vixl/src/aarch64/assembler-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/assembler-sve-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/cpu-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/cpu-features-auditor-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/debugger-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/decoder-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/disasm-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/instructions-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/logic-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/macro-assembler-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/macro-assembler-sve-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/operands-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/pointer-auth-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/registers-aarch64.cc"
+          - "3rdparty/vixl/src/aarch64/simulator-aarch64.cc"
+          - "3rdparty/vixl/src/code-buffer-vixl.cc"
+          - "3rdparty/vixl/src/compiler-intrinsics-vixl.cc"
+          - "3rdparty/vixl/src/cpu-features.cc"
+          - "3rdparty/vixl/src/utils-vixl.cc"
+          - "libretro/USB.c"
+          - "libretro/audio_queue.c"
+          - "libretro/disk_list.c"
+          - "libretro/libretro-common/compat/compat_fnmatch.c"
+          - "libretro/libretro-common/compat/compat_posix_string.c"
+          - "libretro/libretro-common/compat/compat_strl.c"
+          - "libretro/libretro-common/compat/fopen_utf8.c"
+          - "libretro/libretro-common/encodings/encoding_crc32.c"
+          - "libretro/libretro-common/encodings/encoding_deflate.c"
+          - "libretro/libretro-common/encodings/encoding_huffman.c"
+          - "libretro/libretro-common/encodings/encoding_rlz4.c"
+          - "libretro/libretro-common/encodings/encoding_rzstd.c"
+          - "libretro/libretro-common/encodings/encoding_utf.c"
+          - "libretro/libretro-common/encodings/encoding_xxh3.c"
+          - "libretro/libretro-common/fastjmp/fastjmp.c"
+          - "libretro/libretro-common/faulthandler/faulthandler.c"
+          - "libretro/libretro-common/features/features_cpu.c"
+          - "libretro/libretro-common/file/file_path.c"
+          - "libretro/libretro-common/file/file_path_io.c"
+          - "libretro/libretro-common/file/retro_dirent.c"
+          - "libretro/libretro-common/formats/7z/r7z_lzma.c"
+          - "libretro/libretro-common/formats/chd/rchd.c"
+          - "libretro/libretro-common/formats/dds/rdds.c"
+          - "libretro/libretro-common/formats/flac/rflac.c"
+          - "libretro/libretro-common/formats/png/rpng.c"
+          - "libretro/libretro-common/formats/yaml/ryaml.c"
+          - "libretro/libretro-common/memmap/memalign.c"
+          - "libretro/libretro-common/memmap/memmap.c"
+          - "libretro/libretro-common/queues/retro_spsc.c"
+          - "libretro/libretro-common/rthreads/retro_asym_eventcount.c"
+          - "libretro/libretro-common/rthreads/retro_eventcount.c"
+          - "libretro/libretro-common/rthreads/retro_procbarrier.c"
+          - "libretro/libretro-common/rthreads/rthreads.c"
+          - "libretro/libretro-common/streams/file_stream.c"
+          - "libretro/libretro-common/streams/trans_stream.c"
+          - "libretro/libretro-common/streams/trans_stream_deflate.c"
+          - "libretro/libretro-common/streams/trans_stream_pipe.c"
+          - "libretro/libretro-common/string/rstrtod.c"
+          - "libretro/libretro-common/string/stdstring.c"
+          - "libretro/libretro-common/time/rtime.c"
+          - "libretro/libretro-common/vfs/vfs_hybrid.c"
+          - "libretro/libretro-common/vfs/vfs_implementation.c"
+          - "libretro/main.c"
+          - "libretro/patches.c"
+          - "libretro/state_ext.c"
+          - "pcsx2/CDVD/CDVD.c"
+          - "pcsx2/CDVD/CDVDcommon.c"
+          - "pcsx2/CDVD/CDVDisoReader.c"
+          - "pcsx2/CDVD/CDVDnvram.c"
+          - "pcsx2/CDVD/IsoFS/IsoFSCDVD.c"
+          - "pcsx2/CDVD/IsoFS/iso9660.c"
+          - "pcsx2/CDVD/MechaMg.c"
+          - "pcsx2/CDVD/MgDes.c"
+          - "pcsx2/CDVD/Ps1CD.c"
+          - "pcsx2/CDVD/cdvd_chd.c"
+          - "pcsx2/CDVD/cdvd_cso.c"
+          - "pcsx2/CDVD/cdvd_flat.c"
+          - "pcsx2/CDVD/cdvd_gz.c"
+          - "pcsx2/CDVD/cdvd_iso.c"
+          - "pcsx2/CDVD/cdvd_reader.c"
+          - "pcsx2/COP0.c"
+          - "pcsx2/COP2.c"
+          - "pcsx2/Cache.c"
+          - "pcsx2/Counters.c"
+          - "pcsx2/DEV9/ATA/ATA_Info.c"
+          - "pcsx2/DEV9/ATA/ATA_State.c"
+          - "pcsx2/DEV9/ATA/ATA_Transfer.c"
+          - "pcsx2/DEV9/ATA/Commands/ATA_CmdDMA.c"
+          - "pcsx2/DEV9/ATA/Commands/ATA_CmdExecuteDeviceDiag.c"
+          - "pcsx2/DEV9/ATA/Commands/ATA_CmdNoData.c"
+          - "pcsx2/DEV9/ATA/Commands/ATA_CmdPIOData.c"
+          - "pcsx2/DEV9/ATA/Commands/ATA_CmdSMART.c"
+          - "pcsx2/DEV9/ATA/Commands/ATA_Command.c"
+          - "pcsx2/DEV9/ATA/Commands/ATA_SCE.c"
+          - "pcsx2/DEV9/ATA/HddCreate.c"
+          - "pcsx2/DEV9/ATA/HddImage.c"
+          - "pcsx2/DEV9/AdapterUtils.c"
+          - "pcsx2/DEV9/DEV9.c"
+          - "pcsx2/DEV9/InternalServers/DHCP_Server.c"
+          - "pcsx2/DEV9/InternalServers/DNS_Server.c"
+          - "pcsx2/DEV9/PacketReader/IP/UDP/DNS/DNS_Packet.c"
+          - "pcsx2/DEV9/PacketReader/netpkt.c"
+          - "pcsx2/DEV9/Sessions/ICMP_Session/ICMP_Session.c"
+          - "pcsx2/DEV9/Sessions/Session.c"
+          - "pcsx2/DEV9/Sessions/TCP_Session/TCP_Session.c"
+          - "pcsx2/DEV9/Sessions/UDP_Session/UDP_Session.c"
+          - "pcsx2/DEV9/flash.c"
+          - "pcsx2/DEV9/net.c"
+          - "pcsx2/DEV9/smap.c"
+          - "pcsx2/DEV9/sockets.c"
+          - "pcsx2/Dmac.c"
+          - "pcsx2/DmacChannel.c"
+          - "pcsx2/Elfheader.c"
+          - "pcsx2/EmuOptions.c"
+          - "pcsx2/FPU.c"
+          - "pcsx2/FW.c"
+          - "pcsx2/FiFo.c"
+          - "pcsx2/FireWire/fatimg.c"
+          - "pcsx2/FireWire/p1io.c"
+          - "pcsx2/FireWire/py1desc.c"
+          - "pcsx2/GS.c"
+          - "pcsx2/GS/GS.cpp"
+          - "pcsx2/GS/GSBlock.cpp"
+          - "pcsx2/GS/GSClut.c"
+          - "pcsx2/GS/GSClutGPU.cpp"
+          - "pcsx2/GS/GSDrawingContext.c"
+          - "pcsx2/GS/GSLocalMemory.cpp"
+          - "pcsx2/GS/GSLocalMemoryMaps.c"
+          - "pcsx2/GS/GSLocalMemoryMultiISA.cpp"
+          - "pcsx2/GS/GSOffset.c"
+          - "pcsx2/GS/GSPage2Tile.c"
+          - "pcsx2/GS/GSPsm.c"
+          - "pcsx2/GS/GSRingHeap.c"
+          - "pcsx2/GS/GSState.cpp"
+          - "pcsx2/GS/GSTables.c"
+          - "pcsx2/GS/GSUtil.c"
+          - "pcsx2/GS/GSVector.cpp"
+          - "pcsx2/GS/Renderers/Common/GSCodeReserve.c"
+          - "pcsx2/GS/Renderers/Common/GSDevice.cpp"
+          - "pcsx2/GS/Renderers/Common/GSDirtyRect.c"
+          - "pcsx2/GS/Renderers/Common/GSFlatMap.c"
+          - "pcsx2/GS/Renderers/Common/GSRenderer.cpp"
+          - "pcsx2/GS/Renderers/Common/GSRetireRing.c"
+          - "pcsx2/GS/Renderers/Common/GSScratch.c"
+          - "pcsx2/GS/Renderers/Common/GSStableGroup.c"
+          - "pcsx2/GS/Renderers/Common/GSStableMap.c"
+          - "pcsx2/GS/Renderers/Common/GSTextureBase.c"
+          - "pcsx2/GS/Renderers/Common/GSTextureFormat.c"
+          - "pcsx2/GS/Renderers/DX12/GSD3D12Heap.c"
+          - "pcsx2/GS/Renderers/DX12/GSD3D12Warm.c"
+          - "pcsx2/GS/Renderers/HW/GSHashTable.c"
+          - "pcsx2/GS/Renderers/HW/GSHwHack.cpp"
+          - "pcsx2/GS/Renderers/HW/GSObjectPool.c"
+          - "pcsx2/GS/Renderers/HW/GSRendererHW.cpp"
+          - "pcsx2/GS/Renderers/HW/GSRendererHWMultiISA.cpp"
+          - "pcsx2/GS/Renderers/HW/GSSpriteSnap.c"
+          - "pcsx2/GS/Renderers/HW/GSTargetBudget.c"
+          - "pcsx2/GS/Renderers/HW/GSTextureCache.cpp"
+          - "pcsx2/GS/Renderers/SW/GSHiresMem.c"
+          - "pcsx2/GS/Renderers/SW/GSTextureSW.c"
+          - "pcsx2/GameDatabase.c"
+          - "pcsx2/GameDatabaseFixes.c"
+          - "pcsx2/Gif.c"
+          - "pcsx2/Gif_Unit.c"
+          - "pcsx2/GoemonTlb.c"
+          - "pcsx2/HostFS.c"
+          - "pcsx2/Hw.c"
+          - "pcsx2/IPU/IPU.c"
+          - "pcsx2/IPU/IPU_Fifo.c"
+          - "pcsx2/IPU/IPU_MultiISA.c"
+          - "pcsx2/IPU/IPUdither.c"
+          - "pcsx2/IPU/IPUdma.c"
+          - "pcsx2/IPU/ipu_csc.c"
+          - "pcsx2/IPU/ipu_idct.c"
+          - "pcsx2/IPU/ipu_tables.c"
+          - "pcsx2/IPU/yuv2rgb.c"
+          - "pcsx2/Interpreter.c"
+          - "pcsx2/IopBios.c"
+          - "pcsx2/IopCounters.c"
+          - "pcsx2/IopDma.c"
+          - "pcsx2/IopGte.c"
+          - "pcsx2/IopHw.c"
+          - "pcsx2/IopIrq.c"
+          - "pcsx2/IopMem.c"
+          - "pcsx2/MMI.c"
+          - "pcsx2/MTGS.c"
+          - "pcsx2/MTVU.c"
+          - "pcsx2/Mdec.c"
+          - "pcsx2/Memory.c"
+          - "pcsx2/MemoryCardFile.c"
+          - "pcsx2/MemoryCardProtocol.c"
+          - "pcsx2/MultitapProtocol.c"
+          - "pcsx2/NearPlace.c"
+          - "pcsx2/PAD/PAD.c"
+          - "pcsx2/Patch.c"
+          - "pcsx2/Pcsx2Config.c"
+          - "pcsx2/PerformanceMetrics.c"
+          - "pcsx2/R3000A.c"
+          - "pcsx2/R3000AInterpreter.c"
+          - "pcsx2/R3000AOpcodeTables.c"
+          - "pcsx2/R5900.c"
+          - "pcsx2/R5900OpcodeImpl.c"
+          - "pcsx2/R5900OpcodeTables.c"
+          - "pcsx2/SPR.c"
+          - "pcsx2/SPU2/ADSR.c"
+          - "pcsx2/SPU2/Dma.c"
+          - "pcsx2/SPU2/Mixer.c"
+          - "pcsx2/SPU2/ReadInput.c"
+          - "pcsx2/SPU2/RegTable.c"
+          - "pcsx2/SPU2/Reverb.c"
+          - "pcsx2/SPU2/ReverbResample.c"
+          - "pcsx2/SPU2/spu2.c"
+          - "pcsx2/SPU2/spu2freeze.c"
+          - "pcsx2/SPU2/spu2sys.c"
+          - "pcsx2/SaveStateBase.c"
+          - "pcsx2/SaveStateFreeze.c"
+          - "pcsx2/Sif.c"
+          - "pcsx2/Sif0.c"
+          - "pcsx2/Sif1.c"
+          - "pcsx2/Sio.c"
+          - "pcsx2/SioFifo.c"
+          - "pcsx2/USB/libretro-usb/bus.c"
+          - "pcsx2/USB/libretro-usb/core.c"
+          - "pcsx2/USB/libretro-usb/desc.c"
+          - "pcsx2/USB/libretro-usb/hid.c"
+          - "pcsx2/USB/libretro-usb/ohci_dma.c"
+          - "pcsx2/USB/libretro-usb/usb-hid.c"
+          - "pcsx2/USB/libretro-usb/usb-ohci.c"
+          - "pcsx2/USB/usb-eyetoy/cam-frame.c"
+          - "pcsx2/USB/usb-eyetoy/cam-jpeg.c"
+          - "pcsx2/USB/usb-eyetoy/eyetoy-frontend.c"
+          - "pcsx2/USB/usb-eyetoy/eyetoy-host.c"
+          - "pcsx2/USB/usb-eyetoy/jo_mpeg.c"
+          - "pcsx2/USB/usb-eyetoy/usb-eyetoy-webcam.c"
+          - "pcsx2/USB/usb-perfect-pool/ppcam.c"
+          - "pcsx2/USB/usb-python2/p2io.c"
+          - "pcsx2/USB/usb-python2/py2desc.c"
+          - "pcsx2/USB/usb-python2/usb-python2.c"
+          - "pcsx2/VMManager.c"
+          - "pcsx2/VU0.c"
+          - "pcsx2/VU0micro.c"
+          - "pcsx2/VU0microInterp.c"
+          - "pcsx2/VU1micro.c"
+          - "pcsx2/VU1microInterp.c"
+          - "pcsx2/VUmicro.c"
+          - "pcsx2/VUmicroMem.c"
+          - "pcsx2/VUops.c"
+          - "pcsx2/Vif.c"
+          - "pcsx2/Vif0_Dma.c"
+          - "pcsx2/Vif1_Dma.c"
+          - "pcsx2/Vif1_MFIFO.c"
+          - "pcsx2/Vif_Codes.c"
+          - "pcsx2/Vif_Transfer.c"
+          - "pcsx2/Vif_Unpack.c"
+          - "pcsx2/VirtualMemory.c"
+          - "pcsx2/arm64/AsmHelpers.cpp"
+          - "pcsx2/arm64/Vif_Dynarec_arm64.cpp"
+          - "pcsx2/arm64/Vif_UnpackNEON.cpp"
+          - "pcsx2/arm64/aVU.cpp"
+          - "pcsx2/arm64/recR3000A_arm64.cpp"
+          - "pcsx2/arm64/recR5900_arm64.cpp"
+          - "pcsx2/memcard_ecc.c"
+          - "pcsx2/ps2/BiosTools.c"
+          - "pcsx2/ps2/Iop/IopHwRead.c"
+          - "pcsx2/ps2/Iop/IopHwWrite.c"
+          - "pcsx2/ps2/Iop/PsxBios.c"
+          - "pcsx2/ps2/pgif.c"
+          - "pcsx2/ps2float.c"
+          - "pcsx2/sif2.c"
+          - "pcsx2/vtlb.c"
+          - "pcsx2/x86/CpuState.c"
+          - "pcsx2/x86/JitHash.c"
+    settings:
+      base:
+        <<: *core_settings
+        ARCHS: arm64
+        USE_HEADERMAP: NO
+        GCC_C_LANGUAGE_STANDARD: gnu99
+        CLANG_CXX_LANGUAGE_STANDARD: c++17
+        GCC_ENABLE_CPP_EXCEPTIONS: NO
+        GCC_ENABLE_CPP_RTTI: NO
+        GCC_PREPROCESSOR_DEFINITIONS: ["__LIBRETRO__", "WANT_THREADING", "HAVE_THREADS", "FRONTEND_SUPPORTS_RGB565", "_ARCH_64=1", "VIXL_INCLUDE_TARGET_AARCH64", "VIXL_CODE_BUFFER_MALLOC", "HAVE_RCHD_DEFLATE", "HAVE_RCHD_LZMA", "HAVE_RCHD_FLAC", "HAVE_RCHD_ZSTD", "NDEBUG", "STDC_HEADERS", "_FILE_OFFSET_BITS=64", "__STDC_CONSTANT_MACROS", "__STDC_LIMIT_MACROS"]
+        OTHER_CFLAGS: ["-fno-strict-aliasing"]
+        OTHER_CPLUSPLUSFLAGS: ["$(OTHER_CFLAGS)", "-DPCSX2_C89_EMITTER", "-fvisibility-inlines-hidden"]
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Vendor/cores/lrps2"
+          - "$(SRCROOT)/Vendor/cores/lrps2/3rdparty"
+          - "$(SRCROOT)/Vendor/cores/lrps2/3rdparty/include"
+          - "$(SRCROOT)/Vendor/cores/lrps2/3rdparty/vixl/src"
+          - "$(SRCROOT)/Vendor/cores/lrps2/3rdparty/xbyak"
+          - "$(SRCROOT)/Vendor/cores/lrps2/common"
+          - "$(SRCROOT)/Vendor/cores/lrps2/common/include"
+          - "$(SRCROOT)/Vendor/cores/lrps2/libretro"
+          - "$(SRCROOT)/Vendor/cores/lrps2/libretro/libretro-common/include"
+          - "$(SRCROOT)/Vendor/cores/lrps2/pcsx2"
+          - "$(SRCROOT)/Vendor/cores/lrps2/pcsx2/x86"
+          - "$(SRCROOT)/Host/CoreEntry"
+
   SupersEmu:
     type: application
     platform: [iOS, macOS]
@@ -811,6 +1149,8 @@ targets:
       - target: PicoDriveCore_${platform}
       - target: BeetlePSXCore_${platform}
       - target: Mupen64PlusNextCore_${platform}
+      - target: LRPS2Core
+        platforms: [macOS]
       - sdk: libz.tbd
       - package: SupersEmuServer
         product: SupersEmuKit
@@ -898,6 +1238,7 @@ targets:
       - target: PicoDriveCore_macOS
       - target: BeetlePSXCore_macOS
       - target: Mupen64PlusNextCore_macOS
+      - target: LRPS2Core
       - sdk: libz.tbd
       - sdk: AVFoundation.framework
       - sdk: CoreVideo.framework

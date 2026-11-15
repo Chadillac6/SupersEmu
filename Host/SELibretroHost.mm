@@ -134,6 +134,9 @@ const CoreEntry kCores[] = {
     {"beetle_psx", se_core_beetle_psx},
     {"picodrive", se_core_picodrive},
     {"mupen64plus_next", se_core_mupen64plus_next},
+#if TARGET_OS_OSX && defined(__aarch64__)
+    {"lrps2", se_core_lrps2},
+#endif
 };
 
 struct CoreOption {
@@ -147,6 +150,10 @@ const CoreOption kCoreOptions[] = {
     {"mupen64plus-cpucore", "cached_interpreter"},
     {"mupen64plus-ThreadedRenderer", "False"},
     {"mupen64plus-EnableFBEmulation", "True"},
+    // PS2: the all-CPU GS renderer; PCSX2's OpenGL path needs newer GL than macOS has, Vulkan needs MoltenVK.
+    {"pcsx2_renderer", "Software (SW)"},
+    // PS2: one memory card per game (<content name>.ps2) in the save directory, like other cores' saves.
+    {"pcsx2_shared_memory_cards", "disabled"},
 };
 
 NSDictionary<NSString *, NSString *> *gPendingCoreOptionOverrides = nil;
@@ -634,12 +641,26 @@ NSString *const SECoreIDLRPS2 = @"lrps2";
 
 static __weak SELibretroHost *gActiveHost;
 
+/// LRPS2 scans <system>/pcsx2/bios for 4-8 MB images and checks their ROMDIR itself; this only
+/// tells a missing BIOS apart from other load failures for the error message.
+static BOOL SEHasPS2BIOS(NSURL *systemDirectory) {
+    NSURL *bios = [systemDirectory URLByAppendingPathComponent:@"pcsx2/bios" isDirectory:YES];
+    for (NSURL *file in [NSFileManager.defaultManager contentsOfDirectoryAtURL:bios
+                         includingPropertiesForKeys:@[NSURLFileSizeKey] options:0 error:nil]) {
+        NSNumber *size = nil;
+        [file getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
+        if (size.longLongValue >= 4 * 1024 * 1024 && size.longLongValue <= 8 * 1024 * 1024) return YES;
+    }
+    return NO;
+}
+
 @implementation SELibretroHost {
     NSData *_romData;
     NSURL *_saveRAMURL;
     retro_system_av_info _avInfo;
     NSDictionary<NSString *, NSString *> *_coreOptions;
     BOOL _loaded;
+    BOOL _ranFrame;
     AVAudioEngine *_engine;
     AVAudioSourceNode *_sourceNode;
     NSArray<id> *_audioObservers;
@@ -762,7 +783,11 @@ static __weak SELibretroHost *gActiveHost;
         hwDestroy();
         g.core = nullptr;
         g.disk = {};
-        if (error) *error = hostError(2, @"The emulator could not load this game.");
+        if (error) {
+            *error = [coreID isEqualToString:SECoreIDLRPS2] && !SEHasPS2BIOS(systemDirectory)
+                ? hostError(2, @"PlayStation 2 games need a PS2 BIOS. Put a BIOS file in the pcsx2/bios folder of the System folder.")
+                : hostError(2, @"The emulator could not load this game.");
+        }
         return nil;
     }
     // Cores keep cheats in globals: never let one game's codes reach the next.
@@ -865,6 +890,7 @@ static __weak SELibretroHost *gActiveHost;
     if (!_loaded) return;
     if (g.hw.requested) hwMakeCurrent();
     g.core->run();
+    _ranFrame = YES;
 }
 
 - (void)runFrames:(NSInteger)count {
@@ -995,7 +1021,12 @@ static __weak SELibretroHost *gActiveHost;
 
 - (BOOL)unserializeState:(NSData *)state {
     if (_loaded && g.hw.requested) hwMakeCurrent();
-    return _loaded && state.length > 0 && g.core->unserialize(state.bytes, state.length);
+    if (!_loaded || state.length == 0) return NO;
+    if (g.core->unserialize(state.bytes, state.length)) return YES;
+    // LRPS2 creates its GS renderer on the first frame and rejects a state before that.
+    if (_ranFrame) return NO;
+    [self runFrame];
+    return g.core->unserialize(state.bytes, state.length);
 }
 
 - (BOOL)saveStateToURL:(NSURL *)url error:(NSError **)error {

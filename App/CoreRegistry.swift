@@ -22,7 +22,18 @@ enum CoreRegistry {
         Core(id: SECoreIDGenesisPlusGX, systems: ["segacd"], extensions: []),
         Core(id: SECoreIDPicoDrive, systems: ["sega32x"], extensions: ["32x"]),
         Core(id: SECoreIDMupen64PlusNext, systems: ["n64"], extensions: ["z64", "n64", "v64"]),
+    ] + macOSOnlyCores
+
+    #if os(macOS) && arch(arm64)
+    /// PS2 (LRPS2) is linked only into the Apple Silicon Mac app. `.cue`/`.chd`/`.m3u` stay PS1 by
+    /// extension, so PS2 discs in those formats need the console; ELF and compressed ISOs are PS2-only.
+    /// Needs a PS2 BIOS in `<system>/pcsx2/bios/`.
+    private static let macOSOnlyCores: [Core] = [
+        Core(id: SECoreIDLRPS2, systems: ["ps2"], extensions: ["iso", "cso", "zso", "ciso", "gz", "elf"]),
     ]
+    #else
+    private static let macOSOnlyCores: [Core] = []
+    #endif
 
     /// Sheets that reference other files (tracks, discs). Copying one alone breaks the game, so
     /// these come in through the server importer, which groups the referenced files.

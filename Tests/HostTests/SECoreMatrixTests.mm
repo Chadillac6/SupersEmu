@@ -101,8 +101,11 @@ static NSString *describeDifference(NSData *a, NSData *b) {
 }
 
 - (void)testAllCoresAreLinked {
-    NSArray *expected = @[SECoreIDSnes9x, SECoreIDGambatte, SECoreIDMGBA, SECoreIDGenesisPlusGX,
-                          SECoreIDBeetlePSX, SECoreIDPicoDrive, SECoreIDMupen64PlusNext];
+    NSMutableArray *expected = [@[SECoreIDSnes9x, SECoreIDGambatte, SECoreIDMGBA, SECoreIDGenesisPlusGX,
+                                  SECoreIDBeetlePSX, SECoreIDPicoDrive, SECoreIDMupen64PlusNext] mutableCopy];
+#if TARGET_OS_OSX && defined(__aarch64__)
+    [expected addObject:SECoreIDLRPS2];
+#endif
     XCTAssertEqualObjects(SELibretroHost.availableCoreIDs, expected);
 }
 

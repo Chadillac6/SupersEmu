@@ -3,6 +3,7 @@
 // into a single object that exports only its se_core_<id>() entry point (see core.exports).
 // Include the core's own libretro.h before this header.
 #pragma once
+#include <TargetConditionals.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,6 +46,9 @@ const SECoreAPI *se_core_genesis_plus_gx(void);
 const SECoreAPI *se_core_beetle_psx(void);
 const SECoreAPI *se_core_picodrive(void);
 const SECoreAPI *se_core_mupen64plus_next(void);
+#if TARGET_OS_OSX && defined(__aarch64__)
+const SECoreAPI *se_core_lrps2(void); // PS2: macOS on Apple Silicon only
+#endif
 
 #ifdef __cplusplus
 }
