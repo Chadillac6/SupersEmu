@@ -359,10 +359,10 @@ final class LibraryManagementTests: XCTestCase {
         try write(Data(repeating: 1, count: 2352 * 8), "Disc Game/Disc Game (Track 2).bin", in: incoming)
         let report = try await importer.scanIncoming(auth: nil)
 
-        XCTAssertEqual(report.needsReview.map(\.reason), ["Unrecognised disc (no PS1 or Sega CD header)"])
+        XCTAssertEqual(report.needsReview.map(\.reason), ["Unrecognised disc (no PS1, PS2, Sega CD or Dreamcast header)"])
         let issues = try importer.issues()
         XCTAssertEqual(issues.map(\.filename), ["Disc Game.cue"])
-        XCTAssertEqual(issues.first?.reason, "Unrecognised disc (no PS1 or Sega CD header)")
+        XCTAssertEqual(issues.first?.reason, "Unrecognised disc (no PS1, PS2, Sega CD or Dreamcast header)")
     }
 
     func testUploadGateKeepsBatchesMovesAndOwnersApart() throws {

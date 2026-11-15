@@ -14,7 +14,7 @@ public actor IGDBMetadataProvider: MetadataProvider {
     static let tokenURL = URL(string: "https://id.twitch.tv/oauth2/token")!
     static let gamesURL = URL(string: "https://api.igdb.com/v4/games")!
     static let platforms: [SystemID: Int] = [.snes: 19, .gb: 33, .gbc: 22, .gba: 24, .genesis: 29, .segacd: 78, .sega32x: 30,
-                                             .psx: 7, .n64: 4]
+                                             .psx: 7, .n64: 4, .dreamcast: 23, .ps2: 8]
 
     public init(credentials: @escaping @Sendable () -> (clientID: String, secret: String)?, http: RateLimitedFetcher,
                 now: @escaping @Sendable () -> Date = Date.init) {

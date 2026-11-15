@@ -26,7 +26,7 @@ public enum SystemDetector {
     ]
     static let patchExtensions: Set<String> = ["ips", "bps", "ups", "xdelta"]
     /// Disc formats the importer groups itself (`LibraryImporter`), never passed to `detect`.
-    public static let discExtensions: Set<String> = ["cue", "m3u", "chd", "iso"]
+    public static let discExtensions: Set<String> = ["cue", "gdi", "m3u", "chd", "iso", "cdi", "cso"]
 
     static let nintendoLogo: [UInt8] = [
         0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
@@ -42,15 +42,25 @@ public enum SystemDetector {
     }
 
     /// Disc system from the first data track's first 16 sectors (2048-byte or raw 2352-byte sectors):
-    /// Sega CD's `SEGADISCSYSTEM` / `SEGA SEGASYSTEM` at sector 0, or the PS1 licence string in the system area.
+    /// the Dreamcast IP.BIN `SEGA SEGAKATANA` or Sega CD's `SEGADISCSYSTEM` / `SEGA SEGASYSTEM` at sector 0,
+    /// or the PlayStation licence string in the system area (PS1 unless `SYSTEM.CNF` says otherwise; see below).
     public static func detectDisc(header: Data) -> SystemID? {
         let bytes = [UInt8](header.prefix(headerLength))
-        for offset in [0, 16] where bytes.count >= offset + 16 {
+        for offset in [0, 16, 24] where bytes.count >= offset + 16 {
             let name = String(decoding: bytes[offset..<offset + 16], as: UTF8.self)
-            if name.hasPrefix("SEGADISCSYSTEM") || name.hasPrefix("SEGA SEGASYSTEM") { return .segacd }
+            if name.hasPrefix("SEGA SEGAKATANA") { return .dreamcast }
+            if offset < 24, name.hasPrefix("SEGADISCSYSTEM") || name.hasPrefix("SEGA SEGASYSTEM") { return .segacd }
         }
         if Data(bytes).range(of: Data("Sony Computer Entertainment".utf8)) != nil { return .psx }
         return nil
+    }
+
+    /// `detectDisc(header:)`, then the ISO 9660 `SYSTEM.CNF` in `file` to tell PlayStation generations apart:
+    /// `BOOT2` is PS2, `BOOT` is PS1. A PS2 disc never falls back to PS1 on the licence string alone when it has a `BOOT2`.
+    public static func detectDisc(header: Data, file: URL) -> SystemID? {
+        let fromHeader = detectDisc(header: header)
+        if fromHeader == .dreamcast || fromHeader == .segacd { return fromHeader }
+        return DiscProbe.playStationSystem(of: file) ?? fromHeader
     }
 
     /// - Parameters:
@@ -90,6 +100,8 @@ public enum SystemDetector {
         case "32x":
             if let header = segaHeader(bytes, at: 0x100), is32X(header: header, bytes: bytes) { return .system(.sega32x) }
             return .needsReview(.init("No Sega 32X header (\"32X\" at 0x100 or \"MARS\" at 0x3C0 missing)", .ambiguous))
+        case "elf":
+            return detectPS2ELF(bytes)
         case "pbp":
             return .unsupported(.init("PBP (EBOOT) discs aren't supported yet; convert to .chd or .cue/.bin", .unsupportedFormat))
         case "zip":
@@ -103,6 +115,19 @@ public enum SystemDetector {
         }
     }
 
+    /// PS2 homebrew: a 32-bit little-endian MIPS ELF built for the Emotion Engine (`EF_MIPS_MACH` 0x92, R5900).
+    static func detectPS2ELF(_ bytes: [UInt8]) -> Result {
+        guard bytes.count >= 52, bytes[0..<4].elementsEqual([0x7F, 0x45, 0x4C, 0x46]) else {
+            return .needsReview(.init("Not an ELF executable (no \\x7FELF header)", .ambiguous))
+        }
+        let machine = UInt16(bytes[18]) | UInt16(bytes[19]) << 8
+        let mach = bytes[38]
+        guard bytes[4] == 1, bytes[5] == 1, machine == 8, mach == 0x92 else {
+            return .needsReview(.init("ELF executable isn't a PS2 (MIPS R5900) program", .ambiguous))
+        }
+        return .system(.ps2)
+    }
+
     static func detectGenesis(ext: String, bytes: [UInt8], size: Int64) -> Result {
         if let header = segaHeader(bytes, at: 0x100) {
             return .system(is32X(header: header, bytes: bytes) ? .sega32x : .genesis)
@@ -112,6 +137,9 @@ public enum SystemDetector {
         }
         if bytes.count >= 0x20, String(decoding: bytes[0..<0x20], as: UTF8.self).contains("SEGADISCSYSTEM") {
             return .needsReview(.init("Sega CD disc image without a .cue sheet", .missingFiles))
+        }
+        if bytes.count >= 0x30, String(decoding: bytes[0..<0x30], as: UTF8.self).contains("SEGA SEGAKATANA") {
+            return .needsReview(.init("Dreamcast disc track without its .gdi or .cue sheet", .missingFiles))
         }
         return .needsReview(.init(ext == "bin"
             ? "Ambiguous .bin: no SEGA header at 0x100"
