@@ -21,6 +21,15 @@ struct GameDetailView: View {
                 header
                 VStack(alignment: .leading, spacing: 18) {
                     tags
+                    if let system = item.system, system.isBeta() {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            BetaBadge()
+                            Text("\(system.displayName) on iPhone and iPad is in beta. Games may run slowly or not start.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("system-beta")
+                    }
                     if let system = item.system, bios.isMissing(system) {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {

@@ -456,7 +456,7 @@ extension LibraryTests {
             }
             try await client.execute(uri: "/v1/bios/status", method: .get, headers: self.auth(self.adminToken)) {
                 XCTAssertEqual($0.status, .ok)
-                XCTAssertEqual(try self.decode([BIOSStatus].self, $0).map(\.filename), KnownBIOS.all.map(\.filename))
+                XCTAssertEqual(try self.decode([BIOSStatus].self, $0).map(\.filename), KnownBIOS.all.filter(\.listed).map(\.filename))
             }
             let uri = "/v1/bios/\(sha)"
             try await client.execute(uri: uri, method: .get, headers: self.auth(self.adminToken)) {
@@ -496,7 +496,7 @@ extension LibraryTests {
     }
 
     func testKnownBIOSTableAndWrongHashWithRealTable() async throws {
-        XCTAssertEqual(Set(KnownBIOS.all.map(\.filename)),
+        XCTAssertEqual(Set(KnownBIOS.all.filter { $0.system == .psx || $0.system == .segacd }.map(\.filename)),
                        ["scph5500.bin", "scph5501.bin", "scph5502.bin", "bios_CD_U.bin", "bios_CD_E.bin", "bios_CD_J.bin"])
         XCTAssertTrue(KnownBIOS.all.allSatisfy { $0.md5.count == 32 })
         try write(Data(count: 524_288), "SCPH5501.BIN")
@@ -505,7 +505,7 @@ extension LibraryTests {
         XCTAssertEqual(report.imported, [])
         let status = try BIOSLibrary.status(store: store, known: KnownBIOS.all)
         XCTAssertEqual(status.first { $0.filename == "scph5501.bin" }?.state, .wrongHash)
-        XCTAssertEqual(status.filter { $0.state == .missing }.count, 5)
+        XCTAssertEqual(status.filter { $0.state == .missing }.count, KnownBIOS.all.filter(\.listed).count - 1)
     }
 }
 

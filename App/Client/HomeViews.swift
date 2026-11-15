@@ -23,10 +23,15 @@ struct SystemSelectorBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if theme.system != nil {
-                ThemeLogo(theme: theme, height: 38)
-                    .padding(.horizontal, 20)
-                    .accessibilityIdentifier("home-console-logo")
+            if let system = theme.system {
+                HStack(spacing: 10) {
+                    ThemeLogo(theme: theme, height: 38)
+                        .accessibilityIdentifier("home-console-logo")
+                    if system.isBeta() {
+                        BetaBadge().accessibilityIdentifier("home-console-beta")
+                    }
+                }
+                .padding(.horizontal, 20)
             }
             Text(statusLine)
                 .font(Brand.eyebrow)
@@ -64,12 +69,23 @@ struct SystemSelectorBar: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(chip.system?.displayName ?? chip.chip)
+        .accessibilityLabel(chip.system.map { $0.isBeta() ? "\($0.displayName), Beta" : $0.displayName } ?? chip.chip)
         .accessibilityIdentifier("system-chip-\(chip.id)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     @ViewBuilder private func chipLabel(_ chip: SystemTheme) -> some View {
+        if chip.system?.isBeta() == true {
+            HStack(spacing: 6) {
+                chipArtwork(chip)
+                BetaBadge(compact: true)
+            }
+        } else {
+            chipArtwork(chip)
+        }
+    }
+
+    @ViewBuilder private func chipArtwork(_ chip: SystemTheme) -> some View {
         if let logo = chip.logo {
             switch chip.logoStyle {
             case .light:

@@ -42,6 +42,10 @@ struct SystemTheme: Identifiable, Equatable {
                    stripe: [0xE60012, 0xF2B100, 0x00A651, 0x0070D1]),
         .n64: make(.n64, "N64", .plate, accent: 0x2E6BE6, background: [0x10226B, 0x05081C],
                    stripe: [0xE10F00, 0xF5B700, 0x00953B, 0x0047BB]),
+        .dreamcast: make(.dreamcast, "Dreamcast", .plate, accent: 0xCF3311, background: [0x3B1A12, 0x100806],
+                         stripe: [0xCF3311, 0xF28C28, 0xF5F5F5]),
+        .ps2: make(.ps2, "PS2", .plate, accent: 0x2B4B96, background: [0x15214A, 0x060A18],
+                   stripe: [0x23BCEE, 0x2785C3, 0x2B4B96]),
     ]
 
     static func theme(for system: SystemID?) -> SystemTheme {
@@ -52,6 +56,22 @@ struct SystemTheme: Identifiable, Equatable {
                              stripe: [UInt32]) -> SystemTheme {
         SystemTheme(id: system.rawValue, system: system, chip: chip, logo: "logo-\(system.rawValue)", logoStyle: logoStyle,
                     accent: Color(hex: accent), background: background.map { Color(hex: $0) }, stripe: stripe.map { Color(hex: $0) })
+    }
+}
+
+/// "Beta" tag for consoles that run as a beta on this device (Dreamcast on iPhone and iPad).
+struct BetaBadge: View {
+    var compact = false
+
+    var body: some View {
+        Text("BETA")
+            .font(compact ? .caption2.bold() : .caption.bold())
+            .tracking(0.8)
+            .foregroundStyle(.white)
+            .padding(.horizontal, compact ? 5 : 7)
+            .padding(.vertical, compact ? 1 : 3)
+            .background(Brand.Colors.red, in: Capsule())
+            .accessibilityLabel("Beta")
     }
 }
 
