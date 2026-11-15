@@ -41,6 +41,8 @@ FOUNDATION_EXPORT NSString *const SECoreIDGenesisPlusGX;
 FOUNDATION_EXPORT NSString *const SECoreIDBeetlePSX;
 FOUNDATION_EXPORT NSString *const SECoreIDPicoDrive;
 FOUNDATION_EXPORT NSString *const SECoreIDMupen64PlusNext;
+FOUNDATION_EXPORT NSString *const SECoreIDFlycast;
+FOUNDATION_EXPORT NSString *const SECoreIDLRPS2;
 
 /// Thin libretro frontend. libretro cores use process-global callbacks,
 /// so only one host may be active at a time.

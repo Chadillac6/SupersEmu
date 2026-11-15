@@ -629,6 +629,8 @@ NSString *const SECoreIDGenesisPlusGX = @"genesis_plus_gx";
 NSString *const SECoreIDBeetlePSX = @"beetle_psx";
 NSString *const SECoreIDPicoDrive = @"picodrive";
 NSString *const SECoreIDMupen64PlusNext = @"mupen64plus_next";
+NSString *const SECoreIDFlycast = @"flycast";
+NSString *const SECoreIDLRPS2 = @"lrps2";
 
 static __weak SELibretroHost *gActiveHost;
 

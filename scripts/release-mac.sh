@@ -115,6 +115,8 @@ for bin in "$app/Contents/MacOS/SupersEmu" "$app/Contents/MacOS/supersemu-server
   codesign -dv --verbose=4 "$bin" 2>&1 | grep -q 'flags=.*runtime' ||
     { echo "error: $bin is not signed with the hardened runtime" >&2; exit 1; }
 done
+codesign -d --entitlements - --xml "$app/Contents/MacOS/SupersEmu" 2>/dev/null | grep -q 'com.apple.security.cs.allow-jit' ||
+  { echo "error: SupersEmu is missing the allow-jit entitlement (Dreamcast/PS2 recompilers)" >&2; exit 1; }
 
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
 name="SupersEmu-$version-$build_number"

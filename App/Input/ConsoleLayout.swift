@@ -26,7 +26,7 @@ extension SystemID {
         case .snes: .snes
         case .genesis, .segacd, .sega32x: .sega
         case .n64: .n64
-        case .psx: .psx
+        case .psx, .dreamcast, .ps2: .psx
         case .gb, .gbc, .gba: .handheld
         }
     }
@@ -62,6 +62,8 @@ struct ConsoleLayout: Equatable, Sendable {
         case .sega32x: "32X"
         case .psx: "PlayStation"
         case .n64: "Nintendo 64"
+        case .dreamcast: "Dreamcast"
+        case .ps2: "PlayStation 2"
         }
     }
 

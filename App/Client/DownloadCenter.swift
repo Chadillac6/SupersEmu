@@ -216,6 +216,8 @@ extension SystemID {
         case .sega32x: return "Sega 32X"
         case .psx: return "PlayStation"
         case .n64: return "Nintendo 64"
+        case .dreamcast: return "Sega Dreamcast"
+        case .ps2: return "PlayStation 2"
         }
     }
 }

@@ -17,7 +17,7 @@ public enum Scope: String, Codable, Sendable, CaseIterable {
 }
 
 public enum SystemID: String, Codable, Sendable, CaseIterable {
-    case snes, gb, gbc, gba, genesis, segacd, sega32x, psx, n64
+    case snes, gb, gbc, gba, genesis, segacd, sega32x, psx, n64, dreamcast, ps2
 }
 
 public struct HealthResponse: Codable, Sendable, Equatable {

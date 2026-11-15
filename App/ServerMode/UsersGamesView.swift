@@ -243,6 +243,8 @@ struct UsersGamesView: View {
         case .sega32x: "32X"
         case .psx: "PS1"
         case .n64: "N64"
+        case .dreamcast: "Dreamcast"
+        case .ps2: "PS2"
         }
     }
 
