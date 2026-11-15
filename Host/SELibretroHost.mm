@@ -242,7 +242,9 @@ retro_proc_address_t hwProcAddress(const char *symbol) {
 
 bool hwCreateContext(retro_hw_context_type type) {
 #if TARGET_OS_IPHONE
-    if (type != RETRO_HW_CONTEXT_OPENGLES3 && type != RETRO_HW_CONTEXT_OPENGLES_VERSION) return false;
+    // GLES builds of Flycast ask for ES2 through glsm and use ES3 features when the context offers them.
+    if (type != RETRO_HW_CONTEXT_OPENGLES2 && type != RETRO_HW_CONTEXT_OPENGLES3
+        && type != RETRO_HW_CONTEXT_OPENGLES_VERSION) return false;
     g.hw.context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
     if (!g.hw.context) return false;
 #else
