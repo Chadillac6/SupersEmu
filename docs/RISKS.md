@@ -3,6 +3,7 @@
 | Risk | Impact | Mitigation | Status |
 |---|---|---|---|
 | N64 without JIT on iOS | N64 may run too slowly on iPhone | Mupen64Plus-Next builds for iOS arm64 with the interpreter (see `docs/N64_BUILD_CHECK.md`); measure FPS on real devices early; ship N64 as "beta" per device if needed | Open: builds, speed needs Chad's hardware |
+| Dreamcast without JIT on iOS | Flycast's SH4 interpreter is several times slower than its dynarec, so many games may not reach full speed on iPhone/iPad | iOS builds Flycast with `TARGET_NO_REC` (no JIT entitlement, TestFlight-safe); Dreamcast is labelled Beta on iPhone; measure FPS on Chad's devices; Mac keeps the dynarec via the allow-jit entitlement | Open: builds, speed needs Chad's hardware |
 | Non-commercial core licences | App can't be sold | Keep app free; GPLv3 open source | Accepted |
 | ROM/BIOS legality | App Store/TestFlight rejection | No ROMs/BIOS bundled; user imports only | Designed in |
 | Save-state compatibility across core versions | Lost progress after updates | Pin cores; store core version; keep native saves as fallback | Designed in |

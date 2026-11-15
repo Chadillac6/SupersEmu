@@ -28,7 +28,7 @@ enum CoreRegistry {
 
     /// Sheets that reference other files (tracks, discs). Copying one alone breaks the game, so
     /// these come in through the server importer, which groups the referenced files.
-    static let multiFileExtensions: Set<String> = ["cue", "m3u"]
+    static let multiFileExtensions: Set<String> = ["cue", "m3u", "gdi"]
 
     /// Every ROM extension some linked core can run (for library import filters).
     static let supportedExtensions: Set<String> = cores.reduce(into: []) { $0.formUnion($1.extensions) }

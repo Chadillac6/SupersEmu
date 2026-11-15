@@ -87,7 +87,7 @@ static NSUInteger distinctColors(NSData *frame) {
     @autoreleasepool {
         SELibretroHost *host = [self hostForURL:rom];
         [host runFrames:30];
-        XCTAssertTrue([host flushSaveRAM]);
+        XCTAssertTrue([host flushSaveRAMWithError:nil]);
         [host shutdown];
         card = [NSMutableData dataWithContentsOfURL:[self saveRAMURL]];
         XCTAssertEqual(card.length, kVMUSize);
@@ -104,7 +104,7 @@ static NSUInteger distinctColors(NSData *frame) {
     @autoreleasepool {
         SELibretroHost *host = [self hostForURL:rom];
         [host runFrames:30];
-        XCTAssertTrue([host flushSaveRAM]);
+        XCTAssertTrue([host flushSaveRAMWithError:nil]);
         [host shutdown];
     }
     NSData *reloaded = [NSData dataWithContentsOfURL:[self saveRAMURL]];

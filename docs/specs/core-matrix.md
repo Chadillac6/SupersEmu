@@ -10,7 +10,7 @@
 | Sega 32X | PicoDrive | `picodrive` | MAME (non-commercial) | **Running** (M2; macOS tests with homebrew 32X ROM + iOS Simulator/device builds) |
 | PlayStation | Beetle PSX (mednafen_psx) | `beetle_psx` | GPLv2 | **Linked** (M2; macOS tests + iOS builds). Boots bundled OpenBIOS without a Sony BIOS; no commercial disc or real BIOS tested yet |
 | Nintendo 64 | Mupen64Plus-Next | `mupen64plus_next` | GPLv2 | **Running** (M3; macOS host tests with homebrew N64 ROM + iOS Simulator). GLideN64 over libretro hardware rendering, cached interpreter. Real iPhone/iPad speed not measured |
-| Dreamcast | Flycast | | GPLv2 | Phase 2 |
+| Dreamcast | Flycast | `flycast` | GPLv2 | **Running** (macOS host tests with homebrew ELF + CDI on the HLE BIOS; iOS Simulator builds). OpenGL core on Mac with the SH4 dynarec; GLES3 on iPhone/iPad interpreter-only (Beta). Optional real BIOS: `<system>/dc/dc_boot.bin`, `<system>/dc/dc_flash.bin`. VMU A1 is the game's save RAM. No commercial disc or real BIOS tested yet |
 
 Alternates: bsnes (SNES accuracy), SameBoy (GB), SwanStation / PCSX ReARMed (PS1), ParaLLEl N64.
 
@@ -27,6 +27,7 @@ Each core is a git submodule under `Vendor/cores/`, pinned by `scripts/pin-cores
 | PicoDrive | [libretro/picodrive](https://github.com/libretro/picodrive) | `1890c2932234c9d30f4cd3851d02228baae8f09e` | `COPYING` (MAME licence, non-commercial) | 32x |
 | Beetle PSX | [libretro/beetle-psx-libretro](https://github.com/libretro/beetle-psx-libretro) | `10e4b0c6ceae20daa65ddf436a4445dddd0982d2` | `COPYING` (GPLv2) | cue, chd, m3u (pbp not yet) |
 | Mupen64Plus-Next | [libretro/mupen64plus-libretro-nx](https://github.com/libretro/mupen64plus-libretro-nx) | `12edd2c74a517ff86dfa8cfc71ad75e4c10486d5` | `LICENSE` (GPLv2) | z64, n64, v64 |
+| Flycast | [flyinghead/flycast](https://github.com/flyinghead/flycast) | `3a5267a5e32438026e1c5b97d5de6cd77236f72c` | `LICENSE` (GPLv2) | gdi, cdi, chd, cue, m3u, elf (zip/7z are Naomi/Atomiswave arcade sets, not supported) |
 
 **Licensing.** Snes9x, Genesis Plus GX and PicoDrive (MAME licence: redistribution only
 non-commercially, with source) forbid commercial use, so SupersEmu must stay free:

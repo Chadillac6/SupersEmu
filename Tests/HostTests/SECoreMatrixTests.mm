@@ -43,7 +43,10 @@ static const CoreFixture kFixtures[] = {
     {@"mupen64plus_next", @"cube-fill-triangle.z64", @"Mupen64Plus-Next", 320, 240,
      @"Mupen64Plus-Next's state does not replay byte-identically in a fresh session",
      @"GLideN64 frames after a restore are not pixel-identical"},
-    {@"flycast", @"chroma-circuit.elf", @"Flycast", 320, 240},
+    // Restores replay the same frames, but ~100 bytes of the 37 MB state (in main RAM) differ after
+    // a restore with the SH4 dynarec.
+    {@"flycast", @"chroma-circuit.elf", @"Flycast", 320, 240,
+     @"Flycast's state does not replay byte-identically after a restore"},
 };
 
 - (void)setUp {
