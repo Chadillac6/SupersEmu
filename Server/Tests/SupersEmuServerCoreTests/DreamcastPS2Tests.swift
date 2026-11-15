@@ -445,4 +445,14 @@ final class DiscMetadataTests: XCTestCase {
         let cd = try write(DCPS2Fixtures.chd(tags: ["CHT2"], rawSHA1: sha1), "CD.chd")
         XCTAssertEqual(try ROMHasher.variants(of: cd, system: .ps2).count, 1, "CD CHDs' whole-disc SHA-1 isn't a Redump track hash")
     }
+
+    func testCSOWithOversizedTotalSizeIsRejectedNotTrapped() throws {
+        var header = Data("CISO".utf8) + Data([24, 0, 0, 0])
+        header += Data(repeating: 0xFF, count: 8)            // total bytes: UInt64.max
+        header += Data([0x00, 0x08, 0x00, 0x00])             // block size 2048
+        header += Data([1, 0, 0, 0])
+        let url = directory.appendingPathComponent("Huge.cso")
+        try header.write(to: url)
+        XCTAssertThrowsError(try CSOImage(url: url))
+    }
 }

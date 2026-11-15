@@ -84,8 +84,10 @@ struct CSOImage: DiscSectors {
         blockSize = Int(le(16, 4))
         align = UInt64(header[21])
         guard blockSize >= 2048, blockSize <= 1 << 20, blockSize % 2048 == 0 else { try? handle.close(); throw CocoaError(.fileReadCorruptFile) }
-        let blocks = Int((totalBytes + UInt64(blockSize) - 1) / UInt64(blockSize))
-        guard blocks > 0, blocks < Self.maxBlocks, let raw = try handle.read(upToCount: (blocks + 1) * 4), raw.count == (blocks + 1) * 4 else {
+        let blockCount64 = totalBytes / UInt64(blockSize) + (totalBytes % UInt64(blockSize) == 0 ? 0 : 1)
+        guard blockCount64 > 0, blockCount64 < UInt64(Self.maxBlocks) else { try? handle.close(); throw CocoaError(.fileReadCorruptFile) }
+        let blocks = Int(blockCount64)
+        guard let raw = try handle.read(upToCount: (blocks + 1) * 4), raw.count == (blocks + 1) * 4 else {
             try? handle.close(); throw CocoaError(.fileReadCorruptFile)
         }
         let bytes = [UInt8](raw)
