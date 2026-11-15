@@ -2,7 +2,8 @@ import Foundation
 import SupersEmuKit
 
 /// Minimal cue sheet reader: the `FILE` lines (and whether each file holds a data track), enough to group,
-/// identify and launch a disc. See docs/specs/disc-games.md.
+/// identify and launch a disc. See docs/specs/disc-games.md. A Dreamcast `.gdi` sheet reads into the same shape
+/// (`init(gdi:)`), so grouping, game IDs and stored-name rewriting work the same way for both.
 struct CueSheet: Equatable {
     struct File: Equatable {
         /// The name exactly as written after `FILE` (may contain a relative path).
@@ -37,6 +38,24 @@ struct CueSheet: Equatable {
         if files.isEmpty { return nil }
     }
 
+    /// `.gdi`: a track count line, then one line per track: `number LBA type sectorSize filename offset`, where type 4 is
+    /// data and 0 audio and the filename may be quoted. Every declared track must be present.
+    init?(gdi data: Data) {
+        guard data.count <= Self.maxSize else { return nil }
+        var text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) ?? ""
+        if text.hasPrefix("\u{FEFF}") { text.removeFirst() }
+        text = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        lines = text.components(separatedBy: "\n")
+        files = []
+        guard let countLine = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+              let count = Int(lines[countLine].trimmingCharacters(in: .whitespaces)), (1...99).contains(count) else { return nil }
+        for index in lines.indices where index > countLine && !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let track = Self.gdiTrack(lines[index]) else { return nil }
+            files.append(File(name: String(lines[index][track.name]), line: index, isData: track.isData, nameRange: track.name))
+        }
+        if files.count != count { return nil }
+    }
+
     /// The file whose header identifies the disc: the first one holding a data track.
     var firstDataFile: File? { files.first(where: \.isData) ?? files.first }
 
@@ -59,6 +78,34 @@ struct CueSheet: Equatable {
             out[file.line].replaceSubrange(start..<end, with: "\"\(name)\"")
         }
         return Data(out.joined(separator: "\n").utf8)
+    }
+
+    /// The filename range of one `.gdi` track line and whether its type is data (4).
+    private static func gdiTrack(_ line: String) -> (name: Range<String.Index>, isData: Bool)? {
+        var i = line.startIndex
+        func skipBlanks() { while i < line.endIndex, line[i] == " " || line[i] == "\t" { i = line.index(after: i) } }
+        func token() -> Substring? {
+            skipBlanks()
+            let start = i
+            while i < line.endIndex, line[i] != " " && line[i] != "\t" { i = line.index(after: i) }
+            return start == i ? nil : line[start..<i]
+        }
+        guard let number = token(), Int(number) != nil, let lba = token(), Int(lba) != nil,
+              let type = token(), let kind = Int(type), let size = token(), Int(size) != nil else { return nil }
+        skipBlanks()
+        guard i < line.endIndex else { return nil }
+        let name: Range<String.Index>
+        if line[i] == "\"" {
+            let start = line.index(after: i)
+            guard let close = line[start...].firstIndex(of: "\""), close > start else { return nil }
+            name = start..<close
+            i = line.index(after: close)
+        } else {
+            guard let bare = token() else { return nil }
+            name = bare.startIndex..<bare.endIndex
+        }
+        guard let offset = token(), Int(offset) != nil else { return nil }
+        return (name, kind == 4)
     }
 
     /// `FILE "name with spaces.bin" BINARY` or `FILE name.bin BINARY`.

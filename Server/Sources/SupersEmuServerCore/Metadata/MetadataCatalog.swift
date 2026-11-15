@@ -102,5 +102,14 @@ public struct MetadataCatalog: Sendable {
             "source": "52978215854d307bfb5353052c9ce3c34995310a970d586f0100bb67f7de01a8",
             "developer": "1d72efa384bbd5c1a921b2df5367d31e783e03b134254cb172d32dd05d0387c7",
         ], thumbnailsCommit: "ccee75c7744d81676b6725307aca27ef6be6231a"),
+        // libretro-thumbnails @ 2026-11-15 for these two.
+        .dreamcast: SystemSet(name: "Sega - Dreamcast", source: "redump", files: [
+            "source": "010a5b393fc6f0aee22fc9a1f6849bb7b7fa9a08ab75ac4602a810a1c3d23fa3",
+            "developer": "d47cd2782bc534519a71294796061018f9edbb962c32bfa5c55387815cd14d4f",
+        ], thumbnailsCommit: "28b140d16f188301ad697e5935c6dbb412a4ceda"),
+        .ps2: SystemSet(name: "Sony - PlayStation 2", source: "redump", files: [
+            "source": "315ad250ae09cfbcc3da24ee675f14a3c5d9acaed07eeaaa287d540fd34342a7",
+            "developer": "6e64c56e3e0f21da6803e1c946c00e69fc641dc511fb823fb5acc9f25ba7fb0d",
+        ], thumbnailsCommit: "c2fcaf5f39aa63285008f154fa64daa5f6815187"),
     ])
 }
