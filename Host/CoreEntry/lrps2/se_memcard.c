@@ -2,18 +2,25 @@
  * Exposing that card as save RAM lets the host keep and sync it per game ID, like other cores'
  * .srm files. The file in the save directory becomes a working copy: every load replaces it with
  * the game's own card (or a blank one), so games that share a file name never share saves. */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
 #include "libretro.h"
 #include "MemoryCardFile.h"
 
 const char *host_content_name(void);
 
+/* The size the core gives a card it creates (8 MB with ECC). Fixed, so a damaged working copy
+ * cannot shrink the game's save. */
+#define CARD_SIZE (16384 * 528)
+#define CARD_CHECKSUM_AT 0x210
+
 static u8 *cardBuffer;
 static size_t cardSize;
+/* The game's card could not be put in place: nothing is flushed, so its save RAM stays as it was. */
+static bool cardUnavailable;
 /* The first save RAM request after a load is the host's load; it is copied to the card before
  * the EE first runs (it stays parked from retro_load_game until the first retro_run). */
 static bool awaitingHostLoad;
@@ -21,19 +28,29 @@ static bool pendingHostLoad;
 static char cardPath[PCSX2_PATH_MAX];
 
 /* Slot 1's card, when it is this content's own card (per-game cards are on). */
-static size_t contentCardSize(void) {
+static bool isContentCard(void) {
     const char *content = host_content_name();
     const char *name;
-    struct stat info;
     char expected[PCSX2_PATH_MAX];
-    if (!content[0] || !FileMcd_IsPresent(0, 0) || FileMcd_IsPSX(0, 0)) return 0;
-    if (!emu_config_mcd(0, cardPath, sizeof(cardPath)) || !cardPath[0]) return 0;
+    if (!content[0] || !FileMcd_IsPresent(0, 0) || FileMcd_IsPSX(0, 0)) return false;
+    if (!emu_config_mcd(0, cardPath, sizeof(cardPath)) || !cardPath[0]) return false;
     name = strrchr(cardPath, '/');
     name = name ? name + 1 : cardPath;
     snprintf(expected, sizeof(expected), "%s.ps2", content);
-    if (strcmp(name, expected) != 0) return 0;
-    if (stat(cardPath, &info) != 0 || info.st_size <= 0) return 0;
-    return (size_t)info.st_size;
+    return strcmp(name, expected) == 0;
+}
+
+/* The card as its file holds it once closed: the core keeps the checksum word apart from the
+ * card's bytes while it runs and writes it back on close. */
+static bool readCard(u8 *dest, size_t offset, size_t length) {
+    u64 checksum;
+    size_t from, to;
+    if (!FileMcd_Read(0, 0, dest, (u32)offset, (int)length)) return false;
+    checksum = FileMcd_GetCRC(0, 0);
+    from = offset > CARD_CHECKSUM_AT ? offset : CARD_CHECKSUM_AT;
+    to = offset + length < CARD_CHECKSUM_AT + sizeof(checksum) ? offset + length : CARD_CHECKSUM_AT + sizeof(checksum);
+    if (from < to) memcpy(dest + (from - offset), (const u8 *)&checksum + (from - CARD_CHECKSUM_AT), to - from);
+    return true;
 }
 
 static bool allBytes(const u8 *data, size_t size, u8 value) {
@@ -49,7 +66,7 @@ static bool cardMatches(const u8 *expected, u8 fill) {
     size_t offset, length, i;
     for (offset = 0; offset < cardSize; offset += length) {
         length = cardSize - offset < sizeof(chunk) ? cardSize - offset : sizeof(chunk);
-        if (!FileMcd_Read(0, 0, chunk, (u32)offset, (int)length)) return false;
+        if (!readCard(chunk, offset, length)) return false;
         if (expected) {
             if (memcmp(chunk, expected + offset, length) != 0) return false;
         } else {
@@ -61,7 +78,7 @@ static bool cardMatches(const u8 *expected, u8 fill) {
 }
 
 static void applyHostLoad(void) {
-    bool hostHasCard, same;
+    bool hostHasCard, same, replaced = false;
     if (!pendingHostLoad) return;
     pendingHostLoad = false;
     hostHasCard = !allBytes(cardBuffer, cardSize, 0);
@@ -77,28 +94,25 @@ static void applyHostLoad(void) {
         if (file) {
             bool written = fwrite(cardBuffer, 1, cardSize, file) == cardSize;
             written = fclose(file) == 0 && written;
-            if (!written || rename(staged, cardPath) != 0) remove(staged);
+            replaced = written && rename(staged, cardPath) == 0;
+            if (!replaced) remove(staged);
         }
     } else {
         /* No card for this game yet: the core makes a blank one when it opens a missing file. */
-        remove(cardPath);
+        replaced = remove(cardPath) == 0 || errno == ENOENT;
     }
     FileMcd_EmuOpen();
+    cardUnavailable = !replaced;
 }
 
 bool se_lrps2_load_game(const struct retro_game_info *game) {
-    size_t size;
-    awaitingHostLoad = pendingHostLoad = false;
+    awaitingHostLoad = pendingHostLoad = cardUnavailable = false;
     cardSize = 0;
     if (!retro_load_game(game)) return false;
-    size = contentCardSize();
-    if (size && size != cardSize) {
-        u8 *buffer = (u8 *)realloc(cardBuffer, size);
-        if (!buffer) return true;
-        cardBuffer = buffer;
-    }
-    cardSize = size;
-    awaitingHostLoad = size > 0;
+    if (!isContentCard()) return true;
+    if (!cardBuffer && !(cardBuffer = (u8 *)malloc(CARD_SIZE))) return true;
+    cardSize = CARD_SIZE;
+    awaitingHostLoad = true;
     return true;
 }
 
@@ -112,7 +126,7 @@ void se_lrps2_deinit(void) {
     free(cardBuffer);
     cardBuffer = NULL;
     cardSize = 0;
-    awaitingHostLoad = pendingHostLoad = false;
+    awaitingHostLoad = pendingHostLoad = cardUnavailable = false;
 }
 
 void *se_lrps2_get_memory_data(unsigned type) {
@@ -125,9 +139,10 @@ void *se_lrps2_get_memory_data(unsigned type) {
         return cardBuffer;
     }
     applyHostLoad();
+    if (cardUnavailable) return NULL;
     /* A snapshot: the card itself is only written through FileMcd. Taken while the EE may be
      * running, it holds what the core's own write-through file holds at that moment. */
-    if (!FileMcd_Read(0, 0, cardBuffer, 0, (int)cardSize)) return NULL;
+    if (!readCard(cardBuffer, 0, cardSize)) return NULL;
     return cardBuffer;
 }
 
