@@ -925,6 +925,7 @@ targets:
       - App/Input/HIDPresets.swift
       - App/Input/PlayerChrome.swift
       - App/Input/TouchControlSizing.swift
+      - App/Client/SystemAvailability.swift
     dependencies:
       - package: SupersEmuServer
         product: SupersEmuKit

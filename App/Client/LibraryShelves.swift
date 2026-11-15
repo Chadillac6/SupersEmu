@@ -67,7 +67,7 @@ enum LibraryShelves {
                 size: (try? FileManager.default.attributesOfItem(atPath: game.fileURL.path)[.size] as? NSNumber)?.int64Value ?? 0,
                 addedAt: nil, source: .local, isDownloaded: true, playable: game, lastPlayed: lastPlayed(game.id))
         }
-        return serverItems + localItems
+        return (serverItems + localItems).filter { $0.system?.isShown() ?? true }
     }
 
     /// Offline, only games that can launch without the server are shown.
