@@ -1316,7 +1316,9 @@ targets:
           sh tools/gen_gamedb_builtin.sh bin/resources/GameIndex.yaml pcsx2/GameDatabaseBuiltin.c
     sources:
       - path: Host/CoreEntry/SECoreEntry.c
-        compilerFlags: ["-DSE_CORE_ID=lrps2", "-DSE_CORE_REVISION=3053b13"]
+        compilerFlags: ["-DSE_CORE_ID=lrps2", "-DSE_CORE_REVISION=3053b13", "-DSE_CORE_LOAD_GAME=se_lrps2_load_game", "-DSE_CORE_RUN=se_lrps2_run", "-DSE_CORE_DEINIT=se_lrps2_deinit", "-DSE_CORE_GET_MEMORY_DATA=se_lrps2_get_memory_data", "-DSE_CORE_GET_MEMORY_SIZE=se_lrps2_get_memory_size"]
+      # Memory card 1 as save RAM, so PS2 saves are kept and synced per game ID.
+      - path: Host/CoreEntry/lrps2
       # Generated before compiling (gitignored upstream): the game-compatibility database as a C array.
       - path: Vendor/cores/lrps2/pcsx2/GameDatabaseBuiltin.c
         optional: true
