@@ -302,7 +302,8 @@ static NSData *CardBytes(NSData *card) {
 
 static NSData *SaveBytes(uint8_t seed) {
     uint8_t bytes[512];
-    for (int i = 0; i < 512; i++) bytes[i] = uint8_t(seed + i * 7);
+    uint32_t x = seed * 2654435761u + 1;
+    for (int i = 0; i < 512; i++) { x = x * 1103515245u + 12345u; bytes[i] = uint8_t(x >> 16); }
     return [NSData dataWithBytes:bytes length:sizeof(bytes)];
 }
 
@@ -348,6 +349,68 @@ static NSData *BlankBytes() {
     XCTAssertEqual(stored.length, kCardSize);
     XCTAssertEqualObjects(CardBytes(stored), [NSData dataWithBytes:merged.data() length:merged.size()],
                           @"writes after a restart build on the restored card");
+}
+
+/// Writes a save RAM file holding a card with `save` at the test page.
+- (NSData *)storeCardWithSave:(NSData *)save gameID:(NSString *)gameID {
+    std::vector<uint8_t> card(kCardSize, 0xFF);
+    memcpy(&card[kSavePage], save.bytes, save.length);
+    NSData *data = [NSData dataWithBytes:card.data() length:card.size()];
+    [NSFileManager.defaultManager createDirectoryAtURL:self.saveDirectory withIntermediateDirectories:YES attributes:nil error:nil];
+    [data writeToURL:[self saveRAMForGameID:gameID] atomically:YES];
+    return data;
+}
+
+- (void)testSaveRAMMatchesTheClosedCardFile {
+    NSError *error = nil;
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    NSData *save = SaveBytes(0x63);
+    XCTAssertTrue(se_core_lrps2_write_card(kSavePage, save.bytes, int(save.length)));
+    [host shutdown];
+    // The core keeps the card's checksum word apart while it runs; save RAM must carry the
+    // updated one, or a state saved before a restart sees a changed card and ejects it.
+    NSData *stored = [NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]];
+    XCTAssertTrue([stored isEqualToData:[NSData dataWithContentsOfURL:self.workingCard]],
+                  @"save RAM is the card as its file holds it");
+}
+
+- (void)testShortWorkingCardDoesNotShrinkSaveRAM {
+    NSError *error = nil;
+    NSData *save = SaveBytes(0x11);
+    NSData *stored = [self storeCardWithSave:save gameID:@"ps2-game"];
+    [[NSData dataWithBytes:stored.bytes length:kCardSize / 2] writeToURL:self.workingCard atomically:YES];
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    [host shutdown];
+    NSData *after = [NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]];
+    XCTAssertEqual(after.length, kCardSize, @"a damaged working card is replaced, not adopted");
+    XCTAssertEqualObjects(CardBytes(after), save);
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), save);
+}
+
+- (void)testFailedRestoreLeavesSaveRAMAlone {
+    NSError *error = nil;
+    NSData *stored = [self storeCardWithSave:SaveBytes(0x29) gameID:@"ps2-game"];
+    std::vector<uint8_t> other(kCardSize, 0x00);
+    [[NSData dataWithBytes:other.data() length:other.size()] writeToURL:self.workingCard atomically:YES];
+    // The card is staged next to the working copy; a directory in the way makes that fail.
+    NSURL *staged = [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2.tmp" isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:staged withIntermediateDirectories:YES attributes:nil error:nil];
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    XCTAssertTrue([host flushSaveRAMWithError:&error], @"%@", error);
+    [host shutdown];
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]], stored,
+                          @"the game's save is not overwritten with a card that is not its own");
 }
 
 - (void)testSameFileNameInDifferentFoldersGetsSeparateCards {
