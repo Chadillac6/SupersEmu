@@ -20,9 +20,13 @@ unmodified from Wikimedia Commons. "All" uses the SupersEmu wordmark, drawn as t
 | 32X | `logo-sega32x` | [File:Sega 32X logo.svg](https://commons.wikimedia.org/wiki/File:Sega_32X_logo.svg) | Public domain (PD-textlogo); trademarked |
 | PlayStation | `logo-psx` | [File:PlayStation logo and wordmark.svg](https://commons.wikimedia.org/wiki/File:PlayStation_logo_and_wordmark.svg) | Public domain (PD-textlogo); trademarked |
 | Nintendo 64 | `logo-n64` | [File:Nintendo 64 wordmark.svg](https://commons.wikimedia.org/wiki/File:Nintendo_64_wordmark.svg) | Public domain (PD-textlogo); trademarked |
+| Dreamcast | `logo-dreamcast` | [File:Dreamcast logo.svg](https://commons.wikimedia.org/wiki/File:Dreamcast_logo.svg) | Public domain; trademarked |
+| PlayStation 2 | `logo-ps2` | [File:PlayStation 2 logo.svg](https://commons.wikimedia.org/wiki/File:PlayStation_2_logo.svg) | Public domain; trademarked |
 
 Theme colours (accent, background gradient, brand stripe) are our own approximations of each console's branding, not
 official palettes. Logos that are dark or low-contrast on their theme sit on a white plate (`LogoStyle.plate`); the
-black PlayStation mark is drawn in white (`LogoStyle.light`).
+black PlayStation mark is drawn in white (`LogoStyle.light`). The Dreamcast and PlayStation 2 marks have black wordmarks, so
+they use the plate too. Dreamcast shows a red "Beta" tag on iPhone and iPad, and PS2 is hidden there
+(`App/Client/SystemAvailability.swift`).
 
 Game artwork and text have their own terms; see `metadata-and-artwork.md`.

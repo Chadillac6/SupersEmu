@@ -65,7 +65,8 @@ final class CheatCodecTests: XCTestCase {
     }
 
     func testEverySystemHasCheatFormats() {
-        XCTAssertTrue(SystemID.allCases.allSatisfy(CheatCodec.supportsCheats))
+        // Dreamcast and PS2 have no cheat formats yet.
+        XCTAssertEqual(Set(SystemID.allCases.filter { !CheatCodec.supportsCheats($0) }), [.dreamcast, .ps2])
         XCTAssertEqual(CheatCodec.formats(for: .snes), [.snesGameGenie, .proActionReplay])
         XCTAssertEqual(CheatCodec.formats(for: .genesis), [.genesisGameGenie, .proActionReplay])
         XCTAssertEqual(CheatCodec.formats(for: .sega32x), [.genesisGameGenie, .proActionReplay])

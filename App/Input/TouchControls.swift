@@ -71,7 +71,8 @@ struct TouchControls: View {
         switch input.layout.system.controlFamily {
         case .n64: legacyN64
         case .sega: legacyGenesis
-        case .psx: legacyPSX
+        case .psx, .ps2: legacyPSX
+        case .dreamcast: legacyDreamcast
         case .handheld: legacyHandheld
         case .snes: legacySNES
         }
@@ -82,7 +83,8 @@ struct TouchControls: View {
         switch input.layout.system.controlFamily {
         case .n64: n64Portrait(scale: scale)
         case .sega: genesisPortrait(scale: scale)
-        case .psx: psxPortrait(scale: scale)
+        case .psx, .ps2: psxPortrait(scale: scale)
+        case .dreamcast: dreamcastPortrait(scale: scale)
         case .handheld: handheldPortrait(scale: scale)
         case .snes: snesPortrait(scale: scale)
         }
@@ -140,6 +142,22 @@ struct TouchControls: View {
             Spacer(minLength: 0)
             legacyDiamond(top: "Triangle", left: "Square", right: "Circle", bottom: "Cross",
                           labels: ["Triangle": "△", "Square": "□", "Circle": "○", "Cross": "✕"])
+        }
+    }
+
+    private var legacyDreamcast: some View {
+        HStack(alignment: .center, spacing: 0) {
+            HStack(spacing: 10) {
+                analogStick(radius: 42)
+                legacyDpad(size: 30)
+            }
+            Spacer(minLength: 0)
+            VStack(spacing: 8) {
+                HStack(spacing: 6) { pill("L Trigger", label: "L"); pill("R Trigger", label: "R") }
+                pill("Start")
+            }
+            Spacer(minLength: 0)
+            legacyDiamond(top: "Y", left: "X", right: "B", bottom: "A")
         }
     }
 
@@ -215,6 +233,29 @@ struct TouchControls: View {
             Spacer(minLength: 8 * scale)
             portraitDiamond(top: "Triangle", left: "Square", right: "Circle", bottom: "Cross",
                             labels: ["Triangle": "△", "Square": "□", "Circle": "○", "Cross": "✕"], scale: scale)
+        }
+    }
+
+    private func dreamcastPortrait(scale: CGFloat) -> some View {
+        let faceButtonsWidth = (2 * 62 + 10) * scale
+        return VStack(spacing: 6 * scale) {
+            HStack(spacing: 0) {
+                analogStick(radius: 60 * scale)
+                Spacer(minLength: 8 * scale)
+                VStack(spacing: 6 * scale) {
+                    pill("L Trigger", label: "L", width: 64 * scale, height: 32 * scale)
+                    pill("R Trigger", label: "R", width: 64 * scale, height: 32 * scale)
+                }
+                Spacer(minLength: 8 * scale)
+                portraitDiamond(top: "Y", left: "X", right: "B", bottom: "A", scale: scale)
+            }
+            HStack(spacing: 0) {
+                portraitDpad(scale: scale)
+                Spacer(minLength: 8 * scale)
+                pill("Start", width: 64 * scale, height: 32 * scale)
+                Spacer(minLength: 8 * scale)
+                Color.clear.frame(width: faceButtonsWidth, height: 1)
+            }
         }
     }
 
@@ -330,11 +371,11 @@ struct TouchControls: View {
             .accessibilityIdentifier("pad-\(control)")
     }
 
-    private func pill(_ control: String, width: CGFloat = 50, height: CGFloat = 28) -> some View {
+    private func pill(_ control: String, label: String? = nil, width: CGFloat = 50, height: CGFloat = 28) -> some View {
         Capsule()
             .fill(.white.opacity(model.pressed.contains(control) ? 0.45 : 0.18))
             .frame(width: width, height: height)
-            .overlay(Text(control).font(.caption.bold()).lineLimit(1).minimumScaleFactor(0.7))
+            .overlay(Text(label ?? control).font(.caption.bold()).lineLimit(1).minimumScaleFactor(0.7))
             .background(zoneFrame(control))
             .accessibilityIdentifier("pad-\(control)")
     }

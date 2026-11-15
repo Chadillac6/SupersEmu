@@ -12,7 +12,9 @@ public struct ROMHashes: Sendable, Equatable {
 }
 
 /// CRC32 / MD5 / SHA-1 of a stored ROM, in the forms No-Intro hashes: headerless SNES, de-interleaved .smd,
-/// big-endian (.z64) N64. The first variant is the file as stored.
+/// big-endian (.z64) N64. The first variant is the file as stored. Disc images are hashed per track file (Redump lists
+/// each track); a DVD `.chd` adds the SHA-1 of its uncompressed `.iso` from the header, and a `.cso` adds the hashes of
+/// the `.iso` it decompresses to.
 enum ROMHasher {
     static func variants(of url: URL, system: SystemID) throws -> [ROMHashes] {
         let size = Int64((try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0)
@@ -31,7 +33,23 @@ enum ROMHasher {
         default:
             break
         }
+        switch url.pathExtension.lowercased() {
+        case "chd":
+            if let chd = CHDInfo(url: url), chd.tags.contains("DVD "), let sha1 = chd.rawSHA1 {
+                results.append(ROMHashes(crc: "", md5: "", sha1: sha1, size: Int64(chd.logicalBytes)))
+            }
+        case "cso":
+            if let cso = try? CSOImage(url: url) { results.append(try hash(cso)) }
+        default:
+            break
+        }
         return results
+    }
+
+    private static func hash(_ cso: CSOImage) throws -> ROMHashes {
+        var state = State()
+        for block in 0..<cso.blockCount { state.update(try cso.block(block)) }
+        return state.finish()
     }
 
     static func hash(_ data: Data) -> ROMHashes {

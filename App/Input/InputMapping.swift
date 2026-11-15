@@ -17,13 +17,25 @@ struct InputMappings: Codable, Equatable, Sendable {
     /// The preset the user picked for a HID controller type whose IDs match more than one pad.
     var hidPresets: [String: String] = [:]
 
-    /// Built-in controller-type defaults: the keyboard's arrow keys drive the N64 stick.
+    /// Built-in controller-type defaults: the keyboard's arrow keys drive the N64, Dreamcast and PS2 (left) stick;
+    /// on Dreamcast and PS2 the d-pad moves to T/F/G/H, the keys that otherwise press the left stick.
     static let builtinOverrides: [String: [String: [String: PadInput]]] = [
-        ControllerType.keyboard: [SystemID.n64.rawValue: [
-            "Stick Up": .dpadUp, "Stick Down": .dpadDown, "Stick Left": .dpadLeft, "Stick Right": .dpadRight,
-            "Up": .unbound, "Down": .unbound, "Left": .unbound, "Right": .unbound,
-        ]],
+        ControllerType.keyboard: [
+            SystemID.n64.rawValue: [
+                "Stick Up": .dpadUp, "Stick Down": .dpadDown, "Stick Left": .dpadLeft, "Stick Right": .dpadRight,
+                "Up": .unbound, "Down": .unbound, "Left": .unbound, "Right": .unbound,
+            ],
+            SystemID.dreamcast.rawValue: arrowsDriveStick("Stick"),
+            SystemID.ps2.rawValue: arrowsDriveStick("Left Stick"),
+        ],
     ]
+
+    private static func arrowsDriveStick(_ stick: String) -> [String: PadInput] {
+        [
+            "\(stick) Up": .dpadUp, "\(stick) Down": .dpadDown, "\(stick) Left": .dpadLeft, "\(stick) Right": .dpadRight,
+            "Up": .leftStickUp, "Down": .leftStickDown, "Left": .leftStickLeft, "Right": .leftStickRight,
+        ]
+    }
 
     func bindings(for layout: ConsoleLayout, controllerType: String, gameID: String?) -> [String: PadInput] {
         var result = layout.defaults

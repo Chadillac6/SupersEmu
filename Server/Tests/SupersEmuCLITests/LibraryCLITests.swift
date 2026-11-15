@@ -65,7 +65,7 @@ extension CLIEndToEndTests {
             let auth = ["--server", server, "--token", self.adminToken!]
             try await self.expectExit(0, ["bios", "status", "--json"] + auth)
             let before = try SupersEmuJSON.decoder().decode([BIOSStatus].self, from: self.stdout)
-            XCTAssertEqual(before.count, KnownBIOS.all.count)
+            XCTAssertEqual(before.count, KnownBIOS.all.filter(\.listed).count)
             XCTAssertTrue(before.allSatisfy { $0.state == .missing })
 
             try await self.expectExit(0, ["library", "import", sources.path] + auth)

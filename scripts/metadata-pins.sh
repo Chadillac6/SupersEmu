@@ -7,6 +7,7 @@ systems=(
   "Nintendo - Super Nintendo Entertainment System:no-intro" "Nintendo - Game Boy:no-intro"
   "Nintendo - Game Boy Color:no-intro" "Nintendo - Game Boy Advance:no-intro" "Sega - Mega Drive - Genesis:no-intro"
   "Sega - 32X:no-intro" "Nintendo - Nintendo 64:no-intro" "Sega - Mega-CD - Sega CD:redump" "Sony - PlayStation:redump"
+  "Sega - Dreamcast:redump" "Sony - PlayStation 2:redump"
 )
 for entry in "${systems[@]}"; do
   name="${entry%%:*}"
