@@ -24,6 +24,7 @@ pin Vendor/cores/beetle_psx      https://github.com/libretro/beetle-psx-libretro
 pin Vendor/cores/picodrive       https://github.com/libretro/picodrive.git         1890c2932234c9d30f4cd3851d02228baae8f09e
 pin Vendor/cores/mupen64plus_next https://github.com/libretro/mupen64plus-libretro-nx.git 12edd2c74a517ff86dfa8cfc71ad75e4c10486d5
 pin Vendor/cores/flycast         https://github.com/flyinghead/flycast.git          3a5267a5e32438026e1c5b97d5de6cd77236f72c
+pin Vendor/cores/lrps2           https://github.com/libretro/ps2.git                3053b131f2d48f531356faa91d16eb1e86ce7a8b
 # PicoDrive's own submodules that the C-only build compiles (no Cyclone asm, no libchdr).
 git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
 # Flycast's submodules that the libretro build compiles (no SDL, Vulkan, breakpad or Lua).

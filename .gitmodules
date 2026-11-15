@@ -22,3 +22,6 @@
 [submodule "Vendor/cores/flycast"]
 	path = Vendor/cores/flycast
 	url = https://github.com/flyinghead/flycast
+[submodule "Vendor/cores/lrps2"]
+	path = Vendor/cores/lrps2
+	url = https://github.com/libretro/ps2.git
