@@ -8,6 +8,18 @@
 #define SE_ENTRY_(id) se_core_##id
 #define SE_ENTRY(id) SE_ENTRY_(id)
 
+// A core can wrap the memory accessors (e.g. to expose a memory card as save RAM).
+#ifdef SE_CORE_GET_MEMORY_DATA
+void *SE_CORE_GET_MEMORY_DATA(unsigned id);
+#else
+#define SE_CORE_GET_MEMORY_DATA retro_get_memory_data
+#endif
+#ifdef SE_CORE_GET_MEMORY_SIZE
+size_t SE_CORE_GET_MEMORY_SIZE(unsigned id);
+#else
+#define SE_CORE_GET_MEMORY_SIZE retro_get_memory_size
+#endif
+
 // A core can wrap retro_load_game (e.g. to reject content it silently mis-loads).
 #ifdef SE_CORE_LOAD_GAME
 bool SE_CORE_LOAD_GAME(const struct retro_game_info *game);
@@ -59,8 +71,8 @@ const SECoreAPI *SE_ENTRY(SE_CORE_ID)(void) {
         retro_set_audio_sample_batch, retro_set_input_poll, retro_set_input_state,
         retro_init, SE_CORE_DEINIT, retro_get_system_info, retro_get_system_av_info,
         retro_set_controller_port_device, retro_run, retro_reset, retro_serialize_size, retro_serialize,
-        SE_CORE_UNSERIALIZE, SE_CORE_LOAD_GAME, retro_unload_game, retro_get_memory_data,
-        retro_get_memory_size, SE_CHEAT_RESET, SE_CHEAT_SET, SE_CORE_CHEAT_COUNT,
+        SE_CORE_UNSERIALIZE, SE_CORE_LOAD_GAME, retro_unload_game, SE_CORE_GET_MEMORY_DATA,
+        SE_CORE_GET_MEMORY_SIZE, SE_CHEAT_RESET, SE_CHEAT_SET, SE_CORE_CHEAT_COUNT,
     };
     return &api;
 }

@@ -134,6 +134,7 @@ const CoreEntry kCores[] = {
     {"beetle_psx", se_core_beetle_psx},
     {"picodrive", se_core_picodrive},
     {"mupen64plus_next", se_core_mupen64plus_next},
+    {"flycast", se_core_flycast},
 };
 
 struct CoreOption {
@@ -147,6 +148,9 @@ const CoreOption kCoreOptions[] = {
     {"mupen64plus-cpucore", "cached_interpreter"},
     {"mupen64plus-ThreadedRenderer", "False"},
     {"mupen64plus-EnableFBEmulation", "True"},
+    // The host drives GL from one thread, and VMU A1 is synced per game as save RAM.
+    {"reicast_threaded_rendering", "disabled"},
+    {"reicast_per_content_vmus", "VMU A1"},
 };
 
 NSDictionary<NSString *, NSString *> *gPendingCoreOptionOverrides = nil;

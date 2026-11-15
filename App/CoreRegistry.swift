@@ -22,6 +22,8 @@ enum CoreRegistry {
         Core(id: SECoreIDGenesisPlusGX, systems: ["segacd"], extensions: []),
         Core(id: SECoreIDPicoDrive, systems: ["sega32x"], extensions: ["32x"]),
         Core(id: SECoreIDMupen64PlusNext, systems: ["n64"], extensions: ["z64", "n64", "v64"]),
+        // zip/7z are left out: Flycast treats archives as Naomi/Atomiswave arcade sets, not Dreamcast discs.
+        Core(id: SECoreIDFlycast, systems: ["dreamcast"], extensions: ["gdi", "cdi", "chd", "cue", "m3u", "elf"]),
     ]
 
     /// Sheets that reference other files (tracks, discs). Copying one alone breaks the game, so

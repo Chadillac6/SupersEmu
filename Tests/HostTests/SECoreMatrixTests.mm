@@ -43,6 +43,7 @@ static const CoreFixture kFixtures[] = {
     {@"mupen64plus_next", @"cube-fill-triangle.z64", @"Mupen64Plus-Next", 320, 240,
      @"Mupen64Plus-Next's state does not replay byte-identically in a fresh session",
      @"GLideN64 frames after a restore are not pixel-identical"},
+    {@"flycast", @"chroma-circuit.elf", @"Flycast", 320, 240},
 };
 
 - (void)setUp {
@@ -102,7 +103,7 @@ static NSString *describeDifference(NSData *a, NSData *b) {
 
 - (void)testAllCoresAreLinked {
     NSArray *expected = @[SECoreIDSnes9x, SECoreIDGambatte, SECoreIDMGBA, SECoreIDGenesisPlusGX,
-                          SECoreIDBeetlePSX, SECoreIDPicoDrive, SECoreIDMupen64PlusNext];
+                          SECoreIDBeetlePSX, SECoreIDPicoDrive, SECoreIDMupen64PlusNext, SECoreIDFlycast];
     XCTAssertEqualObjects(SELibretroHost.availableCoreIDs, expected);
 }
 
