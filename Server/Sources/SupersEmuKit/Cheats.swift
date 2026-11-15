@@ -188,6 +188,7 @@ public enum CheatCodec {
         case .gba: [.gbaCode, .gbaCodeBreaker]
         case .psx: [.psxGameShark]
         case .n64: [.n64GameShark]
+        case .dreamcast, .ps2: []
         }
     }
 
@@ -197,7 +198,7 @@ public enum CheatCodec {
     public static func allowsMultiline(_ system: SystemID) -> Bool {
         switch system {
         case .gba, .psx, .n64: true
-        case .snes, .gb, .gbc, .genesis, .segacd, .sega32x: false
+        case .snes, .gb, .gbc, .genesis, .segacd, .sega32x, .dreamcast, .ps2: false
         }
     }
 
@@ -285,6 +286,8 @@ public enum CheatCodec {
             if let result = parseLineCodes(code, system: system) { return result }
         case .n64:
             if let result = parseLineCodes(code, system: system) { return result }
+        case .dreamcast, .ps2:
+            break
         }
         return .invalid(reason: invalidReason(code, system: system))
     }
@@ -318,6 +321,8 @@ public enum CheatCodec {
             return "PS1 GameShark codes use lines of XXXXXXXX XXXX with a supported code type."
         case .n64:
             return "N64 GameShark codes use one or more lines of XXXXXXXX XXXX."
+        case .dreamcast, .ps2:
+            return "Cheats aren't supported for this console yet."
         }
     }
 

@@ -25,6 +25,7 @@ mkdir -p "$out"
 if [ "$stage" != upload ]; then
   git submodule update --init --depth 1
   git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
+  git -C Vendor/cores/flycast submodule update --init --depth 1 core/deps/libchdr core/deps/tinygettext core/deps/xbyak core/deps/asio
   xcodegen generate
 
   echo "Version $marketing_version (build $build_number)"

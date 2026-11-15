@@ -3,11 +3,11 @@ import SwiftUI
 import SupersEmuKit
 
 /// BIOS files from Chad's own consoles: what's present, missing or wrong, and which games need them.
-/// SupersEmu never bundles or downloads BIOS files.
+/// SupersEmu never bundles or downloads BIOS files. Dreamcast's BIOS is optional (Flycast has a built-in one).
 struct BIOSView: View {
     let model: LibraryManagerModel
 
-    private var systems: [SystemID] { SystemID.allCases.filter(\.requiresBIOS) }
+    private var systems: [SystemID] { SystemID.allCases.filter(\.usesBIOS) }
 
     var body: some View {
         Form {
@@ -26,8 +26,9 @@ struct BIOSView: View {
             ForEach(systems, id: \.self) { system in
                 Section(system.displayName) {
                     Text(Self.purpose(system)).font(.callout).foregroundStyle(.secondary)
+                    readiness(system)
                     ForEach(model.bios.filter { $0.system == system }, id: \.filename) { row($0) }
-                    gamesNeeding(system)
+                    if system.requiresBIOS { gamesNeeding(system) }
                 }
             }
         }
@@ -55,6 +56,18 @@ struct BIOSView: View {
         }
     }
 
+    /// Any one good BIOS is enough for a system (region matching isn't implemented), so say so up front.
+    @ViewBuilder private func readiness(_ system: SystemID) -> some View {
+        let present = model.bios.contains { $0.system == system && $0.state == .present }
+        if present {
+            Label("Ready", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+        } else if system.requiresBIOS {
+            Label("Needs one BIOS file before these games can start", systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange)
+        } else {
+            Label("Optional: games start without it", systemImage: "info.circle").foregroundStyle(.secondary)
+        }
+    }
+
     @ViewBuilder private func gamesNeeding(_ system: SystemID) -> some View {
         let games = model.biosGames.filter { $0.system == system }
         if games.isEmpty {
@@ -70,6 +83,8 @@ struct BIOSView: View {
         switch system {
         case .psx: return "PlayStation games start through the console's BIOS. Add the one for your games' region (USA, Japan or Europe); without it they won't boot."
         case .segacd: return "Sega CD games boot through the Sega CD BIOS for their region. The core can't run them without it."
+        case .dreamcast: return "Optional. Dreamcast games start with the emulator's built-in BIOS; adding dc_boot.bin and dc_flash.bin from your own Dreamcast helps the few games that need the real one."
+        case .ps2: return "PlayStation 2 games need a BIOS from your own PS2 (any region works). Games play on the Mac only. Any known PS2 BIOS revision is accepted, not just the ones listed."
         default: return "Games for this console need its BIOS."
         }
     }

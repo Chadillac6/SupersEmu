@@ -234,6 +234,7 @@ struct CheatEditor: View {
         case .gb, .gbc: "00A-17B-C49"
         case .gba: "XXXXXXXX XXXXXXXX"
         case .psx, .n64: "8009C6E4 03E7"
+        case .dreamcast, .ps2: ""
         }
     }
 

@@ -79,6 +79,7 @@ staple_with_retry() {
 
 git submodule update --init --depth 1
 git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
+git -C Vendor/cores/flycast submodule update --init --depth 1 core/deps/libchdr core/deps/tinygettext core/deps/xbyak core/deps/asio
 xcodegen generate
 
 echo "Version $marketing_version (build $build_number)"
@@ -115,6 +116,8 @@ for bin in "$app/Contents/MacOS/SupersEmu" "$app/Contents/MacOS/supersemu-server
   codesign -dv --verbose=4 "$bin" 2>&1 | grep -q 'flags=.*runtime' ||
     { echo "error: $bin is not signed with the hardened runtime" >&2; exit 1; }
 done
+codesign -d --entitlements - --xml "$app/Contents/MacOS/SupersEmu" 2>/dev/null | grep -q 'com.apple.security.cs.allow-jit' ||
+  { echo "error: SupersEmu is missing the allow-jit entitlement (Dreamcast/PS2 recompilers)" >&2; exit 1; }
 
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
 name="SupersEmu-$version-$build_number"

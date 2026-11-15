@@ -10,7 +10,8 @@
 | Sega 32X | PicoDrive | `picodrive` | MAME (non-commercial) | **Running** (M2; macOS tests with homebrew 32X ROM + iOS Simulator/device builds) |
 | PlayStation | Beetle PSX (mednafen_psx) | `beetle_psx` | GPLv2 | **Linked** (M2; macOS tests + iOS builds). Boots bundled OpenBIOS without a Sony BIOS; no commercial disc or real BIOS tested yet |
 | Nintendo 64 | Mupen64Plus-Next | `mupen64plus_next` | GPLv2 | **Running** (M3; macOS host tests with homebrew N64 ROM + iOS Simulator). GLideN64 over libretro hardware rendering, cached interpreter. Real iPhone/iPad speed not measured |
-| Dreamcast | Flycast | | GPLv2 | Phase 2 |
+| Dreamcast | Flycast | `flycast` | GPLv2 | **Running** (macOS host tests with homebrew ELF + CDI on the HLE BIOS; iOS Simulator builds). OpenGL core on Mac with the SH4 dynarec; GLES3 on iPhone/iPad interpreter-only (Beta). Optional real BIOS: `<system>/dc/dc_boot.bin`, `<system>/dc/dc_flash.bin`. VMU A1 is the game's save RAM. No commercial disc or real BIOS tested yet |
+| PlayStation 2 | LRPS2 (PCSX2) | `lrps2` | GPLv3 | **Core builds, Mac only** (Apple Silicon macOS app + host tests; not linked into iOS). Software renderer, recompilers (JIT). Needs a user PS2 BIOS in `<system>/pcsx2/bios/`. Tested only with a synthetic BIOS; no real BIOS or disc booted yet |
 
 Alternates: bsnes (SNES accuracy), SameBoy (GB), SwanStation / PCSX ReARMed (PS1), ParaLLEl N64.
 
@@ -27,6 +28,8 @@ Each core is a git submodule under `Vendor/cores/`, pinned by `scripts/pin-cores
 | PicoDrive | [libretro/picodrive](https://github.com/libretro/picodrive) | `1890c2932234c9d30f4cd3851d02228baae8f09e` | `COPYING` (MAME licence, non-commercial) | 32x |
 | Beetle PSX | [libretro/beetle-psx-libretro](https://github.com/libretro/beetle-psx-libretro) | `10e4b0c6ceae20daa65ddf436a4445dddd0982d2` | `COPYING` (GPLv2) | cue, chd, m3u (pbp not yet) |
 | Mupen64Plus-Next | [libretro/mupen64plus-libretro-nx](https://github.com/libretro/mupen64plus-libretro-nx) | `12edd2c74a517ff86dfa8cfc71ad75e4c10486d5` | `LICENSE` (GPLv2) | z64, n64, v64 |
+| Flycast | [flyinghead/flycast](https://github.com/flyinghead/flycast) | `3a5267a5e32438026e1c5b97d5de6cd77236f72c` | `LICENSE` (GPLv2) | gdi, cdi, chd, cue, m3u, elf (zip/7z are Naomi/Atomiswave arcade sets, not supported) |
+| LRPS2 | [libretro/ps2](https://github.com/libretro/ps2) | `3053b131f2d48f531356faa91d16eb1e86ce7a8b` | `COPYING.GPLv3` (GPLv3) | iso, cso, zso, ciso, gz, elf; PS2 `.cue`/`.chd`/`.m3u` discs by console `ps2` (extension alone picks PS1). Mac only |
 
 **Licensing.** Snes9x, Genesis Plus GX and PicoDrive (MAME licence: redistribution only
 non-commercially, with source) forbid commercial use, so SupersEmu must stay free:
@@ -116,6 +119,18 @@ Build notes:
     Simulator app) takes 1 m 47 s. A clean upstream `make` dylib takes about 72 s.
   - Builds verified: macOS arm64/x86_64, iOS device arm64 (`-sdk iphoneos`, target only), and the
     iOS Simulator app (arm64/x86_64) via `scripts/build.sh`.
+- LRPS2 (PS2) is the exception: Apple Silicon macOS only (`LRPS2Core`, `#if TARGET_OS_OSX && defined(__aarch64__)`),
+  with its EE/IOP/VU recompilers. JIT memory is `MAP_JIT` and written between `pthread_jit_write_protect_np`
+  toggles (`pcsx2/HostMem.h`, `libretro-common/memmap`), under the macOS app's `com.apple.security.cs.allow-jit`.
+  Host options: `pcsx2_renderer=Software (SW)` (frames reach the host as XRGB8888), `pcsx2_shared_memory_cards=disabled`
+  (one card per game, `<save dir>/<content name>.ps2`). The core picks the BIOS itself: it scans
+  `<system>/pcsx2/bios/` for 4-8 MB files with a valid ROMDIR (any filename) and sets `pcsx2_bios` to the
+  first valid one. With no BIOS, loading fails with "PlayStation 2 games need a PS2 BIOS…" instead of crashing.
+  `pcsx2/GameDatabaseBuiltin.c` is generated from `bin/resources/GameIndex.yaml` by a pre-build script.
+  Follow-ups: hardware rendering (PCSX2's OpenGL path needs GL newer than macOS's 4.1; Vulkan would need MoltenVK;
+  a Metal or host-GL path is possible but not started), and placing the 320 MB main / 305 MB code maps near
+  the core image on macOS (`pcsx2/NearPlace.c` has no macOS address-space walk, so the recompilers fall back to
+  absolute addresses instead of PC-relative ones; works, may cost speed).
 
 ## Server import for disc systems (M2 import track)
 The server importer groups `.cue`+tracks, `.chd`, `.iso` and `.m3u` into disc games for PS1 (`psx`) and Sega CD (`segacd`), and detects 32X carts (`sega32x`). It files BIOS files by hash (`KnownBIOS`) and serves them at `/v1/bios`. Details and the verification status are in [disc-games.md](disc-games.md#import-track-built-and-verified-server).

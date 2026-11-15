@@ -23,8 +23,14 @@ enum TouchControlSizing {
             let buttonRowWidth = dpad + faceButtons + gap
             let pillRowWidth = 2 * pill + gap
             return max(buttonRowWidth, pillRowWidth)
-        case .psx:
+        case .psx, .ps2:
             return dpad + pill + 2 * button + 10 + 2 * gap
+        case .dreamcast:
+            // Stick, L/R and the face buttons on top; the d-pad, Start and a face-button-wide gap below.
+            let faceButtons = 2 * button + 10
+            let stickRowWidth = 120 + pill + faceButtons + 2 * gap
+            let dpadRowWidth = dpad + pill + faceButtons + 2 * gap
+            return max(stickRowWidth, dpadRowWidth)
         case .handheld:
             return dpad + pill + 2 * button + 8 + 2 * gap
         case .snes:

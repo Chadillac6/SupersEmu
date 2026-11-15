@@ -228,6 +228,11 @@ public final class LibraryImporter: @unchecked Sendable {
 
     // MARK: Processing
 
+    /// Sheets that list a disc's track files: `.cue`, and Dreamcast `.gdi`.
+    static let sheetExtensions: Set<String> = ["cue", "gdi"]
+    /// Discs that are one file: `.chd`, `.iso`, DiscJuggler `.cdi` (Dreamcast) and compressed `.cso` (PS2).
+    static let singleFileDiscExtensions: Set<String> = ["chd", "iso", "cdi", "cso"]
+
     /// `Game.bin`, `Game01.bin`, `Game (Track 1).bin` may belong to `Game.cue`; `Gameplay.bin` doesn't.
     static func isTrackName(_ filename: String, of stem: String) -> Bool {
         let name = (filename as NSString).deletingPathExtension.lowercased()
@@ -242,10 +247,10 @@ public final class LibraryImporter: @unchecked Sendable {
         var units: [DiscUnit] = []
         var playlists: [(Candidate, [String])] = []
 
-        for cue in batch.candidates where cue.ext == "cue" {
+        for cue in batch.candidates where Self.sheetExtensions.contains(cue.ext) {
             consumed.insert(cue.key)
-            guard let data = try? readSmall(cue), let sheet = CueSheet(data: data) else {
-                batch.record(.unsupported("\(cue.label): not a readable cue sheet", .other), origins: [cue.origin])
+            guard let data = try? readSmall(cue), let sheet = cue.ext == "gdi" ? CueSheet(gdi: data) : CueSheet(data: data) else {
+                batch.record(.unsupported("\(cue.label): not a readable \(cue.ext == "gdi" ? "GDI" : "cue") sheet", .other), origins: [cue.origin])
                 continue
             }
             var tracks: [Candidate] = [], missing: [String] = [], seen = Set<String>()
@@ -262,10 +267,10 @@ public final class LibraryImporter: @unchecked Sendable {
         }
         // Files named like a track of an unreadable cue stay with it (unsettled), unless their own header
         // identifies a cartridge. Disc data tracks are checked for a disc header first.
-        for cue in batch.candidates where cue.ext == "cue" && !units.contains(where: { $0.primary.key == cue.key }) {
+        for cue in batch.candidates where Self.sheetExtensions.contains(cue.ext) && !units.contains(where: { $0.primary.key == cue.key }) {
             let stem = (cue.filename as NSString).deletingPathExtension.lowercased()
-            for track in batch.candidates where track.container == cue.container && ["bin", "img"].contains(track.ext)
-                && !consumed.contains(track.key) && Self.isTrackName(track.filename, of: stem) {
+            for track in batch.candidates where track.container == cue.container && ["bin", "img", "raw"].contains(track.ext)
+                && !consumed.contains(track.key) && (Self.isTrackName(track.filename, of: stem) || cue.ext == "gdi" && Self.isTrackName(track.filename, of: "track")) {
                 if let (header, size) = try? headerAndSize(track), SystemDetector.detectDisc(header: header) == nil,
                    case .system = SystemDetector.detect(filename: track.filename, header: header, size: size) {
                     continue
@@ -274,7 +279,7 @@ public final class LibraryImporter: @unchecked Sendable {
                 batch.record(.unsupported("\(track.label): track of unreadable cue sheet \(cue.filename)", .other), origins: [track.origin])
             }
         }
-        for disc in batch.candidates where ["chd", "iso"].contains(disc.ext) && !consumed.contains(disc.key) {
+        for disc in batch.candidates where Self.singleFileDiscExtensions.contains(disc.ext) && !consumed.contains(disc.key) {
             consumed.insert(disc.key)
             units.append(DiscUnit(primary: disc, cue: nil, cueData: nil, tracks: [], missing: []))
         }

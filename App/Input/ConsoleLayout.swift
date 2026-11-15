@@ -17,7 +17,7 @@ struct ConsoleControl: Identifiable, Equatable, Sendable {
 
 /// Consoles that share a pad and touch layout.
 enum ControlFamily: Sendable {
-    case snes, sega, n64, psx, handheld
+    case snes, sega, n64, psx, handheld, dreamcast, ps2
 }
 
 extension SystemID {
@@ -27,6 +27,8 @@ extension SystemID {
         case .genesis, .segacd, .sega32x: .sega
         case .n64: .n64
         case .psx: .psx
+        case .dreamcast: .dreamcast
+        case .ps2: .ps2
         case .gb, .gbc, .gba: .handheld
         }
     }
@@ -49,7 +51,12 @@ struct ConsoleLayout: Equatable, Sendable {
     func control(_ id: String) -> ConsoleControl? { controls.first { $0.id == id } }
 
     /// Order of the Controls screen's console picker.
-    static let systems: [SystemID] = [.snes, .genesis, .n64, .psx, .gba, .gb, .gbc, .segacd, .sega32x]
+    static let systems: [SystemID] = [.snes, .genesis, .n64, .psx, .dreamcast, .ps2, .gba, .gb, .gbc, .segacd, .sega32x]
+
+    /// The picker's consoles that can be played on `platform` (PS2 is Mac only).
+    static func systems(on platform: DevicePlatform) -> [SystemID] {
+        systems.filter { $0.isShown(on: platform) }
+    }
 
     static func title(for system: SystemID) -> String {
         switch system {
@@ -62,6 +69,8 @@ struct ConsoleLayout: Equatable, Sendable {
         case .sega32x: "32X"
         case .psx: "PlayStation"
         case .n64: "Nintendo 64"
+        case .dreamcast: "Dreamcast"
+        case .ps2: "PlayStation 2"
         }
     }
 
@@ -92,6 +101,22 @@ struct ConsoleLayout: Equatable, Sendable {
                 button("L3", .l3, .l3), button("R3", .r3, .r3),
                 button("Select", .select, .select), button("Start", .start, .start),
             ], leftStickDrivesDpad: true)
+        case .dreamcast:
+            // Flycast: RetroPad B/A/Y/X = A/B/X/Y, L2/R2 = the analog triggers, left analog = the stick.
+            return ConsoleLayout(system: system, title: title, controls: dpad + leftStick("Stick") + [
+                button("A", .b, .south), button("B", .a, .east), button("X", .y, .west), button("Y", .x, .north),
+                button("L Trigger", .l2, .l2), button("R Trigger", .r2, .r2), button("Start", .start, .start),
+            ], leftStickDrivesDpad: false)
+        case .ps2:
+            // LRPS2: DualShock 2 on the standard RetroPad (Cross/Circle/Square/Triangle = B/A/Y/X), both analog sticks.
+            return ConsoleLayout(system: system, title: title, controls: dpad + leftStick("Left Stick") + [
+                analog("Right Stick Up", .right, .up, .rightStickUp), analog("Right Stick Down", .right, .down, .rightStickDown),
+                analog("Right Stick Left", .right, .left, .rightStickLeft), analog("Right Stick Right", .right, .right, .rightStickRight),
+                button("Cross", .b, .south), button("Circle", .a, .east), button("Square", .y, .west), button("Triangle", .x, .north),
+                button("L1", .l, .l1), button("R1", .r, .r1), button("L2", .l2, .l2), button("R2", .r2, .r2),
+                button("L3", .l3, .l3), button("R3", .r3, .r3),
+                button("Select", .select, .select), button("Start", .start, .start),
+            ], leftStickDrivesDpad: false)
         case .n64:
             // libretro N64 cores read the stick as the left analog and the C buttons as the right analog;
             // A/B/Z sit on RetroPad B/Y/L2.
@@ -116,6 +141,13 @@ struct ConsoleLayout: Equatable, Sendable {
         button("Up", .up, .dpadUp), button("Down", .down, .dpadDown),
         button("Left", .left, .dpadLeft), button("Right", .right, .dpadRight),
     ]
+
+    private static func leftStick(_ name: String) -> [ConsoleControl] {
+        [
+            analog("\(name) Up", .left, .up, .leftStickUp), analog("\(name) Down", .left, .down, .leftStickDown),
+            analog("\(name) Left", .left, .left, .leftStickLeft), analog("\(name) Right", .left, .right, .leftStickRight),
+        ]
+    }
 
     private static func button(_ id: String, _ output: RetroButton, _ input: PadInput) -> ConsoleControl {
         ConsoleControl(id: id, output: .button(output), defaultInput: input)

@@ -68,7 +68,7 @@ struct ControlsView: View {
                 #endif
                 if fixedSystem == nil {
                     Picker("Console", selection: $system) {
-                        ForEach(ConsoleLayout.systems, id: \.self) { Text(ConsoleLayout.title(for: $0)).tag($0) }
+                        ForEach(ConsoleLayout.systems(on: .current), id: \.self) { Text(ConsoleLayout.title(for: $0)).tag($0) }
                     }
                     .accessibilityIdentifier("controls-console")
                 }

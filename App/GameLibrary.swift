@@ -130,10 +130,26 @@ final class GameLibrary {
     /// Console for a local ROM, from the core that handles its extension ("gbc" stays GBC, "dmg" -> GB).
     static func system(for fileURL: URL) -> SystemID? {
         let ext = fileURL.pathExtension.lowercased()
+        if ext == "elf" { return elfSystem(fileURL) }
         guard let core = CoreRegistry.core(forExtension: ext) else { return nil }
         if let system = SystemID(rawValue: ext), core.systems.contains(system.rawValue) { return system }
         let system = core.systems.first.flatMap(SystemID.init(rawValue:))
         return system == .genesis && is32X(fileURL) ? .sega32x : system
+    }
+
+    /// `.elf` is shared by Dreamcast (SuperH) and PS2 (MIPS): the ELF header's `e_machine` decides, like the server.
+    static func elfSystem(_ url: URL) -> SystemID? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: 20), header.count == 20,
+              header.prefix(4).elementsEqual([0x7F, 0x45, 0x4C, 0x46]) else { return nil }
+        let machine = UInt16(header[header.startIndex + 18]) | UInt16(header[header.startIndex + 19]) << 8
+        let system: SystemID? = switch machine {
+        case 8: .ps2
+        case 42: .dreamcast
+        default: nil
+        }
+        return system.flatMap { CoreRegistry.core(forSystem: $0.rawValue) != nil ? $0 : nil }
     }
 
     /// Same check as the server's `SystemDetector`: "SEGA ... 32X" system name at 0x100, or "MARS" at 0x3C0.

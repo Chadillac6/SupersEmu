@@ -3,7 +3,7 @@ import Foundation
 import GRDB
 import SupersEmuKit
 
-/// A cue sheet with its referenced tracks, or a single .chd/.iso, before hashing.
+/// A cue or GDI sheet with its referenced tracks, or a single .chd/.iso/.cdi/.cso, before hashing.
 struct DiscUnit {
     var primary: LibraryImporter.Candidate
     var cue: CueSheet?
@@ -39,12 +39,19 @@ struct Disc {
 }
 
 extension LibraryImporter {
-    /// Folder names that declare a disc system for .chd files, whose compressed sectors can't be header-checked yet.
-    static let chdFolderSystems: [String: SystemID] = [
+    /// Folder names that declare a disc system for .chd files whose metadata doesn't say (CD images: PS1, Sega CD and
+    /// PS2 CD games all use the same CD track tags), since their compressed sectors can't be header-checked yet.
+    static let discFolderSystems: [String: SystemID] = [
         "ps1": .psx, "psx": .psx, "playstation": .psx, "sony - playstation": .psx, "sony playstation": .psx,
         "sega cd": .segacd, "segacd": .segacd, "mega-cd": .segacd, "mega cd": .segacd, "megacd": .segacd,
         "sega - mega-cd - sega cd": .segacd,
+        "ps2": .ps2, "playstation 2": .ps2, "playstation2": .ps2, "sony - playstation 2": .ps2, "sony playstation 2": .ps2,
+        "dreamcast": .dreamcast, "dc": .dreamcast, "sega dreamcast": .dreamcast, "sega - dreamcast": .dreamcast,
     ]
+
+    static func folderSystem(_ container: String) -> SystemID? {
+        container.split(separator: "/").map { $0.lowercased() }.reversed().lazy.compactMap { discFolderSystems[$0] }.first
+    }
 
     func examineFile(_ candidate: Candidate, role: GameFileRole, batch: Batch) throws -> ExaminedFile {
         if var cached = batch.examined[candidate.key] { cached.role = role; return cached }
@@ -86,24 +93,39 @@ extension LibraryImporter {
                     disc.reason = ImportReason("Two tracks in the cue sheet have identical contents", .other)
                     return disc
                 }
-                let dataKey = cue.firstDataFile.map { Candidate.key(unit.primary.container, $0.name) }
-                let dataTrack = tracks.first { $0.candidate.key == dataKey } ?? tracks.first
-                disc.system = dataTrack.flatMap { SystemDetector.detectDisc(header: $0.header) }
+                // The first data track identifies the disc; a .gdi's IP.BIN may be on a later data track (track 3), so the
+                // other data tracks are tried after it.
+                let dataKeys = cue.files.filter(\.isData).map { Candidate.key(unit.primary.container, $0.name) }
+                let firstKey = cue.firstDataFile.map { Candidate.key(unit.primary.container, $0.name) }
+                let first = tracks.first { $0.candidate.key == firstKey } ?? tracks.first
+                let others = tracks.filter { dataKeys.contains($0.candidate.key) && $0.candidate.key != first?.candidate.key }
+                disc.system = ([first].compactMap { $0 } + others).lazy
+                    .compactMap { SystemDetector.detectDisc(header: $0.header, file: $0.local) }.first
             } else {
                 let file = try examineFile(unit.primary, role: .disc, batch: batch)
                 disc.files = [file]
                 disc.id = file.sha
-                if unit.primary.ext == "chd" {
-                    let folders = unit.primary.container.split(separator: "/").map { $0.lowercased() }
-                    disc.system = folders.reversed().lazy.compactMap { Self.chdFolderSystems[$0] }.first
+                switch unit.primary.ext {
+                case "chd":
+                    // GD-ROM and DVD CHDs say so in their metadata; CD CHDs fall back to the folder name.
+                    disc.system = CHDInfo(url: file.local)?.system ?? Self.folderSystem(unit.primary.container)
                     if disc.system == nil {
-                        disc.reason = ImportReason("CHD disc image: system can't be read from the file yet (put it in a PS1 or Sega CD folder)", .other)
+                        disc.reason = ImportReason("CHD disc image: system can't be read from the file (put it in a PS1, PS2, Sega CD or Dreamcast folder)", .other)
                     }
                     return disc
+                case "cdi":
+                    // DiscJuggler images are the Dreamcast self-boot format; the data session can sit anywhere in the file.
+                    disc.system = .dreamcast
+                    return disc
+                case "cso":
+                    disc.system = DiscProbe.playStationSystem(of: file.local, compressed: true) == .ps2 ? .ps2 : nil
+                    if disc.system == nil { disc.reason = ImportReason("CSO image without a PS2 SYSTEM.CNF (only PS2 .cso images are supported)", .ambiguous) }
+                    return disc
+                default:
+                    disc.system = SystemDetector.detectDisc(header: file.header, file: file.local)
                 }
-                disc.system = SystemDetector.detectDisc(header: file.header)
             }
-            if disc.system == nil { disc.reason = ImportReason("Unrecognised disc (no PS1 or Sega CD header)", .ambiguous) }
+            if disc.system == nil { disc.reason = ImportReason("Unrecognised disc (no PS1, PS2, Sega CD or Dreamcast header)", .ambiguous) }
         } catch {
             disc.unsupported = ImportReason("\(unit.primary.label): could not read (\(error))", .readFailure(error))
         }
@@ -313,7 +335,7 @@ extension LibraryImporter {
                                      totalSize: rows.reduce(0) { $0 + $1.size }))
     }
 
-    /// Queues a disc's primary file (cue, .chd or .iso) for review under its file hash.
+    /// Queues a disc's primary file (cue/gdi, .chd, .iso, .cdi or .cso) for review under its file hash.
     func review(_ disc: Disc) throws -> Outcome {
         if let unsupported = disc.unsupported { return .unsupported(unsupported.message, unsupported.kind) }
         guard let primary = disc.files.first else { return .unsupported("\(disc.label): could not read", .other) }
