@@ -7,6 +7,10 @@
 #include "libretro.h"
 #include "SECoreAPI.h"
 
+// Host/CoreEntry/lrps2/se_memcard.c: what the SIO does when a game saves to memory card 1.
+extern "C" bool se_core_lrps2_write_card(unsigned address, const void *data, int size);
+extern "C" void se_core_lrps2_set_cards_open(bool open);
+
 /// PlayStation 2 (LRPS2, macOS on Apple Silicon). No Sony BIOS or commercial disc is ever used:
 /// the boot tests generate a synthetic 4 MB BIOS image (RESET/ROMDIR/ROMVER entries that pass the
 /// core's BIOS scan, and a tiny MIPS reset program that turns on the display and draws a sprite
@@ -162,8 +166,12 @@ NSData *TinyELF(const std::vector<uint8_t> &program) {
     return system;
 }
 
-- (NSURL *)game {
-    NSURL *url = [_tempDirectory URLByAppendingPathComponent:@"Homebrew Test.elf"];
+- (NSURL *)game { return [self gameInFolder:nil]; }
+
+- (NSURL *)gameInFolder:(NSString *)folder {
+    NSURL *directory = folder ? [_tempDirectory URLByAppendingPathComponent:folder isDirectory:YES] : _tempDirectory;
+    [NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:nil];
+    NSURL *url = [directory URLByAppendingPathComponent:@"Homebrew Test.elf"];
     if (_program.empty()) SyntheticBIOS(0x80FF8040u, _program);
     [TinyELF(_program) writeToURL:url atomically:YES];
     return url;
@@ -171,10 +179,17 @@ NSData *TinyELF(const std::vector<uint8_t> &program) {
 
 - (NSURL *)saveDirectory { return [_tempDirectory URLByAppendingPathComponent:@"Saves" isDirectory:YES]; }
 
+- (NSURL *)saveRAMForGameID:(NSString *)gameID {
+    return [self.saveDirectory URLByAppendingPathComponent:[gameID stringByAppendingPathExtension:@"srm"]];
+}
+
 - (SELibretroHost *)hostWithSystem:(NSURL *)system error:(NSError **)error {
+    return [self hostForGame:self.game gameID:@"ps2-game" system:system error:error];
+}
+
+- (SELibretroHost *)hostForGame:(NSURL *)game gameID:(NSString *)gameID system:(NSURL *)system error:(NSError **)error {
     [NSFileManager.defaultManager createDirectoryAtURL:self.saveDirectory withIntermediateDirectories:YES attributes:nil error:nil];
-    return [[SELibretroHost alloc] initWithCoreID:SECoreIDLRPS2 romURL:self.game
-                                       saveRAMURL:[self.saveDirectory URLByAppendingPathComponent:@"ps2-game.srm"]
+    return [[SELibretroHost alloc] initWithCoreID:SECoreIDLRPS2 romURL:game saveRAMURL:[self saveRAMForGameID:gameID]
                                   systemDirectory:system error:error];
 }
 
@@ -276,6 +291,173 @@ NSData *TinyELF(const std::vector<uint8_t> &program) {
     XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:card.path],
                   @"slot 1 card is named after the content; saves: %@",
                   [NSFileManager.defaultManager contentsOfDirectoryAtPath:self.saveDirectory.path error:nil]);
+}
+
+// An 8 MB PS2 card with ECC: 16384 pages of 528 bytes.
+static const NSUInteger kCardSize = 16384 * 528;
+static const unsigned kSavePage = 100 * 528;
+
+static NSData *CardBytes(NSData *card) {
+    return card.length >= kSavePage + 512 ? [card subdataWithRange:NSMakeRange(kSavePage, 512)] : nil;
+}
+
+static NSData *SaveBytes(uint8_t seed) {
+    uint8_t bytes[512];
+    uint32_t x = seed * 2654435761u + 1;
+    for (int i = 0; i < 512; i++) { x = x * 1103515245u + 12345u; bytes[i] = uint8_t(x >> 16); }
+    return [NSData dataWithBytes:bytes length:sizeof(bytes)];
+}
+
+static NSData *BlankBytes() {
+    std::vector<uint8_t> blank(512, 0xFF);
+    return [NSData dataWithBytes:blank.data() length:blank.size()];
+}
+
+- (NSURL *)workingCard { return [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"]; }
+
+- (void)testMemoryCardRoundTripsThroughSaveRAMAcrossRestarts {
+    NSError *error = nil;
+    NSURL *system = [self systemDirectoryWithBIOS:YES];
+    SELibretroHost *host = [self hostWithSystem:system error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    NSData *save = SaveBytes(0x21);
+    XCTAssertTrue(se_core_lrps2_write_card(kSavePage, save.bytes, int(save.length)));
+    [host shutdown];
+
+    NSURL *saveRAM = [self saveRAMForGameID:@"ps2-game"];
+    NSData *stored = [NSData dataWithContentsOfURL:saveRAM];
+    XCTAssertEqual(stored.length, kCardSize, @"card 1 is the game's save RAM");
+    XCTAssertEqualObjects(CardBytes(stored), save, @"the game's save reaches the save RAM file");
+
+    // A fresh device: only the synced save RAM exists, and a stale working card is in the way.
+    XCTAssertTrue([NSFileManager.defaultManager removeItemAtURL:self.workingCard error:&error], @"%@", error);
+    std::vector<uint8_t> stale(kCardSize, 0x00);
+    [[NSData dataWithBytes:stale.data() length:stale.size()] writeToURL:self.workingCard atomically:YES];
+
+    host = [self hostWithSystem:system error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    [host runFrames:30];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), save,
+                          @"the core's card is loaded from save RAM");
+    NSData *more = SaveBytes(0x05);
+    std::vector<uint8_t> merged(512);
+    for (int i = 0; i < 512; i++) merged[i] = ((const uint8_t *)save.bytes)[i] & ((const uint8_t *)more.bytes)[i];
+    XCTAssertTrue(se_core_lrps2_write_card(kSavePage, more.bytes, int(more.length)));
+    [host shutdown];
+    stored = [NSData dataWithContentsOfURL:saveRAM];
+    XCTAssertEqual(stored.length, kCardSize);
+    XCTAssertEqualObjects(CardBytes(stored), [NSData dataWithBytes:merged.data() length:merged.size()],
+                          @"writes after a restart build on the restored card");
+}
+
+/// Writes a save RAM file holding a card with `save` at the test page.
+- (NSData *)storeCardWithSave:(NSData *)save gameID:(NSString *)gameID {
+    std::vector<uint8_t> card(kCardSize, 0xFF);
+    memcpy(&card[kSavePage], save.bytes, save.length);
+    NSData *data = [NSData dataWithBytes:card.data() length:card.size()];
+    [NSFileManager.defaultManager createDirectoryAtURL:self.saveDirectory withIntermediateDirectories:YES attributes:nil error:nil];
+    [data writeToURL:[self saveRAMForGameID:gameID] atomically:YES];
+    return data;
+}
+
+- (void)testSaveRAMMatchesTheClosedCardFile {
+    NSError *error = nil;
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    NSData *save = SaveBytes(0x63);
+    XCTAssertTrue(se_core_lrps2_write_card(kSavePage, save.bytes, int(save.length)));
+    [host shutdown];
+    // The core keeps the card's checksum word apart while it runs; save RAM must carry the
+    // updated one, or a state saved before a restart sees a changed card and ejects it.
+    NSData *stored = [NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]];
+    XCTAssertTrue([stored isEqualToData:[NSData dataWithContentsOfURL:self.workingCard]],
+                  @"save RAM is the card as its file holds it");
+}
+
+- (void)testShortWorkingCardDoesNotShrinkSaveRAM {
+    NSError *error = nil;
+    NSData *save = SaveBytes(0x11);
+    NSData *stored = [self storeCardWithSave:save gameID:@"ps2-game"];
+    [[NSData dataWithBytes:stored.bytes length:kCardSize / 2] writeToURL:self.workingCard atomically:YES];
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    [host shutdown];
+    NSData *after = [NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]];
+    XCTAssertEqual(after.length, kCardSize, @"a damaged working card is replaced, not adopted");
+    XCTAssertEqualObjects(CardBytes(after), save);
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), save);
+}
+
+- (void)testFailedRestoreLeavesSaveRAMAlone {
+    NSError *error = nil;
+    NSData *stored = [self storeCardWithSave:SaveBytes(0x29) gameID:@"ps2-game"];
+    std::vector<uint8_t> other(kCardSize, 0x00);
+    [[NSData dataWithBytes:other.data() length:other.size()] writeToURL:self.workingCard atomically:YES];
+    // The card is staged next to the working copy; a directory in the way makes that fail.
+    NSURL *staged = [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2.tmp" isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:staged withIntermediateDirectories:YES attributes:nil error:nil];
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    XCTAssertTrue([host flushSaveRAMWithError:&error], @"%@", error);
+    [host shutdown];
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]], stored,
+                          @"the game's save is not overwritten with a card that is not its own");
+}
+
+- (void)testClosedCardIsNotFlushedOverSaveRAM {
+    NSError *error = nil;
+    NSData *stored = [self storeCardWithSave:SaveBytes(0x5a) gameID:@"ps2-game"];
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    // What a reopen that failed after the restore leaves behind: slot 1 closed, reads as zeros.
+    se_core_lrps2_set_cards_open(false);
+    XCTAssertTrue([host flushSaveRAMWithError:&error], @"%@", error);
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]], stored,
+                          @"a closed card is not flushed as zeros over the game's save");
+    se_core_lrps2_set_cards_open(true);
+    [host shutdown];
+}
+
+- (void)testSameFileNameInDifferentFoldersGetsSeparateCards {
+    NSError *error = nil;
+    NSURL *system = [self systemDirectoryWithBIOS:YES];
+    NSURL *first = [self gameInFolder:@"USA"], *second = [self gameInFolder:@"Europe"];
+    NSData *firstSave = SaveBytes(0x31), *secondSave = SaveBytes(0x47);
+
+    SELibretroHost *host = [self hostForGame:first gameID:@"game-usa" system:system error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    XCTAssertTrue(se_core_lrps2_write_card(kSavePage, firstSave.bytes, int(firstSave.length)));
+    [host shutdown];
+
+    host = [self hostForGame:second gameID:@"game-eu" system:system error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    [host runFrames:30];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), BlankBytes(),
+                          @"the second game starts on a blank card, not the first game's");
+    XCTAssertTrue(se_core_lrps2_write_card(kSavePage, secondSave.bytes, int(secondSave.length)));
+    [host shutdown];
+
+    host = [self hostForGame:first gameID:@"game-usa" system:system error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    [host runFrames:30];
+    [host shutdown];
+
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:[self saveRAMForGameID:@"game-usa"]]), firstSave);
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:[self saveRAMForGameID:@"game-eu"]]), secondSave);
 }
 
 @end
