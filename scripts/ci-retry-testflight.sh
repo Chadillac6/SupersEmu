@@ -22,6 +22,14 @@ if [[ -z "$unacquired_job" ]]; then
   exit 0
 fi
 
+acquisition_failure="$(gh api --paginate "repos/$repo/check-runs/$unacquired_job/annotations?per_page=100" --jq '
+  .[] | select(.message | contains("not acquired by Runner")) | .message
+')"
+if [[ -z "$acquisition_failure" ]]; then
+  echo "::notice::Skipping Fleet run $run_id attempt $attempt: GitHub did not report a runner-acquisition failure."
+  exit 0
+fi
+
 latest="$(gh api "repos/$repo/actions/workflows/$workflow_id/runs?branch=main&per_page=1" --jq '
   .workflow_runs[0] | [.id, .run_attempt, .status, .head_sha] | @tsv
 ')"
