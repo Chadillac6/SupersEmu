@@ -26,7 +26,7 @@
 #include "SELibretroHost+Testing.h"
 
 #if TARGET_OS_OSX && defined(__aarch64__)
-extern "C" bool se_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath, bool *migrated);
+extern "C" bool se_core_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath, bool *migrated);
 #endif
 
 namespace {
@@ -811,8 +811,8 @@ static BOOL SEHasPS2BIOS(NSURL *systemDirectory) {
     bool migratedSaveRAM = false;
 #if TARGET_OS_OSX && defined(__aarch64__)
     if (legacyPS2Directory &&
-        !se_lrps2_migrate_legacy_card(legacyPS2Directory.fileSystemRepresentation,
-                                     saveRAMURL.fileSystemRepresentation, &migratedSaveRAM)) {
+        !se_core_lrps2_migrate_legacy_card(legacyPS2Directory.fileSystemRepresentation,
+                                          saveRAMURL.fileSystemRepresentation, &migratedSaveRAM)) {
         if (g.hw.requested) hwMakeCurrent();
         core->unload_game();
         core->deinit();

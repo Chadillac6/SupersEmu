@@ -132,7 +132,7 @@ static bool readMigratedCard(const char *path, const struct stat *legacy) {
     return fclose(file) == 0 && verified;
 }
 
-bool se_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath, bool *migrated) {
+bool se_core_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath, bool *migrated) {
     struct stat legacy, stored;
     char legacyPath[PCSX2_PATH_MAX];
     const char *name;
