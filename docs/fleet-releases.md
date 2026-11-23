@@ -1,13 +1,15 @@
 # Fleet releases
 
 The `Fleet CI and release` workflow runs server tests, Mac host/input tests, and an
-unsigned iOS simulator build for PRs. The iOS build runs in parallel with the Mac
-and server tests; the `Mac and server checks` gate requires both jobs to pass.
+unsigned iOS simulator build on one macOS runner for PRs. The
+`Mac and server checks` gate requires the combined job to pass.
 New commits cancel superseded PR runs. PR jobs have read-only tokens and no
 release secrets. Homebrew test fixtures use the existing fetch script; unavailable
 fixtures skip their matching tests.
 
-A push to `main` (including a merged PR) runs the same checks. In parallel,
+A push to `main` (including a merged PR) runs the same checks, but the Mac/server
+tests and iOS simulator build run in separate jobs and the gate requires both to
+pass. In parallel,
 `Select release version` picks one shared marketing version and build number, then
 `Publish Mac update` builds and notarizes the universal Developer ID Mac update and
 `Upload iOS build to TestFlight` archives the iOS app. Before publishing, both

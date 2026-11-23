@@ -47,6 +47,9 @@ jobs:
         run: swift test --package-path Server
       - name: Test Mac app
         run: xcodebuild test -project SupersEmu.xcodeproj -scheme SupersEmu-macOS -destination 'platform=macOS' -derivedDataPath build/ci -resultBundlePath build/ci-tests.xcresult CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES
+      - name: Check iOS simulator app
+        if: github.event_name == 'pull_request'
+        uses: ./.github/actions/ios-simulator
       - name: Keep test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -57,6 +60,7 @@ jobs:
           if-no-files-found: ignore
   ios_simulator:
     name: Build iOS simulator app
+    if: github.event_name != 'pull_request'
     runs-on: macos-15
     timeout-minutes: 90
     steps:
@@ -70,8 +74,8 @@ jobs:
           git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
           git -C Vendor/cores/flycast submodule update --init --depth 1 core/deps/libchdr core/deps/tinygettext core/deps/xbyak core/deps/asio
           xcodegen generate
-      - name: Build iOS simulator app
-        run: xcodebuild build -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ci-ios CODE_SIGNING_ALLOWED=NO
+      - name: Check iOS simulator app
+        uses: ./.github/actions/ios-simulator
   checks:
     name: Mac and server checks
     needs: [mac_server, ios_simulator]
@@ -79,13 +83,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require both checks to pass
+      - name: Require the configured checks to pass
         env:
           MAC_SERVER_RESULT: ${{ needs.mac_server.result }}
           IOS_SIMULATOR_RESULT: ${{ needs.ios_simulator.result }}
         run: |
           printf 'Mac and server: %s\niOS simulator: %s\n' "$MAC_SERVER_RESULT" "$IOS_SIMULATOR_RESULT"
-          [[ "$MAC_SERVER_RESULT" == success && "$IOS_SIMULATOR_RESULT" == success ]]
+          expected_ios_result=success
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            expected_ios_result=skipped
+          fi
+          [[ "$MAC_SERVER_RESULT" == success && "$IOS_SIMULATOR_RESULT" == "$expected_ios_result" ]]
   # Release jobs build alongside the checks and publish only after they pass (ci-wait-for-job.sh).
   version:
     name: Select release version
