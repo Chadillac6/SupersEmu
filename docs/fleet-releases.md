@@ -8,6 +8,9 @@ Mac and server tests; the `Mac and server checks` gate requires both jobs to pas
 New commits cancel superseded PR runs. PR jobs have read-only tokens and no
 release secrets. Homebrew test fixtures use the existing fetch script; unavailable
 fixtures skip their matching tests.
+If GitHub confirms that a PR job did not acquire a Mac runner and no test or
+build failed, the retry workflow retries failed jobs on the current PR head up
+to twice. The check may show as failed until the retry starts.
 
 A push to `main` (including a merged PR) runs the same checks. In parallel,
 `Select release version` picks one shared marketing version and build number, then
