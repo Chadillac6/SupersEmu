@@ -93,11 +93,6 @@ jobs:
           git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
           git -C Vendor/cores/flycast submodule update --init --depth 1 core/deps/libchdr core/deps/tinygettext core/deps/xbyak core/deps/asio
           xcodegen generate
-      - name: Pick and boot iPhone and iPad simulators
-        id: simulators
-        run: |
-          scripts/test-ci-ios-simulators.sh
-          scripts/ci-ios-simulators.sh >> "$GITHUB_OUTPUT"
       - name: Cache Swift packages
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
         with:
@@ -105,16 +100,29 @@ jobs:
           key: ios-spm-${{ hashFiles('Server/Package.resolved', 'project.yml') }}
           restore-keys: ios-spm-
       - name: Build iOS app and tests
-        env:
-          IPHONE: ${{ steps.simulators.outputs.iphone }}
-        run: xcodebuild build-for-testing -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination "id=$IPHONE" -derivedDataPath build/ci-ios
+        run: |
+          xcodebuild build-for-testing -project SupersEmu.xcodeproj -scheme SupersEmu-iOS \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ci-ios \
+            -showBuildTimingSummary ARCHS="$(uname -m)" COMPILER_INDEX_STORE_ENABLE=NO
+      - name: Pick and boot iPhone and iPad simulators
+        id: simulators
+        run: |
+          scripts/test-ci-ios-simulators.sh
+          scripts/ci-ios-simulators.sh >> "$GITHUB_OUTPUT"
       - name: Fetch existing homebrew test fixtures
         run: scripts/fetch-test-roms.sh
       - name: Test iOS app on iPhone and iPad
         env:
           IPHONE: ${{ steps.simulators.outputs.iphone }}
           IPAD: ${{ steps.simulators.outputs.ipad }}
-        run: xcodebuild test-without-building -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination "id=$IPHONE" -destination "id=$IPAD" -derivedDataPath build/ci-ios -resultBundlePath build/ci-ios-tests.xcresult
+        run: |
+          test_runs=(build/ci-ios/Build/Products/*.xctestrun)
+          if [[ ${#test_runs[@]} -ne 1 || ! -f "${test_runs[0]}" ]]; then
+            echo 'Expected exactly one .xctestrun file from the iOS build' >&2
+            exit 1
+          fi
+          xcodebuild test-without-building -xctestrun "${test_runs[0]}" \
+            -destination "id=$IPHONE" -destination "id=$IPAD" -resultBundlePath build/ci-ios-tests.xcresult
       - name: Keep test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
