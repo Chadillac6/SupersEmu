@@ -30,9 +30,12 @@ if [[ -z "$acquisition_failure" ]]; then
   exit 0
 fi
 
-latest="$(gh api "repos/$repo/actions/workflows/$workflow_id/runs?branch=main&per_page=1" --jq '
-  .workflow_runs[0] | [.id, .run_attempt, .status, .head_sha] | @tsv
-')"
+latest="$(gh api --paginate "repos/$repo/actions/workflows/$workflow_id/runs?branch=main&per_page=100" |
+  jq -r --arg repo "$repo" '
+    .workflow_runs[] | select(
+      (.event == "push" or .event == "workflow_dispatch") and .head_repository.full_name == $repo
+    ) | [.id, .run_attempt, .status, .head_sha] | @tsv
+  ')"
 IFS=$'\t' read -r latest_run latest_attempt latest_status latest_sha <<< "$latest"
 if [[ "$latest_run" != "$run_id" || "$latest_attempt" != "$attempt" || "$latest_status" != completed ]]; then
   echo "::notice::Skipping Fleet run $run_id attempt $attempt: no longer the latest completed attempt of the latest Fleet run on main."
