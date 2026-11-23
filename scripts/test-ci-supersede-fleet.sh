@@ -66,7 +66,7 @@ release_job() {
 finished='[{"jobs":[
   {"name":"Select release version","status":"completed"},
   {"name":"Test Mac app and server","status":"completed"},
-  {"name":"Build iOS simulator app","status":"completed"},
+  {"name":"Build and test iOS app","status":"completed"},
   {"name":"Mac and server checks","status":"completed"},
   {"name":"Publish Mac update","status":"completed"},
   {"name":"Upload iOS build to TestFlight","status":"completed"}
@@ -113,7 +113,7 @@ run_case 'keeps the run when its jobs cannot be inspected' 'runs main statuses j
 run_case 'keeps a marked run even if its steps still look queued' 'runs main statuses jobs runs main statuses' "$pending" "$testflight_idle" 1 new '[[],[{"context":"fleet/publish-started","description":"Fleet run 42"}]]'
 run_case 'ignores markers from different runs on the same SHA' 'runs main statuses jobs cancel' "$pending" "$testflight_idle" 1 new '[[{"context":"fleet/publish-started","description":"Fleet run 420"}]]'
 run_case 'keeps a run when status lookup fails' 'runs main statuses jobs runs main statuses' "$pending" "$testflight_idle" 1 new error
-passed_checks='{"name":"Test Mac app and server","status":"completed","conclusion":"success"},{"name":"Build iOS simulator app","status":"completed","conclusion":"success"}'
+passed_checks='{"name":"Test Mac app and server","status":"completed","conclusion":"success"},{"name":"Build and test iOS app","status":"completed","conclusion":"success"}'
 run_case 'keeps an unmarked run once both required checks have passed' 'runs main statuses jobs runs main statuses' "$pending" "$testflight_idle,$passed_checks"
 
 run_guard_case() {
