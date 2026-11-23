@@ -10,10 +10,10 @@ permissions:
   contents: read
 concurrency:
   group: fleet-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  checks:
-    name: Mac and server checks
+  mac_server:
+    name: Test Mac app and server
     runs-on: macos-15
     timeout-minutes: 90
     steps:
@@ -46,8 +46,6 @@ jobs:
         run: swift test --package-path Server
       - name: Test Mac app
         run: xcodebuild test -project SupersEmu.xcodeproj -scheme SupersEmu-macOS -destination 'platform=macOS' -derivedDataPath build/ci -resultBundlePath build/ci-tests.xcresult CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES
-      - name: Build iOS simulator app
-        run: xcodebuild build -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ci-ios CODE_SIGNING_ALLOWED=NO
       - name: Keep test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -56,6 +54,37 @@ jobs:
           path: build/ci-tests.xcresult
           retention-days: 7
           if-no-files-found: ignore
+  ios_simulator:
+    name: Build iOS simulator app
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Prepare build tools and pinned cores
+        run: |
+          brew install xcodegen
+          git submodule update --init --depth 1
+          git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
+          git -C Vendor/cores/flycast submodule update --init --depth 1 core/deps/libchdr core/deps/tinygettext core/deps/xbyak core/deps/asio
+          xcodegen generate
+      - name: Build iOS simulator app
+        run: xcodebuild build -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ci-ios CODE_SIGNING_ALLOWED=NO
+  checks:
+    name: Mac and server checks
+    needs: [mac_server, ios_simulator]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require both checks to pass
+        env:
+          MAC_SERVER_RESULT: ${{ needs.mac_server.result }}
+          IOS_SIMULATOR_RESULT: ${{ needs.ios_simulator.result }}
+        run: |
+          printf 'Mac and server: %s\niOS simulator: %s\n' "$MAC_SERVER_RESULT" "$IOS_SIMULATOR_RESULT"
+          [[ "$MAC_SERVER_RESULT" == success && "$IOS_SIMULATOR_RESULT" == success ]]
   # Release jobs build alongside the checks and publish only after they pass (ci-wait-for-job.sh).
   version:
     name: Select release version

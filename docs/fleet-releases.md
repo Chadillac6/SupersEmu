@@ -1,9 +1,11 @@
 # Fleet releases
 
 The `Fleet CI and release` workflow runs server tests, Mac host/input tests, and an
-unsigned iOS simulator build for PRs. PR jobs have read-only tokens and no release
-secrets. Homebrew test fixtures use the existing fetch script; unavailable fixtures
-skip their matching tests.
+unsigned iOS simulator build for PRs. The iOS build runs in parallel with the Mac
+and server tests; the `Mac and server checks` gate requires both jobs to pass.
+New commits cancel superseded PR runs. PR jobs have read-only tokens and no
+release secrets. Homebrew test fixtures use the existing fetch script; unavailable
+fixtures skip their matching tests.
 
 A push to `main` (including a merged PR) runs the same checks. In parallel,
 `Select release version` picks one shared marketing version and build number, then
@@ -74,7 +76,7 @@ remain enabled; do not grant release credentials to PR workflows.
    approval to restart its boot daemon; client-only Macs do not run that daemon.
 
 To retry a failed release, run this workflow manually on `main` using **Run workflow**.
-Build numbers use UTC timestamps. Builds are serialized per ref, and a stale main
+Build numbers use UTC timestamps. Main release runs are serialized, and a stale main
 commit is not published if main has moved forward. If the Mac update publishes but
 the TestFlight upload fails, the next run advances from the latest Mac version.
 
