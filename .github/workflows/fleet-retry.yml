@@ -1,16 +1,16 @@
-name: Retry TestFlight runner acquisition
+name: Retry Fleet runner acquisition
 on:
   workflow_run:
     workflows: [Fleet CI and release]
     types: [completed]
-    branches: [main]
 permissions: {}
 concurrency:
-  group: fleet-testflight-retry-${{ github.event.workflow_run.id }}
+  group: fleet-runner-retry-${{ github.event.workflow_run.id }}
   cancel-in-progress: false
 jobs:
   retry:
     if: >-
+      github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
     runs-on: ubuntu-latest
@@ -31,3 +31,24 @@ jobs:
           FLEET_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           FLEET_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
         run: bash scripts/ci-retry-testflight.sh "$FLEET_RUN_ID" "$FLEET_RUN_ATTEMPT" "$FLEET_WORKFLOW_ID"
+  retry_pr:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Retry Fleet if a PR check did not acquire a Mac runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci-retry-fleet-pr.sh
