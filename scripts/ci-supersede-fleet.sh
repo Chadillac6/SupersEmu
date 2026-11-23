@@ -30,8 +30,19 @@ while (( SECONDS < deadline )); do
     echo "::notice::Could not check for a queued replacement; keeping Fleet run $run_id."
   fi
 
-  # Inspect jobs after seeing the newer main SHA. A later guard will see the old SHA is stale;
-  # a guard already started may have approved publishing even if the publish step has not started.
+  # A guard posts its marker before reading main. After observing a queued replacement for a
+  # newer main SHA, an unmarked guard that starts later will see the old SHA and skip publishing.
+  if [[ -n "$replacement" ]]; then
+    if ! statuses="$(timeout 15s gh api --paginate --slurp "repos/$repo/commits/$GITHUB_SHA/statuses?per_page=100")" ||
+       ! jq -e --arg description "Fleet run $run_id" '
+         type == "array" and length > 0 and all(.[]; type == "array") and
+         (any(.[][]; .context == "fleet/publish-started" and .description == $description) | not)
+       ' <<< "$statuses" > /dev/null; then
+      echo "::notice::Publication is marked or could not be ruled out; keeping Fleet run $run_id."
+      replacement=''
+    fi
+  fi
+
   if jobs="$(timeout 15s gh api --paginate --slurp "repos/$repo/actions/runs/$run_id/attempts/1/jobs?per_page=100")" &&
      state="$(jq -r '
        [.[] | .jobs[]] |
@@ -39,6 +50,9 @@ while (( SECONDS < deadline )); do
          "Select release version", "Test Mac app and server", "Build iOS simulator app",
          "Mac and server checks", "Publish Mac update", "Upload iOS build to TestFlight"
        ])) then "finished"
+       # A publisher can proceed without a marker if its POST fails, but only after both checks pass.
+       elif ([.[] | select(.conclusion == "success") | .name] |
+         contains(["Test Mac app and server", "Build iOS simulator app"])) then "publishing"
        elif any(.[]; (.name == "Publish Mac update" or .name == "Upload iOS build to TestFlight") and (
          any(.steps[]?; (.name == "Check for newer main commit" or .name == "Publish signed Sparkle update" or
            .name == "Upload iOS build to TestFlight") and .conclusion != "skipped" and
