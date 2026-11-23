@@ -66,14 +66,15 @@ final class DreamcastPS2LayoutTests: XCTestCase {
     func testControlsPickerListsNewConsolesAndHidesPS2OnIOS() {
         XCTAssertEqual(ConsoleLayout.systems, [.snes, .genesis, .n64, .psx, .dreamcast, .ps2, .gba, .gb, .gbc, .segacd, .sega32x])
         XCTAssertEqual(Set(ConsoleLayout.systems), Set(SystemID.allCases), "every console is in the picker")
-        XCTAssertEqual(ConsoleLayout.systems(on: .mac), ConsoleLayout.systems)
+        XCTAssertEqual(ConsoleLayout.systems(on: .mac), ConsoleLayout.systems.filter { $0 != .ps2 || DevicePlatform.hasPS2Core })
         XCTAssertFalse(ConsoleLayout.systems(on: .iOS).contains(.ps2))
         XCTAssertTrue(ConsoleLayout.systems(on: .iOS).contains(.dreamcast))
     }
 
     func testAvailabilityRule() {
         for system in SystemID.allCases {
-            XCTAssertEqual(system.availability(on: .mac), .available, "\(system) on Mac")
+            let expected: SystemAvailability = system == .ps2 && !DevicePlatform.hasPS2Core ? .hidden : .available
+            XCTAssertEqual(system.availability(on: .mac), expected, "\(system) on Mac")
         }
         XCTAssertEqual(SystemID.dreamcast.availability(on: .iOS), .beta)
         XCTAssertTrue(SystemID.dreamcast.isShown(on: .iOS))
