@@ -40,6 +40,7 @@ struct LibraryView: View {
     }
 
     var body: some View {
+        let items = self.items
         let all = LibraryShelves.home(items, system: nil, online: online)
         let system = SystemID(rawValue: selectedSystem).flatMap { all.systems.contains($0) ? $0 : nil }
         let home = system == nil ? all : LibraryShelves.home(items, system: system, online: online)
@@ -47,7 +48,7 @@ struct LibraryView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
-                    ConnectionBanner()
+                    ConnectionBanner(unavailableCount: LibraryShelves.offlineUnavailableCount(items))
                     if !query.isEmpty {
                         searchResults
                     } else if all.allGames.isEmpty {
