@@ -91,7 +91,9 @@ struct PadOutput: Equatable, Sendable {
 
     func contains(_ button: RetroButton) -> Bool { buttons & button.mask != 0 }
 
-    static func combinedButtons(_ ports: [Self]) -> UInt32 {
-        ports.reduce(0) { $0 | $1.buttons }
+    static func newlyPressedButtons(from previous: [Self], to current: [Self]) -> UInt32 {
+        zip(previous, current).reduce(0) { result, port in
+            result | (port.1.buttons & ~port.0.buttons)
+        }
     }
 }

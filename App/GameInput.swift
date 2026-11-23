@@ -119,11 +119,6 @@ final class GameInput {
         return ports
     }
 
-    /// Mapped buttons from every assigned player for navigating the disc picker.
-    func discPickerButtons() -> SEJoypadButtons {
-        SEJoypadButtons(rawValue: PadOutput.combinedButtons(outputs()))
-    }
-
     /// Every physical control held right now, by position; drives menus, hotkeys and remapping capture.
     func physicalState() -> PadState {
         var state = keyboardState

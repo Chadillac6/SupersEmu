@@ -93,7 +93,7 @@ final class GameSession {
     @ObservationIgnored private var lastLayoutDescription = ""
     @ObservationIgnored private var pendingDiagnosticsEvents: [String] = []
     @ObservationIgnored private var pickerTimer: Timer?
-    @ObservationIgnored private var pickerButtons: SEJoypadButtons = []
+    @ObservationIgnored private var pickerOutputs: [PadOutput] = []
 
     var timeSinceLastAutosave: Duration? { lastSuccessfulAutosave.map { .now - $0 } }
     /// The chord opens the picker only after it has been released since it last fired.
@@ -1272,7 +1272,7 @@ final class GameSession {
         chordArmed = false
         discSelection = currentDisk
         // Buttons still held from the chord must be released before they count as picker input.
-        pickerButtons = input.discPickerButtons()
+        pickerOutputs = input.outputs()
         let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pollDiscPicker() }
         }
@@ -1283,9 +1283,9 @@ final class GameSession {
     /// Controller/keyboard navigation of the open picker: up/down to move, bottom face button or Start
     /// to insert, right face button or Select to cancel.
     private func pollDiscPicker() {
-        let buttons = input.discPickerButtons()
-        let pressed = buttons.subtracting(pickerButtons)
-        pickerButtons = buttons
+        let outputs = input.outputs()
+        let pressed = SEJoypadButtons(rawValue: PadOutput.newlyPressedButtons(from: pickerOutputs, to: outputs))
+        pickerOutputs = outputs
         if pressed.contains(.up) { discSelection = max(discSelection - 1, 0) }
         if pressed.contains(.down) { discSelection = min(discSelection + 1, diskCount - 1) }
         if !pressed.isDisjoint(with: [.b, .start]) {
