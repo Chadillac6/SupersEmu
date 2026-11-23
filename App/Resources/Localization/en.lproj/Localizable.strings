@@ -9,3 +9,5 @@
 "controls.touch.hide_with_player_one" = "Hide on-screen controls when Player 1 has a controller";
 "controls.mapping.title" = "Button Mapping";
 "controls.mapping.shared_by_model" = "Controllers of the same model share button mappings.";
+"controls.disconnect.connected" = "Controller connected";
+"controls.disconnect.new_assignment" = "Controller assigned to Player %ld. Press A or Start to keep playing.";

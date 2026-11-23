@@ -65,7 +65,7 @@ final class GameSession {
     private(set) var wantsExit = false
     /// A player's controller went away mid-game; the game stays paused until they resume.
     private(set) var disconnectedController: String?
-    private(set) var controllerReconnected = false
+    private(set) var reconnectedControllerID: String?
 
     @ObservationIgnored let input = GameInput()
     @ObservationIgnored weak var displayLayer: CALayer?
@@ -1158,10 +1158,11 @@ final class GameSession {
         controllerObservers.append(center.addObserver(forName: .gamepadDisconnected, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated { self?.controllerDisconnected(note.object as? String ?? "Controller") }
         })
-        controllerObservers.append(center.addObserver(forName: .gamepadConnected, object: nil, queue: .main) { [weak self] _ in
+        controllerObservers.append(center.addObserver(forName: .gamepadConnected, object: nil, queue: .main) { [weak self] note in
+            guard let id = note.object as? String else { return }
             MainActor.assumeIsolated {
                 guard let self, self.disconnectedController != nil else { return }
-                self.controllerReconnected = true
+                self.reconnectedControllerID = id
             }
         })
     }
@@ -1171,7 +1172,6 @@ final class GameSession {
         pause()
         clearHostInput()
         disconnectedController = name
-        controllerReconnected = false
         if !isMenuOpen, !isChoosingDisc, !isShowingSaveSlots { startOverlayPolling() }
     }
 
@@ -1179,7 +1179,7 @@ final class GameSession {
     func dismissDisconnect() {
         guard disconnectedController != nil else { return }
         disconnectedController = nil
-        controllerReconnected = false
+        reconnectedControllerID = nil
         if !isMenuOpen, !isShowingSaveSlots {
             stopOverlayPolling()
             resume()

@@ -166,8 +166,8 @@ final class ControllerHub {
         for controller in removed where previouslyAssigned.contains(controller.id) {
             NotificationCenter.default.post(name: .gamepadDisconnected, object: controller.name)
         }
-        if assignments.slots.compactMap({ $0 }).contains(where: { !previouslyAssigned.contains($0) }) {
-            NotificationCenter.default.post(name: .gamepadConnected, object: nil)
+        if let id = assignments.slots.compactMap({ $0 }).first(where: { !previouslyAssigned.contains($0) }) {
+            NotificationCenter.default.post(name: .gamepadConnected, object: id)
         }
     }
 
