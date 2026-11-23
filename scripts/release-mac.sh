@@ -82,13 +82,13 @@ staple_with_retry() {
 trim_derived_data() { # derived-data-dir
   local before
   [ -d "$1" ] || return 0
-  before="$(du -sh "$1" | cut -f1)"
+  before="$(du -sh "$1" 2>/dev/null | cut -f1)" || before='?'
   find "$1" -mindepth 1 -maxdepth 1 ! -name SourcePackages -exec rm -rf {} +
-  echo "Trimmed $1 from $before to $(du -sh "$1" | cut -f1) (kept SourcePackages)"
+  echo "Trimmed $1 from $before to $(du -sh "$1" 2>/dev/null | cut -f1 || echo '?') (kept SourcePackages)"
 }
 
-disk_report() { # label
-  df -h . | awk -v label="$1" 'NR == 2 { printf "Disk %s: %s free of %s (%s used)\n", label, $4, $2, $5 }'
+disk_report() { # label; diagnostics only, never fails the release
+  { df -h . | awk -v label="$1" 'NR == 2 { printf "Disk %s: %s free of %s (%s used)\n", label, $4, $2, $5 }'; } || true
 }
 
 disk_report 'before archive'
