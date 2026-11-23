@@ -31,6 +31,7 @@ jq -r "$5" <<< "$json"
 STUB
 chmod +x "$fake_bin/gh"
 
+check_jobs=('Mac and server checks')
 run_case() { # name expected-status expected-calls timeout states...
   local name="$1" expected="$2" expected_calls="$3" timeout="$4" status=0 calls
   shift 4
@@ -38,7 +39,7 @@ run_case() { # name expected-status expected-calls timeout states...
   rm -f "$temp_dir/calls"
   PATH="$fake_bin:$PATH" GH_STATES="$temp_dir/states" GH_CALLS="$temp_dir/calls" \
     GITHUB_REPOSITORY=owner/repo GITHUB_RUN_ID=42 SUPERSEMU_WAIT_INTERVAL=0 SUPERSEMU_WAIT_TIMEOUT="$timeout" \
-    "$script_dir/ci-wait-for-job.sh" 'Mac and server checks' > "$temp_dir/out" 2>&1 || status=$?
+    "$script_dir/ci-wait-for-job.sh" "${check_jobs[@]}" > "$temp_dir/out" 2>&1 || status=$?
   calls="$(<"$temp_dir/calls")"
   if [ "$status" -ne "$expected" ] || [ "$calls" -ne "$expected_calls" ]; then
     echo "FAIL: $name (status $status, $calls calls; expected $expected, $expected_calls)" >&2
@@ -60,3 +61,10 @@ run_case 'uses the newest attempt of the checks' 1 2 60 \
   '{"jobs":[{"name":"Mac and server checks","run_attempt":2,"status":"completed","conclusion":"failure"},{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"}]}'
 run_case 'reads the newest attempt from a later page' 1 1 60 \
   '[{"jobs":[{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"}]},{"jobs":[{"name":"Mac and server checks","run_attempt":2,"status":"completed","conclusion":"failure"}]}]'
+
+check_jobs=('Test Mac app and server' 'Build iOS simulator app')
+run_case 'waits for both children on a full rerun despite an older passing gate' 1 2 60 \
+  '{"jobs":[{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"},{"name":"Test Mac app and server","run_attempt":2,"status":"completed","conclusion":"success"},{"name":"Build iOS simulator app","run_attempt":1,"status":"completed","conclusion":"success"},{"name":"Build iOS simulator app","run_attempt":2,"status":"queued","conclusion":null}]}' \
+  '{"jobs":[{"name":"Test Mac app and server","run_attempt":2,"status":"completed","conclusion":"success"},{"name":"Build iOS simulator app","run_attempt":2,"status":"completed","conclusion":"failure"}]}'
+run_case 'allows a release-only rerun when both newest child attempts passed' 0 1 60 \
+  '{"jobs":[{"name":"Test Mac app and server","run_attempt":1,"status":"completed","conclusion":"success"},{"name":"Build iOS simulator app","run_attempt":2,"status":"completed","conclusion":"success"},{"name":"Upload iOS build to TestFlight","run_attempt":3,"status":"in_progress","conclusion":null}]}'

@@ -10,9 +10,11 @@ fixtures skip their matching tests.
 A push to `main` (including a merged PR) runs the same checks. In parallel,
 `Select release version` picks one shared marketing version and build number, then
 `Publish Mac update` builds and notarizes the universal Developer ID Mac update and
-`Upload iOS build to TestFlight` archives the iOS app. Both release jobs wait for
-`Mac and server checks` to pass (`scripts/ci-wait-for-job.sh`) before publishing, so a
-release takes about as long as the checks rather than checks plus both builds. The marketing version advances by 0.0.1
+`Upload iOS build to TestFlight` archives the iOS app. Before publishing, both
+release jobs use `scripts/ci-wait-for-job.sh` to wait for `Test Mac app and server`
+and `Build iOS simulator app`. They wait on the individual checks because GitHub
+does not list the pending `Mac and server checks` gate until both finish, and a
+rerun must not publish based on an earlier gate result. The marketing version advances by 0.0.1
 above the latest App Store Connect iOS or Sparkle Mac version, with `project.yml` as
 the minimum floor. TestFlight builds are added to the internal **Chad** group
 automatically. The Mac release is notarized and stapled. Stapling is retried 10 times; if Apple's

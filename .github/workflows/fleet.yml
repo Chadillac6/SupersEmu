@@ -153,10 +153,10 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: scripts/release-mac.sh
-      - name: Wait for Mac and server checks
+      - name: Wait for Mac, server, and iOS checks
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci-wait-for-job.sh 'Mac and server checks'
+        run: scripts/ci-wait-for-job.sh 'Test Mac app and server' 'Build iOS simulator app'
       - name: Check for newer main commit
         id: latest-commit
         env:
@@ -217,10 +217,10 @@ jobs:
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
           SUPERSEMU_IOS_STAGE: archive
         run: scripts/release-ios.sh
-      - name: Wait for Mac and server checks
+      - name: Wait for Mac, server, and iOS checks
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci-wait-for-job.sh 'Mac and server checks'
+        run: scripts/ci-wait-for-job.sh 'Test Mac app and server' 'Build iOS simulator app'
       - name: Check for newer main commit
         id: latest-commit
         env:
