@@ -31,6 +31,7 @@ jobs:
         run: |
           scripts/test-release-mac-staple-retry.sh
           scripts/test-ci-wait-for-job.sh
+          bash scripts/test-ci-retry-testflight.sh
           scripts/test-release-gatekeeper-check.sh
           scripts/test-release-p12.sh
           scripts/test-release-revoke-dev-certs.sh
