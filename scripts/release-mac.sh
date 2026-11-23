@@ -77,6 +77,21 @@ staple_with_retry() {
   return 1
 }
 
+# The archive's intermediates (several cores built for two architectures) can fill a hosted runner's disk
+# before the .dmg is made. Keep SourcePackages: publish-mac-update.sh runs Sparkle's generate_appcast from it.
+trim_derived_data() { # derived-data-dir
+  local before
+  [ -d "$1" ] || return 0
+  before="$(du -sh "$1" | cut -f1)"
+  find "$1" -mindepth 1 -maxdepth 1 ! -name SourcePackages -exec rm -rf {} +
+  echo "Trimmed $1 from $before to $(du -sh "$1" | cut -f1) (kept SourcePackages)"
+}
+
+disk_report() { # label
+  df -h . | awk -v label="$1" 'NR == 2 { printf "Disk %s: %s free of %s (%s used)\n", label, $4, $2, $5 }'
+}
+
+disk_report 'before archive'
 git submodule update --init --depth 1
 git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
 git -C Vendor/cores/flycast submodule update --init --depth 1 core/deps/libchdr core/deps/tinygettext core/deps/xbyak core/deps/asio
@@ -105,6 +120,10 @@ PLIST
 xcodebuild -exportArchive -archivePath "$archive" -exportPath "$out/export" \
   -exportOptionsPlist "$RELEASE_TMP/ExportOptions.plist"
 app="$out/export/SupersEmu.app"
+disk_report 'after archive and export'
+# Local releases keep DerivedData for incremental builds.
+if [ -n "${GITHUB_ACTIONS:-}" ]; then trim_derived_data build/release-mac/DerivedData; fi
+disk_report 'before notarizing'
 
 codesign --verify --deep --strict "$app"
 sorted_archs() { lipo -archs "$1" | tr ' ' '\n' | sort | xargs; }
@@ -132,11 +151,13 @@ staging="$RELEASE_TMP/dmg"
 mkdir -p "$staging"
 ditto "$app" "$staging/SupersEmu.app"
 ln -s /Applications "$staging/Applications"
+disk_report 'before creating the dmg'
 hdiutil create -volname SupersEmu -srcfolder "$staging" -format UDZO -ov "$out/$name.dmg" >/dev/null
 codesign --sign "$identity" --timestamp "$out/$name.dmg"
 notarize "$out/$name.dmg"
 staple_with_retry "$out/$name.dmg" || stapled=no
 release_gatekeeper_check "$out/$name.dmg" --type open --context context:primary-signature
 
+disk_report 'after the dmg'
 [ "$stapled" = yes ] && state='notarized and stapled' || state='notarized; not all stapled, see warnings'
 echo "Done: $out/$name.dmg and $out/$name.zip ($state); Version $marketing_version (build $build_number)"
