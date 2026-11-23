@@ -119,9 +119,9 @@ final class GameInput {
         return ports
     }
 
-    /// Player 1's RetroPad buttons (disc picker and chords).
-    func currentButtons() -> SEJoypadButtons {
-        SEJoypadButtons(rawValue: outputs()[0].buttons)
+    /// Mapped buttons from every assigned player for navigating the disc picker.
+    func discPickerButtons() -> SEJoypadButtons {
+        SEJoypadButtons(rawValue: PadOutput.combinedButtons(outputs()))
     }
 
     /// Every physical control held right now, by position; drives menus, hotkeys and remapping capture.

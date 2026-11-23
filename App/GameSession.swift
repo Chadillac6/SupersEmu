@@ -1272,7 +1272,7 @@ final class GameSession {
         chordArmed = false
         discSelection = currentDisk
         // Buttons still held from the chord must be released before they count as picker input.
-        pickerButtons = input.currentButtons()
+        pickerButtons = input.discPickerButtons()
         let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pollDiscPicker() }
         }
@@ -1283,7 +1283,7 @@ final class GameSession {
     /// Controller/keyboard navigation of the open picker: up/down to move, bottom face button or Start
     /// to insert, right face button or Select to cancel.
     private func pollDiscPicker() {
-        let buttons = input.currentButtons()
+        let buttons = input.discPickerButtons()
         let pressed = buttons.subtracting(pickerButtons)
         pickerButtons = buttons
         if pressed.contains(.up) { discSelection = max(discSelection - 1, 0) }

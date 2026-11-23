@@ -90,4 +90,8 @@ struct PadOutput: Equatable, Sendable {
     var rightStick: SIMD2<Int16> = .zero
 
     func contains(_ button: RetroButton) -> Bool { buttons & button.mask != 0 }
+
+    static func combinedButtons(_ ports: [Self]) -> UInt32 {
+        ports.reduce(0) { $0 | $1.buttons }
+    }
 }
