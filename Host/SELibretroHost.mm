@@ -26,7 +26,7 @@
 #include "SELibretroHost+Testing.h"
 
 #if TARGET_OS_OSX && defined(__aarch64__)
-extern "C" bool se_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath);
+extern "C" bool se_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath, bool *migrated);
 #endif
 
 namespace {
@@ -808,9 +808,11 @@ static BOOL SEHasPS2BIOS(NSURL *systemDirectory) {
         }
         return nil;
     }
+    bool migratedSaveRAM = false;
 #if TARGET_OS_OSX && defined(__aarch64__)
     if (legacyPS2Directory &&
-        !se_lrps2_migrate_legacy_card(legacyPS2Directory.fileSystemRepresentation, saveRAMURL.fileSystemRepresentation)) {
+        !se_lrps2_migrate_legacy_card(legacyPS2Directory.fileSystemRepresentation,
+                                     saveRAMURL.fileSystemRepresentation, &migratedSaveRAM)) {
         if (g.hw.requested) hwMakeCurrent();
         core->unload_game();
         core->deinit();
@@ -853,7 +855,7 @@ static BOOL SEHasPS2BIOS(NSURL *systemDirectory) {
     g.active = true;
     gActiveHost = self;
     g.audio.reset(size_t(_avInfo.timing.sample_rate / 4));
-    [self loadSaveRAM];
+    if (!migratedSaveRAM) [self loadSaveRAM];
     return self;
 }
 

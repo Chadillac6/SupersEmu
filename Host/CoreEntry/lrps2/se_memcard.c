@@ -119,11 +119,26 @@ bool se_lrps2_load_game(const struct retro_game_info *game) {
     return true;
 }
 
-bool se_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath) {
+static bool sameFile(const struct stat *first, const struct stat *second) {
+    return first->st_dev == second->st_dev && first->st_ino == second->st_ino;
+}
+
+static bool readMigratedCard(const char *path, const struct stat *legacy) {
+    struct stat opened;
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    bool verified = fstat(fileno(file), &opened) == 0 && sameFile(&opened, legacy)
+        && fread(cardBuffer, 1, cardSize, file) == cardSize && fgetc(file) == EOF && !ferror(file);
+    return fclose(file) == 0 && verified;
+}
+
+bool se_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath, bool *migrated) {
     struct stat legacy, stored;
     char legacyPath[PCSX2_PATH_MAX];
     const char *name;
     int length;
+    bool linked = false;
+    *migrated = false;
     if (!awaitingHostLoad) return true;
     name = strrchr(cardPath, '/');
     length = snprintf(legacyPath, sizeof(legacyPath), "%s/%s", legacyDirectory, name ? name + 1 : cardPath);
@@ -132,14 +147,23 @@ bool se_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveR
     if (lstat(saveRAMPath, &stored) == 0) {
         if (!S_ISREG(stored.st_mode) || stored.st_size != CARD_SIZE) return false;
         /* Resume if interrupted between linking and removing the old name. */
-        if (stored.st_dev != legacy.st_dev || stored.st_ino != legacy.st_ino) return true;
+        if (!sameFile(&stored, &legacy)) return true;
     } else {
         if (errno != ENOENT || !S_ISREG(legacy.st_mode) || legacy.st_size != CARD_SIZE) return false;
-        /* Both paths are in Saves. A hard link publishes the exact bytes without overwriting
-         * a save RAM file; the legacy name is only removed once that second name exists. */
+        /* Both paths are in Saves, so publishing the same inode does not overwrite save RAM. */
         if (link(legacyPath, saveRAMPath) != 0) return false;
+        linked = true;
     }
-    return unlink(legacyPath) == 0 || errno == ENOENT;
+    if (!readMigratedCard(saveRAMPath, &legacy)) {
+        if (linked && lstat(saveRAMPath, &stored) == 0 && sameFile(&stored, &legacy)) unlink(saveRAMPath);
+        return false;
+    }
+    if (unlink(legacyPath) != 0 && errno != ENOENT) return false;
+    /* Use the verified snapshot instead of asking the host to read the file again. */
+    pendingHostLoad = true;
+    awaitingHostLoad = false;
+    *migrated = true;
+    return true;
 }
 
 void se_lrps2_run(void) {

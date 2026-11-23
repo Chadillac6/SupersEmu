@@ -8,7 +8,7 @@
 #include "MemoryCardFile.h"
 
 bool se_lrps2_load_game(const struct retro_game_info *game);
-bool se_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath);
+bool se_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath, bool *migrated);
 void se_lrps2_run(void);
 void se_lrps2_deinit(void);
 void *se_lrps2_get_memory_data(unsigned type);
@@ -106,9 +106,9 @@ int main(int argc, char **argv) {
     check(mkdir(working, 0700) == 0, "create dedicated working directory");
     writeCard(legacy, 0x31);
 
+    bool migrated;
     check(se_lrps2_load_game(NULL), "load game on upgrade");
-    check(se_lrps2_migrate_legacy_card(argv[1], saveRAM), "migrate legacy card");
-    loadSaveRAM(saveRAM);
+    check(se_lrps2_migrate_legacy_card(argv[1], saveRAM, &migrated) && migrated, "migrate legacy card");
     se_lrps2_run();
     checkProgress(0x31, "first frame replaced the legacy Test.ps2 progress with a blank card");
     const void *saved = se_lrps2_get_memory_data(RETRO_MEMORY_SAVE_RAM);
@@ -118,7 +118,7 @@ int main(int argc, char **argv) {
     puts("PASS: legacy PS2 progress survives the first frame and reaches save RAM");
 
     check(se_lrps2_load_game(NULL), "load second game with a matching filename");
-    check(se_lrps2_migrate_legacy_card(argv[1], secondSaveRAM), "skip already migrated card");
+    check(se_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated, "skip already migrated card");
     loadSaveRAM(secondSaveRAM);
     se_lrps2_run();
     checkProgress(0xff, "a second game starts blank, not with the first game's card");
@@ -127,7 +127,7 @@ int main(int argc, char **argv) {
 
     writeCard(legacy, 0x92);
     check(se_lrps2_load_game(NULL), "reload game with existing save RAM");
-    check(se_lrps2_migrate_legacy_card(argv[1], saveRAM), "keep existing save RAM");
+    check(se_lrps2_migrate_legacy_card(argv[1], saveRAM, &migrated) && !migrated, "keep existing save RAM");
     loadSaveRAM(saveRAM);
     se_lrps2_run();
     checkProgress(0x31, "existing save RAM wins over the legacy card");
@@ -136,12 +136,29 @@ int main(int argc, char **argv) {
 
     check(mkdir(secondSaveRAM, 0700) == 0, "block the migration destination");
     check(se_lrps2_load_game(NULL), "load game with blocked migration destination");
-    check(!se_lrps2_migrate_legacy_card(argv[1], secondSaveRAM), "report failed migration");
+    check(!se_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated), "report failed migration");
     se_lrps2_deinit();
     FILE *source = fopen(legacy, "rb");
     check(source && fread(image, 1, sizeof(image), source) == sizeof(image) && image[SAVE_OFFSET] == 0x92,
           "failed migration preserves the legacy image");
     fclose(source);
     puts("PASS: a blocked destination leaves the legacy card untouched");
+
+    check(rmdir(secondSaveRAM) == 0, "unblock the migration destination");
+    if (geteuid() != 0) {
+        check(chmod(legacy, 0) == 0, "make the legacy card unreadable");
+        check(se_lrps2_load_game(NULL), "open working card with an unreadable legacy card");
+        check(!se_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated), "reject an unreadable legacy card");
+        se_lrps2_deinit();
+        check(chmod(legacy, 0600) == 0, "legacy card remains at its original path");
+        check(access(secondSaveRAM, F_OK) != 0, "failed verification does not leave a save RAM file");
+        source = fopen(legacy, "rb");
+        check(source && fread(image, 1, sizeof(image), source) == sizeof(image) && image[SAVE_OFFSET] == 0x92,
+              "unreadable legacy progress is preserved");
+        fclose(source);
+        puts("PASS: unreadable legacy progress is preserved and migration fails");
+    } else {
+        puts("SKIP: unreadable legacy card test requires an unprivileged user");
+    }
     return 0;
 }

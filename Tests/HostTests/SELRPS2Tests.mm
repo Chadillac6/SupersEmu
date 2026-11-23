@@ -4,6 +4,7 @@
 #include <vector>
 
 #if TARGET_OS_OSX && defined(__aarch64__)
+#include <unistd.h>
 #include "libretro.h"
 #include "SECoreAPI.h"
 
@@ -183,6 +184,8 @@ NSData *TinyELF(const std::vector<uint8_t> &program) {
 
 - (NSURL *)workingCard { return [self.workingDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"]; }
 
+- (NSURL *)legacyCard { return [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"]; }
+
 - (NSURL *)saveRAMForGameID:(NSString *)gameID {
     return [self.saveDirectory URLByAppendingPathComponent:[gameID stringByAppendingPathExtension:@"srm"]];
 }
@@ -317,26 +320,46 @@ static NSData *BlankBytes() {
     return [NSData dataWithBytes:blank.data() length:blank.size()];
 }
 
-- (void)testLegacyMemoryCardMigratesBeforeTheFirstFrame {
+- (NSData *)writeLegacyCardWithSave:(NSData *)save {
     NSError *error = nil;
-    NSData *save = SaveBytes(0x31);
     std::vector<uint8_t> card(kCardSize, 0xFF);
     memcpy(&card[kSavePage], save.bytes, save.length);
     NSData *legacyCard = [NSData dataWithBytes:card.data() length:card.size()];
     [NSFileManager.defaultManager createDirectoryAtURL:self.saveDirectory withIntermediateDirectories:YES attributes:nil error:nil];
-    NSURL *legacy = [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"];
-    XCTAssertTrue([legacyCard writeToURL:legacy options:NSDataWritingAtomic error:&error], @"%@", error);
+    XCTAssertTrue([legacyCard writeToURL:self.legacyCard options:NSDataWritingAtomic error:&error], @"%@", error);
+    return legacyCard;
+}
 
+- (void)testLegacyMemoryCardMigratesBeforeTheFirstFrame {
+    NSError *error = nil;
+    NSData *save = SaveBytes(0x31);
+    NSData *legacyCard = [self writeLegacyCardWithSave:save];
     SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
     XCTAssertNotNil(host, @"%@", error);
     if (!host) return;
     NSURL *saveRAM = [self saveRAMForGameID:@"ps2-game"];
     XCTAssertEqualObjects([NSData dataWithContentsOfURL:saveRAM], legacyCard);
-    XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:legacy.path]);
+    XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:self.legacyCard.path]);
     [host runFrames:30];
     XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), save);
     [host shutdown];
     XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:saveRAM]), save);
+}
+
+- (void)testUnreadableLegacyMemoryCardPreventsLaunch {
+    if (geteuid() == 0) return;
+    NSError *error = nil;
+    NSData *legacyCard = [self writeLegacyCardWithSave:SaveBytes(0x31)];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSURL *legacy = self.legacyCard;
+    XCTAssertTrue([fm setAttributes:@{NSFilePosixPermissions: @0} ofItemAtPath:legacy.path error:&error], @"%@", error);
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNil(host);
+    XCTAssertNotNil(error);
+    XCTAssertFalse([fm fileExistsAtPath:[self saveRAMForGameID:@"ps2-game"].path]);
+    XCTAssertTrue([fm setAttributes:@{NSFilePosixPermissions: @0600} ofItemAtPath:legacy.path error:&error], @"%@", error);
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:legacy], legacyCard);
 }
 
 - (void)testMemoryCardRoundTripsThroughSaveRAMAcrossRestarts {
