@@ -73,7 +73,8 @@ enum LibraryShelves {
 
     /// Games `home` leaves out offline because they can't launch without the server.
     static func offlineUnavailableCount(_ items: [LibraryItem]) -> Int {
-        items.filter { $0.source == .server && !$0.isDownloaded }.count
+        let playable = Set(items.filter { $0.playable != nil }.map(\.id))
+        return Set(items.map(\.id)).subtracting(playable).count
     }
 
     static func search(_ items: [LibraryItem], query: String, online: Bool) -> [LibraryItem] {

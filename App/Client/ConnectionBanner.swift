@@ -5,7 +5,8 @@ import SupersEmuKit
 /// the public internet, and a short "back online" after recovering. Nothing on the home network.
 struct ConnectionBanner: View {
     @Environment(ServerSession.self) private var server
-    @Environment(DownloadCenter.self) private var downloads
+    /// Library games Home hides offline (`LibraryShelves.offlineUnavailableCount`).
+    let unavailableCount: Int
     @State private var dismissedRecovery: Date?
     @State private var retrying = false
 
@@ -38,10 +39,6 @@ struct ConnectionBanner: View {
     private var showsRecovery: Bool {
         guard let recoveredAt = server.recoveredAt, recoveredAt != dismissedRecovery, server.isOnline else { return false }
         return Date().timeIntervalSince(recoveredAt) < Self.recoveryPillSeconds + 1
-    }
-
-    private var unavailableCount: Int {
-        server.games.filter { !downloads.isDownloaded($0.id) }.count
     }
 
     private func problem(_ message: ConnectionState.Message) -> some View {
