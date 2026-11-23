@@ -47,12 +47,12 @@ while (( SECONDS < deadline )); do
      state="$(jq -r '
        [.[] | .jobs[]] |
        if ([.[] | select(.status == "completed") | .name] | contains([
-         "Select release version", "Test Mac app and server", "Build iOS simulator app",
+         "Select release version", "Test Mac app and server", "Build and test iOS app",
          "Mac and server checks", "Publish Mac update", "Upload iOS build to TestFlight"
        ])) then "finished"
        # A publisher can proceed without a marker if its POST fails, but only after both checks pass.
        elif ([.[] | select(.conclusion == "success") | .name] |
-         contains(["Test Mac app and server", "Build iOS simulator app"])) then "publishing"
+         contains(["Test Mac app and server", "Build and test iOS app"])) then "publishing"
        elif any(.[]; (.name == "Publish Mac update" or .name == "Upload iOS build to TestFlight") and (
          any(.steps[]?; (.name == "Check for newer main commit" or .name == "Publish signed Sparkle update" or
            .name == "Upload iOS build to TestFlight") and .conclusion != "skipped" and

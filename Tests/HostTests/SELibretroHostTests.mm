@@ -180,7 +180,12 @@
     if ([self n64FixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
     SELibretroHost *n64 = [self makeHostWithCoreID:SECoreIDMupen64PlusNext romURL:_n64ROMURL];
     [n64 runFrames:3];
+#if TARGET_OS_SIMULATOR
+    // On the iOS Simulator the IOSurface-backed GLES texture fails, so the host falls back to readback.
+    XCTAssertEqualObjects(n64.renderPath, @"gl-readback");
+#else
     XCTAssertEqualObjects(n64.renderPath, @"gl-iosurface");
+#endif
 }
 
 - (void)testAudioRingTestingHooksTrackOverflowUnderrunAndBuffering {

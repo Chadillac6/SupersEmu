@@ -63,7 +63,7 @@ run_case() {
 }
 
 acquisition_annotation='[{"annotation_level":"failure","message":"The job was not acquired by Runner of type hosted even after multiple attempts"}]'
-unacquired='{"id":9,"name":"Build iOS simulator app","labels":["macos-15"],"conclusion":"cancelled","runner_id":0,"steps":[]}'
+unacquired='{"id":9,"name":"Build and test iOS app","labels":["macos-15"],"conclusion":"cancelled","runner_id":0,"steps":[]}'
 gate='{"id":10,"name":"Mac and server checks","labels":["ubuntu-latest"],"conclusion":"failure","runner_id":123}'
 tests_failed='{"id":11,"name":"Test Mac app and server","labels":["macos-15"],"conclusion":"failure","runner_id":123,"steps":[{"name":"Test Mac app","conclusion":"failure"}]}'
 split="{\"jobs\":[$unacquired,$gate]}"
