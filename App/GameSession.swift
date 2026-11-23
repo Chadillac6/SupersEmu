@@ -961,7 +961,7 @@ final class GameSession {
     private static let menuChordDuration = Duration.seconds(1)
     private static let homeLongPress = Duration.milliseconds(600)
 
-    /// Select+Start held for 1 s, or Home/Guide held, on any controller or the keyboard (Tab+Return).
+    /// Select+Start held for 1 s, or Home/Guide held, on an assigned pad or the keyboard (Tab+Return).
     private func menuHotkeyHeld() -> Bool {
         let sources = input.sourceStates().map(\.pressed)
         let chord = sources.contains { $0.isSuperset(of: [.select, .start]) }

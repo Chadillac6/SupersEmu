@@ -50,9 +50,10 @@ struct ControlsView: View {
 
     var body: some View {
         Form {
+            playerAssignments
             #if os(iOS)
             Section {
-                Toggle("Hide on-screen controls when a controller is connected", isOn: $hideTouchControls)
+                Toggle("controls.touch.hide_with_player_one".localized, isOn: $hideTouchControls)
                     .accessibilityIdentifier("controls-hide-touch-with-controller")
             } footer: {
                 Text("The game fills the screen. Tap the game any time to show the toolbar.")
@@ -76,9 +77,14 @@ struct ControlsView: View {
                     Toggle("Only for \(gameTitle)", isOn: $thisGameOnly)
                         .accessibilityIdentifier("controls-this-game")
                 }
+            } header: {
+                Text("controls.mapping.title".localized)
             } footer: {
-                Text("Controls map by position: \"Bottom button\" is the bottom face button on any pad, whatever it's labelled. "
-                     + "Per-game changes win over controller changes, which win over the console's defaults.")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("controls.mapping.shared_by_model".localized)
+                    Text("Controls map by position: \"Bottom button\" is the bottom face button on any pad, whatever it's labelled. "
+                         + "Per-game changes win over controller changes, which win over the console's defaults.")
+                }
             }
             Section(layout.title) {
                 ForEach(layout.controls) { control in row(control) }
@@ -119,12 +125,83 @@ struct ControlsView: View {
         }
         .onAppear {
             system = fixedSystem ?? system
-            if let first = hub.controllers.first { controllerType = first.type }
+            if let controller = hub.controller(at: 0) ?? hub.controllers.first {
+                controllerType = controller.type
+            }
         }
         .onDisappear(perform: stopCapture)
         .onChange(of: controllerType) { stopCapture() }
         .onChange(of: system) { stopCapture() }
+        .onChange(of: controllerTypes.map(\.type)) { _, types in
+            if !types.contains(controllerType) { controllerType = ControllerType.keyboard }
+        }
+        #if os(macOS)
         .frame(minWidth: 460, minHeight: 520)
+        #endif
+    }
+
+    private var playerAssignments: some View {
+        Section {
+            ForEach(hub.assignments.slots.indices, id: \.self) { port in
+                playerRow(port)
+                    .accessibilityIdentifier("controls-player-\(port + 1)")
+            }
+            if hub.controllers.isEmpty {
+                connectionHelp
+            } else {
+                DisclosureGroup("controls.players.connect".localized) {
+                    connectionHelp
+                }
+                .accessibilityIdentifier("controls-connect-help")
+            }
+        } header: {
+            Text("controls.players.title".localized)
+        } footer: {
+            if !hub.controllers.isEmpty {
+                Text("controls.players.assignment_help".localized)
+            }
+        }
+    }
+
+    @ViewBuilder private func playerRow(_ port: Int) -> some View {
+        let player = String.localizedStringWithFormat("controls.players.player_name".localizedString, port + 1)
+        if hub.controllers.isEmpty {
+            LabeledContent {
+                Text("controls.players.no_controller".localized)
+            } label: {
+                Text(player)
+            }
+        } else {
+            Picker(selection: Binding(
+                get: { hub.assignments.slots[port] },
+                set: { hub.assignController($0, to: port) }
+            )) {
+                Text("controls.players.no_controller".localized).tag(nil as String?)
+                ForEach(hub.controllers) { controller in
+                    Text(controllerName(controller)).tag(Optional(controller.id))
+                }
+            } label: {
+                Text(player)
+            }
+            .pickerStyle(.menu)
+        }
+    }
+
+    private var connectionHelp: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("controls.players.bluetooth_help".localized)
+            Text("controls.players.usb_help".localized)
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func controllerName(_ controller: ControllerHub.Controller) -> String {
+        let matching = hub.controllers.filter { $0.name == controller.name }
+        guard matching.count > 1, let index = matching.firstIndex(of: controller) else { return controller.name }
+        return String.localizedStringWithFormat("controls.players.numbered_controller".localizedString,
+                                                controller.name, index + 1)
     }
 
     private func row(_ control: ConsoleControl) -> some View {
@@ -255,4 +332,9 @@ struct ControlsView: View {
         }
         return parts.last ?? type
     }
+}
+
+private extension String {
+    var localized: LocalizedStringKey { LocalizedStringKey(self) }
+    var localizedString: String { NSLocalizedString(self, comment: "") }
 }

@@ -25,7 +25,7 @@ struct PlayerView: View {
     private var chrome: PlayerChrome {
         #if os(iOS)
         PlayerChrome.resolve(
-            controllerActive: PlayerChrome.isControllerActive(connectedGamepads: hub.controllers.count),
+            controllerActive: hub.controller(at: 0) != nil,
             hideWhenControllerConnected: hideTouchControls, hasTouchControls: true)
         #else
         PlayerChrome.resolve(controllerActive: false, hideWhenControllerConnected: false, hasTouchControls: false)
