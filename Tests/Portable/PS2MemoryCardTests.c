@@ -6,6 +6,7 @@
 
 #include "libretro.h"
 #include "MemoryCardFile.h"
+#include "../PS2CardFixture.h"
 
 bool se_lrps2_load_game(const struct retro_game_info *game);
 bool se_core_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath, bool *migrated);
@@ -20,6 +21,7 @@ size_t se_lrps2_get_memory_size(unsigned type);
 static char cardPath[4096];
 static FILE *card;
 static u8 image[CARD_SIZE];
+static const char *bootELF = "cdrom0:\\SLUS_203.12;1";
 
 static void check(bool condition, const char *message) {
     if (condition) return;
@@ -28,6 +30,11 @@ static void check(bool condition, const char *message) {
 }
 
 const char *host_content_name(void) { return "Test"; }
+
+int GetPS2ElfName(char *name, size_t size) {
+    snprintf(name, size, "%s", bootELF ? bootELF : "");
+    return bootELF ? 2 : 0;
+}
 
 bool emu_config_mcd(uint slot, char *path, size_t size) {
     return slot == 0 && snprintf(path, size, "%s", cardPath) < (int)size;
@@ -72,6 +79,7 @@ size_t retro_get_memory_size(unsigned type) { (void)type; return 0; }
 
 static void writeCard(const char *path, u8 progress) {
     memset(image, 0xff, sizeof(image));
+    ps2CardFixtureFormat(image, "BASLUS-20312SAVE");
     image[SAVE_OFFSET] = progress;
     FILE *file = fopen(path, "wb");
     check(file != NULL, "open card fixture");
@@ -107,6 +115,26 @@ int main(int argc, char **argv) {
     writeCard(legacy, 0x31);
 
     bool migrated;
+    bootELF = "cdrom0:\\SLUS_203.13;1";
+    check(se_lrps2_load_game(NULL), "load a different serial with the same basename");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "different disc serial must not migrate a same-basename PS2 card");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep the legacy card unclaimed");
+    loadSaveRAM(secondSaveRAM);
+    se_lrps2_run();
+    checkProgress(0xff, "mismatched legacy progress does not reach the running game");
+    se_lrps2_deinit();
+    puts("PASS: a different disc serial cannot claim the legacy card");
+
+    bootELF = NULL;
+    check(se_lrps2_load_game(NULL), "load a game without a disc serial");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "no disc serial must skip migration");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep the legacy card without a serial");
+    se_lrps2_deinit();
+    puts("PASS: a missing disc serial leaves the legacy card untouched");
+
+    bootELF = "cdrom0:\\SLUS_203.12;1";
     check(se_lrps2_load_game(NULL), "load game on upgrade");
     check(se_core_lrps2_migrate_legacy_card(argv[1], saveRAM, &migrated) && migrated, "migrate legacy card");
     se_lrps2_run();

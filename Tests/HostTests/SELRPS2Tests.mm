@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include "libretro.h"
 #include "SECoreAPI.h"
+#include "../PS2CardFixture.h"
 
 // Host/CoreEntry/lrps2/se_memcard.c: what the SIO does when a game saves to memory card 1.
 extern "C" bool se_core_lrps2_write_card(unsigned address, const void *data, int size);
@@ -130,6 +131,17 @@ NSData *TinyELF(const std::vector<uint8_t> &program) {
 
 } // namespace
 
+static unsigned ISORecord(uint8_t *record, unsigned lba, unsigned size, uint8_t flags, const char *name, uint8_t length) {
+    record[0] = (33 + length + 1) & ~1;
+    ps2CardFixtureWord(record + 2, lba);
+    ps2CardFixtureWord(record + 10, size);
+    record[25] = flags;
+    record[28] = 1;
+    record[32] = length;
+    memcpy(record + 33, name, length);
+    return record[0];
+}
+
 @implementation SELRPS2Tests {
     NSURL *_tempDirectory;
     NSMutableArray<NSString *> *_log;
@@ -168,6 +180,31 @@ NSData *TinyELF(const std::vector<uint8_t> &program) {
 }
 
 - (NSURL *)game { return [self gameInFolder:nil]; }
+
+- (NSURL *)discWithBootELF:(NSString *)bootELF {
+    const unsigned sector = 2048;
+    std::vector<uint8_t> iso(24 * sector);
+    NSData *cnf = [[NSString stringWithFormat:@"BOOT2 = cdrom0:\\%@;1\r\nVMODE = NTSC\r\n", bootELF]
+                   dataUsingEncoding:NSASCIIStringEncoding];
+    uint8_t *pvd = &iso[16 * sector];
+    pvd[0] = 1;
+    memcpy(pvd + 1, "CD001", 5);
+    pvd[6] = 1;
+    pvd[129] = 8;
+    ISORecord(pvd + 156, 18, sector, 2, "\0", 1);
+    uint8_t *terminator = &iso[17 * sector];
+    terminator[0] = 0xFF;
+    memcpy(terminator + 1, "CD001", 5);
+    terminator[6] = 1;
+    uint8_t *record = &iso[18 * sector];
+    record += ISORecord(record, 18, sector, 2, "\0", 1);
+    record += ISORecord(record, 18, sector, 2, "\1", 1);
+    ISORecord(record, 19, unsigned(cnf.length), 0, "SYSTEM.CNF;1", 12);
+    memcpy(&iso[19 * sector], cnf.bytes, cnf.length);
+    NSURL *url = [_tempDirectory URLByAppendingPathComponent:@"Homebrew Test.iso"];
+    XCTAssertTrue([[NSData dataWithBytes:iso.data() length:iso.size()] writeToURL:url atomically:YES]);
+    return url;
+}
 
 - (NSURL *)gameInFolder:(NSString *)folder {
     NSURL *directory = folder ? [_tempDirectory URLByAppendingPathComponent:folder isDirectory:YES] : _tempDirectory;
@@ -323,6 +360,7 @@ static NSData *BlankBytes() {
 - (NSData *)writeLegacyCardWithSave:(NSData *)save {
     NSError *error = nil;
     std::vector<uint8_t> card(kCardSize, 0xFF);
+    ps2CardFixtureFormat(card.data(), "BASLUS-20312SAVE");
     memcpy(&card[kSavePage], save.bytes, save.length);
     NSData *legacyCard = [NSData dataWithBytes:card.data() length:card.size()];
     [NSFileManager.defaultManager createDirectoryAtURL:self.saveDirectory withIntermediateDirectories:YES attributes:nil error:nil];
@@ -334,7 +372,8 @@ static NSData *BlankBytes() {
     NSError *error = nil;
     NSData *save = SaveBytes(0x31);
     NSData *legacyCard = [self writeLegacyCardWithSave:save];
-    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    SELibretroHost *host = [self hostForGame:[self discWithBootELF:@"SLUS_203.12"] gameID:@"ps2-game"
+                                    system:[self systemDirectoryWithBIOS:YES] error:&error];
     XCTAssertNotNil(host, @"%@", error);
     if (!host) return;
     NSURL *saveRAM = [self saveRAMForGameID:@"ps2-game"];
@@ -344,6 +383,31 @@ static NSData *BlankBytes() {
     XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), save);
     [host shutdown];
     XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:saveRAM]), save);
+}
+
+- (void)testLegacyMemoryCardWithDifferentSerialIsNotMigrated {
+    NSError *error = nil;
+    NSData *legacyCard = [self writeLegacyCardWithSave:SaveBytes(0x31)];
+    SELibretroHost *host = [self hostForGame:[self discWithBootELF:@"SLUS_203.13"] gameID:@"ps2-game"
+                                    system:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[self saveRAMForGameID:@"ps2-game"].path]);
+    [host runFrames:30];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), BlankBytes());
+    [host shutdown];
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:self.legacyCard], legacyCard);
+}
+
+- (void)testLegacyMemoryCardWithoutDiscSerialIsNotMigrated {
+    NSError *error = nil;
+    NSData *legacyCard = [self writeLegacyCardWithSave:SaveBytes(0x31)];
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[self saveRAMForGameID:@"ps2-game"].path]);
+    [host shutdown];
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:self.legacyCard], legacyCard);
 }
 
 - (void)testUnreadableLegacyMemoryCardPreventsLaunch {
