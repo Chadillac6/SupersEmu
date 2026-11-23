@@ -6,6 +6,7 @@
 
 #include "libretro.h"
 #include "MemoryCardFile.h"
+#include "CDVD/IsoFS/iso9660.h"
 #include "../PS2CardFixture.h"
 
 bool se_lrps2_load_game(const struct retro_game_info *game);
@@ -22,6 +23,7 @@ static char cardPath[4096];
 static FILE *card;
 static u8 image[CARD_SIZE];
 static const char *bootELF = "cdrom0:\\SLUS_203.12;1";
+static bool oversizedSystemCNF;
 
 static void check(bool condition, const char *message) {
     if (condition) return;
@@ -31,9 +33,46 @@ static void check(bool condition, const char *message) {
 
 const char *host_content_name(void) { return "Test"; }
 
-int GetPS2ElfName(char *name, size_t size) {
-    snprintf(name, size, "%s", bootELF ? bootELF : "");
-    return bootELF ? 2 : 0;
+static void ignoreLog(enum retro_log_level level, const char *format, ...) {
+    (void)level;
+    (void)format;
+}
+
+retro_log_printf_t log_cb = ignoreLog;
+
+bool isofs_read_sector(u8 *buffer, int lba) {
+    char cnf[128];
+    int length = bootELF ? snprintf(cnf, sizeof(cnf), "BOOT2 = %s\r\nVMODE = NTSC\r\n", bootELF) : 0;
+    memset(buffer, 0, ISOFS_SECTOR);
+    switch (lba) {
+    case 16:
+        buffer[0] = 1;
+        memcpy(buffer + 1, "CD001", 5);
+        buffer[156] = 34;
+        ps2CardFixtureWord(buffer + 158, 18);
+        ps2CardFixtureWord(buffer + 166, ISOFS_SECTOR);
+        buffer[181] = 2;
+        buffer[188] = 1;
+        return true;
+    case 17:
+        buffer[0] = 0xFF;
+        memcpy(buffer + 1, "CD001", 5);
+        return true;
+    case 18:
+        if (!bootELF) return true;
+        buffer[0] = 46;
+        ps2CardFixtureWord(buffer + 2, 19);
+        ps2CardFixtureWord(buffer + 10, oversizedSystemCNF ? 1024 * 1024 + 1 : (u32)length);
+        buffer[32] = 12;
+        memcpy(buffer + 33, "SYSTEM.CNF;1", 12);
+        return true;
+    case 19:
+        check(!oversizedSystemCNF, "do not read oversized SYSTEM.CNF sectors");
+        memcpy(buffer, cnf, length);
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool emu_config_mcd(uint slot, char *path, size_t size) {
@@ -148,6 +187,15 @@ int main(int argc, char **argv) {
     puts("PASS: a missing disc serial leaves the legacy card untouched");
 
     bootELF = "cdrom0:\\SLUS_203.12;1";
+    oversizedSystemCNF = true;
+    check(se_lrps2_load_game(NULL), "load game with oversized SYSTEM.CNF");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "oversized SYSTEM.CNF must not authorize migration");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep the legacy card with oversized metadata");
+    se_lrps2_deinit();
+    oversizedSystemCNF = false;
+    puts("PASS: oversized SYSTEM.CNF is rejected before reading its contents");
+
     ps2CardFixtureWord(image + 41 * 2 * 528 + 4, 4);
     ps2CardFixtureDirectory(image + 89 * 528, "BESLES-20312SAVE");
     writeImage(legacy);

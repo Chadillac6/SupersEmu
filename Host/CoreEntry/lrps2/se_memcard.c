@@ -12,7 +12,7 @@
 
 #include "libretro.h"
 #include "MemoryCardFile.h"
-#include "CDVD/CDVD.h"
+#include "CDVD/IsoFS/iso9660.h"
 
 const char *host_content_name(void);
 
@@ -23,6 +23,7 @@ const char *host_content_name(void);
 #define CARD_CLUSTERS 8192
 #define CARD_SIZE (CARD_CLUSTERS * CARD_CLUSTER_SIZE)
 #define CARD_CHECKSUM_AT 0x210
+#define MAX_SYSTEM_CNF_SIZE (1024 * 1024)
 
 static u8 *cardBuffer;
 static size_t cardSize;
@@ -147,13 +148,14 @@ static bool isSerial(const u8 *text) {
     return true;
 }
 
-static bool readDiscSerial(u8 serial[10]) {
-    char bootPath[PCSX2_PATH_MAX];
+static bool bootPathSerial(char *bootPath, u8 serial[10]) {
     const char *exe;
+    char *end;
     size_t length, i;
-    /* LRPS2's EE is parked until the first frame, so DiscSerial has not been set yet. */
-    if (GetPS2ElfName(bootPath, sizeof(bootPath)) != 2) return false;
-    exe = bootPath + strlen(bootPath);
+    while (isspace((unsigned char)*bootPath)) bootPath++;
+    end = bootPath + strlen(bootPath);
+    while (end > bootPath && isspace((unsigned char)end[-1])) *--end = '\0';
+    exe = end;
     while (exe > bootPath && exe[-1] != '\\' && exe[-1] != '/' && exe[-1] != ':') exe--;
     length = strcspn(exe, ";");
     if (length != 11 || (exe[4] != '_' && exe[4] != '-') || exe[8] != '.') return false;
@@ -162,6 +164,33 @@ static bool readDiscSerial(u8 serial[10]) {
     memcpy(serial + 5, exe + 5, 3);
     memcpy(serial + 8, exe + 9, 2);
     return isSerial(serial);
+}
+
+static bool readDiscSerial(u8 serial[10]) {
+    isofs_file_t *file = (isofs_file_t *)malloc(sizeof(*file));
+    char line[512];
+    bool found = false;
+    if (!file) return false;
+    /* The EE is still parked. Use the mounted disc, with the same size cap as disc detection. */
+    if (isofs_file_open(file, NULL, "SYSTEM.CNF;1") && file->length <= MAX_SYSTEM_CNF_SIZE) {
+        while (!isofs_file_eof(file)) {
+            u32 start = file->offset;
+            size_t length = isofs_file_read_line(file, line, sizeof(line));
+            size_t keyLength;
+            char *key, *equals = strchr(line, '=');
+            if (!equals) continue;
+            key = line;
+            while (isspace((unsigned char)*key)) key++;
+            keyLength = (size_t)(equals - key);
+            while (keyLength && isspace((unsigned char)key[keyLength - 1])) keyLength--;
+            if (keyLength == 5 && memcmp(key, "BOOT2", 5) == 0)
+                found = file->offset - start <= length + 1 && bootPathSerial(equals + 1, serial);
+            else if (keyLength == 4 && memcmp(key, "BOOT", 4) == 0)
+                found = false;
+        }
+    }
+    free(file);
+    return found;
 }
 
 static u32 cardWord(const u8 *field) {
