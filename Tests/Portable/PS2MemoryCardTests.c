@@ -24,6 +24,7 @@ static FILE *card;
 static u8 image[CARD_SIZE];
 static const char *bootELF = "cdrom0:\\SLUS_203.12;1";
 static bool oversizedSystemCNF;
+static const char *extraBootLine = "";
 
 static void check(bool condition, const char *message) {
     if (condition) return;
@@ -42,7 +43,7 @@ retro_log_printf_t log_cb = ignoreLog;
 
 bool isofs_read_sector(u8 *buffer, int lba) {
     char cnf[128];
-    int length = bootELF ? snprintf(cnf, sizeof(cnf), "BOOT2 = %s\r\nVMODE = NTSC\r\n", bootELF) : 0;
+    int length = bootELF ? snprintf(cnf, sizeof(cnf), "BOOT2 = %s\r\n%sVMODE = NTSC\r\n", bootELF, extraBootLine) : 0;
     memset(buffer, 0, ISOFS_SECTOR);
     switch (lba) {
     case 16:
@@ -235,6 +236,30 @@ int main(int argc, char **argv) {
     checkProgress(0xff, "a second game starts blank, not with the first game's card");
     se_lrps2_deinit();
     puts("PASS: another game with the same filename starts with a blank card");
+
+    const char *emptyBootLines[] = {"BOOT = \r\n", "BOOT2 = \t\r\n"};
+    for (size_t i = 0; i < sizeof(emptyBootLines) / sizeof(emptyBootLines[0]); i++) {
+        writeCard(legacy, 0x43);
+        extraBootLine = emptyBootLines[i];
+        check(se_lrps2_load_game(NULL), "load game with an empty boot assignment before EOF");
+        check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && migrated,
+              "an empty BOOT or BOOT2 assignment must not override the disc serial");
+        se_lrps2_run();
+        checkProgress(0x43, "the valid serial still migrates the legacy progress");
+        se_lrps2_deinit();
+        check(unlink(secondSaveRAM) == 0, "clear migrated test save");
+    }
+    puts("PASS: empty BOOT and BOOT2 assignments before EOF preserve the disc serial");
+
+    writeCard(legacy, 0x43);
+    extraBootLine = "BOOT2 = cdrom0:\\SLUS_203.13;1\r\n";
+    check(se_lrps2_load_game(NULL), "load game with a nonempty BOOT2 override");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "a superseded serial must not authorize migration");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep the card for the superseded serial");
+    se_lrps2_deinit();
+    extraBootLine = "";
+    puts("PASS: a later nonempty BOOT2 assignment supersedes the earlier serial");
 
     writeCard(legacy, 0x42);
     ps2CardFixtureSetVersion11(image);

@@ -152,7 +152,6 @@ static bool bootPathSerial(char *bootPath, u8 serial[10]) {
     const char *exe;
     char *end;
     size_t length, i;
-    while (isspace((unsigned char)*bootPath)) bootPath++;
     end = bootPath + strlen(bootPath);
     while (end > bootPath && isspace((unsigned char)end[-1])) *--end = '\0';
     exe = end;
@@ -177,14 +176,18 @@ static bool readDiscSerial(u8 serial[10]) {
             u32 start = file->offset;
             size_t length = isofs_file_read_line(file, line, sizeof(line));
             size_t keyLength;
-            char *key, *equals = strchr(line, '=');
+            bool complete = file->offset - start <= length + 1;
+            char *key, *value, *equals = strchr(line, '=');
             if (!equals) continue;
+            value = equals + 1;
+            while (isspace((unsigned char)*value)) value++;
+            if (!*value && complete && !isofs_file_eof(file)) continue;
             key = line;
             while (isspace((unsigned char)*key)) key++;
             keyLength = (size_t)(equals - key);
             while (keyLength && isspace((unsigned char)key[keyLength - 1])) keyLength--;
             if (keyLength == 5 && memcmp(key, "BOOT2", 5) == 0)
-                found = file->offset - start <= length + 1 && bootPathSerial(equals + 1, serial);
+                found = complete && bootPathSerial(value, serial);
             else if (keyLength == 4 && memcmp(key, "BOOT", 4) == 0)
                 found = false;
         }
