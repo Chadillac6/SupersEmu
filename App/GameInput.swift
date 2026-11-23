@@ -6,7 +6,7 @@ import AppKit
 
 /// Merges on-screen touch controls, GameController pads (MFi/Xbox/PlayStation/8BitDo), raw HID pads on macOS
 /// and the keyboard. Everything maps by position through the console layout and the saved remappings.
-/// Player 1 gets touch, keyboard and the first pad; further pads are players 2-4.
+/// Touch and keyboard always drive player 1; gamepads drive their assigned ports.
 @MainActor
 final class GameInput {
     var layout = ConsoleLayout.forSystem(.snes)
@@ -111,16 +111,12 @@ final class GameInput {
         var ports = Array(repeating: PadOutput(), count: Int(SEInputPortCount))
         ports[0] = merge(InputMapper.output(for: touchState, layout: layout, bindings: layout.defaults),
                          InputMapper.output(for: keyboardState, layout: layout, bindings: bindings(ControllerType.keyboard)))
-        for (port, controller) in hub.controllers.prefix(ports.count).enumerated() {
+        for port in ports.indices {
+            guard let controller = hub.controller(at: port) else { continue }
             let state = hub.state(of: controller, console: layout.system)
             ports[port] = merge(ports[port], InputMapper.output(for: state, layout: layout, bindings: bindings(controller.type)))
         }
         return ports
-    }
-
-    /// Player 1's RetroPad buttons (disc picker and chords).
-    func currentButtons() -> SEJoypadButtons {
-        SEJoypadButtons(rawValue: outputs()[0].buttons)
     }
 
     /// Every physical control held right now, by position; drives menus, hotkeys and remapping capture.
@@ -130,9 +126,11 @@ final class GameInput {
         return state
     }
 
-    /// The keyboard first, then each controller, kept apart so chords only count when one player holds them.
+    /// The keyboard first, then assigned controllers, kept apart so chords only count for one source.
     func sourceStates() -> [PadState] {
-        [keyboardState] + hub.controllers.map { hub.state(of: $0, console: layout.system) }
+        [keyboardState] + hub.assignments.slots.indices.compactMap { port in
+            hub.controller(at: port).map { hub.state(of: $0, console: layout.system) }
+        }
     }
 
     private func bindings(_ controllerType: String) -> [String: PadInput] {

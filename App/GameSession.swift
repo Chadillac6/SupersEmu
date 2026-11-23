@@ -65,7 +65,10 @@ final class GameSession {
     private(set) var wantsExit = false
     /// A player's controller went away mid-game; the game stays paused until they resume.
     private(set) var disconnectedController: String?
-    private(set) var controllerReconnected = false
+    private(set) var reconnectedControllerID: String?
+    var showsDisconnectPrompt: Bool {
+        disconnectedController != nil && !isMenuOpen && !isChoosingDisc && !isChoosingCheat && !isShowingSaveSlots
+    }
 
     @ObservationIgnored let input = GameInput()
     @ObservationIgnored weak var displayLayer: CALayer?
@@ -93,7 +96,7 @@ final class GameSession {
     @ObservationIgnored private var lastLayoutDescription = ""
     @ObservationIgnored private var pendingDiagnosticsEvents: [String] = []
     @ObservationIgnored private var pickerTimer: Timer?
-    @ObservationIgnored private var pickerButtons: SEJoypadButtons = []
+    @ObservationIgnored private var pickerOutputs: [PadOutput] = []
 
     var timeSinceLastAutosave: Duration? { lastSuccessfulAutosave.map { .now - $0 } }
     /// The chord opens the picker only after it has been released since it last fired.
@@ -961,7 +964,7 @@ final class GameSession {
     private static let menuChordDuration = Duration.seconds(1)
     private static let homeLongPress = Duration.milliseconds(600)
 
-    /// Select+Start held for 1 s, or Home/Guide held, on any controller or the keyboard (Tab+Return).
+    /// Select+Start held for 1 s, or Home/Guide held, on an assigned pad or the keyboard (Tab+Return).
     private func menuHotkeyHeld() -> Bool {
         let sources = input.sourceStates().map(\.pressed)
         let chord = sources.contains { $0.isSuperset(of: [.select, .start]) }
@@ -1158,10 +1161,11 @@ final class GameSession {
         controllerObservers.append(center.addObserver(forName: .gamepadDisconnected, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated { self?.controllerDisconnected(note.object as? String ?? "Controller") }
         })
-        controllerObservers.append(center.addObserver(forName: .gamepadConnected, object: nil, queue: .main) { [weak self] _ in
+        controllerObservers.append(center.addObserver(forName: .gamepadConnected, object: nil, queue: .main) { [weak self] note in
+            guard let id = note.object as? String else { return }
             MainActor.assumeIsolated {
                 guard let self, self.disconnectedController != nil else { return }
-                self.controllerReconnected = true
+                self.reconnectedControllerID = id
             }
         })
     }
@@ -1171,15 +1175,14 @@ final class GameSession {
         pause()
         clearHostInput()
         disconnectedController = name
-        controllerReconnected = false
-        if !isMenuOpen, !isChoosingDisc, !isShowingSaveSlots { startOverlayPolling() }
+        if showsDisconnectPrompt { startOverlayPolling() }
     }
 
     /// Continues after a disconnect, with the reconnected pad, another pad, touch or the keyboard.
     func dismissDisconnect() {
         guard disconnectedController != nil else { return }
         disconnectedController = nil
-        controllerReconnected = false
+        reconnectedControllerID = nil
         if !isMenuOpen, !isShowingSaveSlots {
             stopOverlayPolling()
             resume()
@@ -1257,7 +1260,7 @@ final class GameSession {
             } else if !pressed.isDisjoint(with: [.east, .select, .home]) {
                 closeMenu()
             }
-        } else if disconnectedController != nil, !pressed.isDisjoint(with: [.south, .start]) {
+        } else if showsDisconnectPrompt, !pressed.isDisjoint(with: [.south, .start]) {
             dismissDisconnect()
         }
     }
@@ -1272,7 +1275,7 @@ final class GameSession {
         chordArmed = false
         discSelection = currentDisk
         // Buttons still held from the chord must be released before they count as picker input.
-        pickerButtons = input.currentButtons()
+        pickerOutputs = input.outputs()
         let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pollDiscPicker() }
         }
@@ -1283,9 +1286,9 @@ final class GameSession {
     /// Controller/keyboard navigation of the open picker: up/down to move, bottom face button or Start
     /// to insert, right face button or Select to cancel.
     private func pollDiscPicker() {
-        let buttons = input.currentButtons()
-        let pressed = buttons.subtracting(pickerButtons)
-        pickerButtons = buttons
+        let outputs = input.outputs()
+        let pressed = SEJoypadButtons(rawValue: PadOutput.newlyPressedButtons(from: pickerOutputs, to: outputs))
+        pickerOutputs = outputs
         if pressed.contains(.up) { discSelection = max(discSelection - 1, 0) }
         if pressed.contains(.down) { discSelection = min(discSelection + 1, diskCount - 1) }
         if !pressed.isDisjoint(with: [.b, .start]) {

@@ -1,0 +1,13 @@
+"controls.players.title" = "Players";
+"controls.players.player_name" = "Player %ld";
+"controls.players.no_controller" = "No controller";
+"controls.players.numbered_controller" = "%1$@ (%2$ld)";
+"controls.players.connect" = "Connect a controller";
+"controls.players.bluetooth_help" = "Bluetooth: Put the controller in pairing mode, then select it in your device’s Bluetooth settings.";
+"controls.players.usb_help" = "USB: Plug in a supported controller using a data cable or adapter.";
+"controls.players.assignment_help" = "Choose a controller for each player. Choosing another player’s controller swaps their assignments. Games may support fewer players.";
+"controls.touch.hide_with_player_one" = "Hide on-screen controls when Player 1 has a controller";
+"controls.mapping.title" = "Button Mapping";
+"controls.mapping.shared_by_model" = "Controllers of the same model share button mappings.";
+"controls.disconnect.connected" = "Controller connected";
+"controls.disconnect.new_assignment" = "Controller assigned to Player %ld. Press A or Start to keep playing.";

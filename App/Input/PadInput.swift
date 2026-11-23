@@ -90,4 +90,10 @@ struct PadOutput: Equatable, Sendable {
     var rightStick: SIMD2<Int16> = .zero
 
     func contains(_ button: RetroButton) -> Bool { buttons & button.mask != 0 }
+
+    static func newlyPressedButtons(from previous: [Self], to current: [Self]) -> UInt32 {
+        zip(previous, current).reduce(0) { result, port in
+            result | (port.1.buttons & ~port.0.buttons)
+        }
+    }
 }

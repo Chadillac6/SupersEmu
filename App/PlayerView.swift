@@ -25,7 +25,7 @@ struct PlayerView: View {
     private var chrome: PlayerChrome {
         #if os(iOS)
         PlayerChrome.resolve(
-            controllerActive: PlayerChrome.isControllerActive(connectedGamepads: hub.controllers.count),
+            controllerActive: hub.controller(at: 0) != nil,
             hideWhenControllerConnected: hideTouchControls, hasTouchControls: true)
         #else
         PlayerChrome.resolve(controllerActive: false, hideWhenControllerConnected: false, hasTouchControls: false)
@@ -86,7 +86,7 @@ struct PlayerView: View {
             if session.isShowingSaveSlots {
                 SaveSlotsView(session: session)
             }
-            if let name = session.disconnectedController, !session.isMenuOpen && !session.isShowingSaveSlots {
+            if session.showsDisconnectPrompt, let name = session.disconnectedController {
                 DisconnectPrompt(session: session, name: name)
             }
             if let newer = session.newerElsewhere, session.pendingConflict == nil, !session.isSyncing,
@@ -452,15 +452,25 @@ struct DisconnectPrompt: View {
     let session: GameSession
     let name: String
 
+    private var reconnectedPort: Int? {
+        guard let id = session.reconnectedControllerID else { return nil }
+        return ControllerHub.shared.assignments.slots.firstIndex(of: id)
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: "gamecontroller").font(.largeTitle)
-            Text(session.controllerReconnected ? "Controller reconnected" : "Reconnect controller").font(.title3.bold())
-            Text(session.controllerReconnected
-                 ? "Press A or Start to keep playing."
-                 : "\(name) disconnected. Reconnect it, or continue with \(Self.fallback).")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+            Text(reconnectedPort == nil ? "Reconnect controller" : "controls.disconnect.connected".localized)
+                .font(.title3.bold())
+            Group {
+                if let port = reconnectedPort {
+                    Text(String.localizedStringWithFormat("controls.disconnect.new_assignment".localizedString, port + 1))
+                } else {
+                    Text("\(name) disconnected. Reconnect it, or continue with \(Self.fallback).")
+                }
+            }
+            .multilineTextAlignment(.center)
+            .foregroundStyle(.secondary)
             Button("Continue") { session.dismissDisconnect() }
                 .buttonStyle(BrandPrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)

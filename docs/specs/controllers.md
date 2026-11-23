@@ -62,18 +62,21 @@ docs, then shown in the app as a one-screen "Connect your controller" guide.
    (SNES B, Genesis B, PS1 Cross) whatever the controller prints on it.
 2. Precedence: console default -> controller-type override -> per-game override.
 3. Hotkeys: a long press of the Home/Guide button (0.6 s; the app sets `preferredSystemGestureState = .disabled`
-   so the system doesn't take it) or Select+Start held for 1 s opens the in-game menu (Resume, Save/Load State,
+   so the system doesn't take it) or Select+Start held for 1 s on an assigned pad opens the in-game menu (Resume, Save/Load State,
    Swap Disc, Controls, Exit to Library). On the keyboard that's Tab+Return. This is how users save, load,
    and exit from the couch.
-4. Several controllers: the first one connected is player 1 (with touch and keyboard); pads 2-4 drive ports
-   2-4. When a pad disconnects, the pads after it move up a slot. Reordering in the in-game menu is not built yet.
+4. Several controllers: new pads fill open player slots in order. In Controls > Players, pick a pad for any
+   of the four ports, swap two pads by selecting one that's already assigned, or choose No controller.
+   Assignments last for the current connection; disconnecting frees that slot without shifting other players.
+   Keyboard and touch always drive player 1; on-screen controls only auto-hide if player 1 has a pad.
+   Games may use fewer than four ports. Controllers of the same model share a button mapping, not a slot.
 5. Remapping (Settings > Controls on Mac, gamepad button in the iOS library, or Controls in the in-game menu):
    pick a console control, press the physical input, or Reset to Default. Saved to
    `Application Support/SupersEmu/Controls.json` as `controllerOverrides[type][system][control]` and
    `gameOverrides[gameID][control]`, where a type is `keyboard`, `gc:<category>:<vendor name>` or
    `hid:vvvv:pppp`. Touch controls always use the console defaults.
-6. Disconnect mid-game pauses and shows a "Reconnect controller" prompt; Continue (or the bottom face button or Start on any pad)
-   resumes with what's left: another pad, touch or the keyboard.
+6. An assigned pad disconnecting mid-game pauses and shows a "Reconnect controller" prompt. Continue (or the
+   bottom face button or Start on an assigned pad) resumes with the remaining assignments, touch or keyboard.
 
 ## Console layouts
 Defaults by position (`App/Input/ConsoleLayout.swift`), in the RetroPad terms the cores read:

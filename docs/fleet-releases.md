@@ -1,16 +1,20 @@
 # Fleet releases
 
 The `Fleet CI and release` workflow runs server tests, Mac host/input tests, and an
-unsigned iOS simulator build for PRs. PR jobs have read-only tokens and no release
-secrets. Homebrew test fixtures use the existing fetch script; unavailable fixtures
-skip their matching tests.
+unsigned iOS simulator build for PRs. The iOS build runs in parallel with the Mac
+and server tests; the `Mac and server checks` gate requires both jobs to pass.
+New commits cancel superseded PR runs. PR jobs have read-only tokens and no
+release secrets. Homebrew test fixtures use the existing fetch script; unavailable
+fixtures skip their matching tests.
 
 A push to `main` (including a merged PR) runs the same checks. In parallel,
 `Select release version` picks one shared marketing version and build number, then
 `Publish Mac update` builds and notarizes the universal Developer ID Mac update and
-`Upload iOS build to TestFlight` archives the iOS app. Both release jobs wait for
-`Mac and server checks` to pass (`scripts/ci-wait-for-job.sh`) before publishing, so a
-release takes about as long as the checks rather than checks plus both builds. The marketing version advances by 0.0.1
+`Upload iOS build to TestFlight` archives the iOS app. Before publishing, both
+release jobs use `scripts/ci-wait-for-job.sh` to wait for `Test Mac app and server`
+and `Build iOS simulator app`. They wait on the individual checks because GitHub
+does not list the pending `Mac and server checks` gate until both finish, and a
+rerun must not publish based on an earlier gate result. The marketing version advances by 0.0.1
 above the latest App Store Connect iOS or Sparkle Mac version, with `project.yml` as
 the minimum floor. TestFlight builds are added to the internal **Chad** group
 automatically. The Mac release is notarized and stapled. Stapling is retried 10 times; if Apple's
@@ -74,7 +78,7 @@ remain enabled; do not grant release credentials to PR workflows.
    approval to restart its boot daemon; client-only Macs do not run that daemon.
 
 To retry a failed release, run this workflow manually on `main` using **Run workflow**.
-Build numbers use UTC timestamps. Builds are serialized per ref, and a stale main
+Build numbers use UTC timestamps. Main release runs are serialized, and a stale main
 commit is not published if main has moved forward. If the Mac update publishes but
 the TestFlight upload fails, the next run advances from the latest Mac version.
 

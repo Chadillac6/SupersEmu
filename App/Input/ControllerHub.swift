@@ -11,7 +11,7 @@ extension Notification.Name {
     static let gamepadConnected = Notification.Name("SupersEmuGamepadConnected")
 }
 
-/// Every connected gamepad, GameController and (on macOS) raw HID, in connection order: the first is player 1.
+/// Tracks connected GameController and raw HID pads separately from their assigned player ports.
 @MainActor
 @Observable
 final class ControllerHub {
@@ -27,6 +27,7 @@ final class ControllerHub {
     }
 
     private(set) var controllers: [Controller] = []
+    private(set) var assignments = ControllerAssignments(portCount: Int(SEInputPortCount))
     @ObservationIgnored private var gcByID: [String: GCController] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     #if DEBUG
@@ -34,20 +35,14 @@ final class ControllerHub {
     //   unset/unrecognised → nothing changes.
     //   Any recognised value hides real GCControllers (and HID pads on macOS) — needed because
     //   the iOS 26.5 Simulator reports a phantom "Gamepad" even with no pad attached.
-    //   `off` → no controllers at all; `on` → fake pad forever; <seconds> → fake pad for N s
+    //   `off` → no controllers; `on` → one fake pad; `two` → two identical fake pads;
+    //   <seconds> → fake pad for N s
     //   then dropped, exercising the real disconnect path (gamepadDisconnected, DisconnectPrompt).
     private enum DebugController {
         case disabled          // "off": no controllers at all
         case permanent         // "on": fake pad forever
+        case pair              // "two": two fake pads of the same model
         case temporary(Date)   // "<seconds>": fake pad until the expiry date
-
-        var includesDebugPad: Bool {
-            switch self {
-            case .disabled: return false
-            case .permanent: return true
-            case .temporary(let expiry): return Date() < expiry
-            }
-        }
     }
     @ObservationIgnored private let debugPad = Controller(id: "debug-pad", name: "Debug Controller", type: "gc:debug", kind: .gameController)
     @ObservationIgnored private var debugController: DebugController?
@@ -73,6 +68,7 @@ final class ControllerHub {
             switch value {
             case "on": debugController = .permanent
             case "off": debugController = .disabled
+            case "two": debugController = .pair
             default:
                 if let seconds = TimeInterval(value) {
                     debugController = .temporary(Date().addingTimeInterval(seconds))
@@ -88,7 +84,12 @@ final class ControllerHub {
     }
 
     func controller(at port: Int) -> Controller? {
-        controllers.indices.contains(port) ? controllers[port] : nil
+        guard assignments.slots.indices.contains(port), let id = assignments.slots[port] else { return nil }
+        return controllers.first { $0.id == id }
+    }
+
+    func assignController(_ id: String?, to port: Int) {
+        assignments.assign(id, to: port)
     }
 
     func state(of controller: Controller, console: SystemID?) -> PadState {
@@ -120,7 +121,16 @@ final class ControllerHub {
         var gc: [String: GCController] = [:]
         #if DEBUG
         let includeReal = debugController == nil
-        if let debugController, debugController.includesDebugPad { next.append(debugPad) }
+        switch debugController {
+        case .permanent:
+            next.append(debugPad)
+        case .pair:
+            next = [debugPad, Controller(id: "debug-pad-2", name: debugPad.name, type: debugPad.type, kind: debugPad.kind)]
+        case .temporary(let expiry) where Date() < expiry:
+            next.append(debugPad)
+        default:
+            break
+        }
         #else
         let includeReal = true
         #endif
@@ -146,15 +156,19 @@ final class ControllerHub {
         }
         hidByID = hidDevices
         #endif
-        // Keep existing players in their slots; newcomers join at the end.
+        let previouslyAssigned = Set(assignments.slots.compactMap { $0 })
+        // Keep discovery order independent from the player slots.
         let kept = controllers.filter { old in next.contains { $0.id == old.id } }
         let added = next.filter { new in !kept.contains { $0.id == new.id } }
         let removed = controllers.filter { old in !next.contains { $0.id == old.id } }
         controllers = kept + added
-        for controller in removed {
+        assignments.update(connectedIDs: controllers.map(\.id))
+        for controller in removed where previouslyAssigned.contains(controller.id) {
             NotificationCenter.default.post(name: .gamepadDisconnected, object: controller.name)
         }
-        if !added.isEmpty { NotificationCenter.default.post(name: .gamepadConnected, object: nil) }
+        if let id = assignments.slots.compactMap({ $0 }).first(where: { !previouslyAssigned.contains($0) }) {
+            NotificationCenter.default.post(name: .gamepadConnected, object: id)
+        }
     }
 
     static func state(of pad: GCExtendedGamepad) -> PadState {

@@ -1764,12 +1764,15 @@ targets:
       - App/Saves/SaveSlotNavigator.swift
       - App/Input/TouchZones.swift
       - App/Input/ConsoleLayout.swift
+      - App/Input/ControllerAssignments.swift
       - App/Input/InputMapping.swift
       - App/Input/HIDReport.swift
       - App/Input/HIDPresets.swift
       - App/Input/PlayerChrome.swift
       - App/Input/TouchControlSizing.swift
       - App/Client/SystemAvailability.swift
+      - App/Client/LibraryShelves.swift
+      - App/Game.swift
     dependencies:
       - package: SupersEmuServer
         product: SupersEmuKit
