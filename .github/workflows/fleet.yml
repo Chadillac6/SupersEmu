@@ -97,7 +97,9 @@ jobs:
   checks:
     name: Mac and server checks
     needs: [mac_server, ios_simulator]
-    if: ${{ !cancelled() }}
+    if: >-
+      ${{ always() && !(cancelled() && github.ref == 'refs/heads/main' &&
+        (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.run_attempt == '1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
