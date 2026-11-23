@@ -1,8 +1,0 @@
-name: Check iOS simulator app
-description: Build the unsigned iOS simulator app after XcodeGen setup.
-runs:
-  using: composite
-  steps:
-    - name: Build iOS simulator app
-      shell: bash
-      run: xcodebuild build -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ci-ios CODE_SIGNING_ALLOWED=NO
