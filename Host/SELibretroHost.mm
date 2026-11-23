@@ -25,6 +25,10 @@
 #include "SECoreAPI.h"
 #include "SELibretroHost+Testing.h"
 
+#if TARGET_OS_OSX && defined(__aarch64__)
+extern "C" bool se_core_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath, bool *migrated);
+#endif
+
 namespace {
 
 struct AudioRing {
@@ -156,7 +160,7 @@ const CoreOption kCoreOptions[] = {
     {"reicast_per_content_vmus", "VMU A1"},
     // PS2: the all-CPU GS renderer; PCSX2's OpenGL path needs newer GL than macOS has, Vulkan needs MoltenVK.
     {"pcsx2_renderer", "Software (SW)"},
-    // PS2: one memory card per game (<content name>.ps2) in the save directory, like other cores' saves.
+    // PS2: LRPS2 names the working card after the content in a separate working directory.
     {"pcsx2_shared_memory_cards", "disabled"},
 };
 
@@ -737,6 +741,14 @@ static BOOL SEHasPS2BIOS(NSURL *systemDirectory) {
 
     NSURL *saveDirectory = saveRAMURL.URLByDeletingLastPathComponent;
     NSFileManager *fm = NSFileManager.defaultManager;
+#if TARGET_OS_OSX && defined(__aarch64__)
+    NSURL *legacyPS2Directory = nil;
+    if ([coreID isEqualToString:SECoreIDLRPS2]) {
+        legacyPS2Directory = saveDirectory;
+        saveDirectory = [saveDirectory URLByAppendingPathComponent:@".lrps2" isDirectory:YES];
+        if (![fm createDirectoryAtURL:saveDirectory withIntermediateDirectories:YES attributes:nil error:error]) return nil;
+    } else
+#endif
     [fm createDirectoryAtURL:saveDirectory withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtURL:systemDirectory withIntermediateDirectories:YES attributes:nil error:nil];
 
@@ -796,6 +808,21 @@ static BOOL SEHasPS2BIOS(NSURL *systemDirectory) {
         }
         return nil;
     }
+    bool migratedSaveRAM = false;
+#if TARGET_OS_OSX && defined(__aarch64__)
+    if (legacyPS2Directory &&
+        !se_core_lrps2_migrate_legacy_card(legacyPS2Directory.fileSystemRepresentation,
+                                          saveRAMURL.fileSystemRepresentation, &migratedSaveRAM)) {
+        if (g.hw.requested) hwMakeCurrent();
+        core->unload_game();
+        core->deinit();
+        hwDestroy();
+        g.core = nullptr;
+        g.disk = {};
+        if (error) *error = hostError(3, @"The existing PlayStation 2 memory card could not be migrated. It has been preserved.");
+        return nil;
+    }
+#endif
     // Cores keep cheats in globals: never let one game's codes reach the next.
     if (core->cheat_reset) core->cheat_reset();
     NSMutableDictionary<NSString *, NSString *> *effectiveOptions = [NSMutableDictionary dictionary];
@@ -828,7 +855,7 @@ static BOOL SEHasPS2BIOS(NSURL *systemDirectory) {
     g.active = true;
     gActiveHost = self;
     g.audio.reset(size_t(_avInfo.timing.sample_rate / 4));
-    [self loadSaveRAM];
+    if (!migratedSaveRAM) [self loadSaveRAM];
     return self;
 }
 

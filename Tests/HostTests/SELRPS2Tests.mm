@@ -4,6 +4,7 @@
 #include <vector>
 
 #if TARGET_OS_OSX && defined(__aarch64__)
+#include <unistd.h>
 #include "libretro.h"
 #include "SECoreAPI.h"
 
@@ -179,6 +180,12 @@ NSData *TinyELF(const std::vector<uint8_t> &program) {
 
 - (NSURL *)saveDirectory { return [_tempDirectory URLByAppendingPathComponent:@"Saves" isDirectory:YES]; }
 
+- (NSURL *)workingDirectory { return [self.saveDirectory URLByAppendingPathComponent:@".lrps2" isDirectory:YES]; }
+
+- (NSURL *)workingCard { return [self.workingDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"]; }
+
+- (NSURL *)legacyCard { return [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"]; }
+
 - (NSURL *)saveRAMForGameID:(NSString *)gameID {
     return [self.saveDirectory URLByAppendingPathComponent:[gameID stringByAppendingPathExtension:@"srm"]];
 }
@@ -287,10 +294,10 @@ NSData *TinyELF(const std::vector<uint8_t> &program) {
     XCTAssertNotNil(host, @"%@", error);
     [host runFrames:30];
     [host shutdown];
-    NSURL *card = [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"];
+    NSURL *card = self.workingCard;
     XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:card.path],
                   @"slot 1 card is named after the content; saves: %@",
-                  [NSFileManager.defaultManager contentsOfDirectoryAtPath:self.saveDirectory.path error:nil]);
+                  [NSFileManager.defaultManager contentsOfDirectoryAtPath:self.workingDirectory.path error:nil]);
 }
 
 // An 8 MB PS2 card with ECC: 16384 pages of 528 bytes.
@@ -313,7 +320,47 @@ static NSData *BlankBytes() {
     return [NSData dataWithBytes:blank.data() length:blank.size()];
 }
 
-- (NSURL *)workingCard { return [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"]; }
+- (NSData *)writeLegacyCardWithSave:(NSData *)save {
+    NSError *error = nil;
+    std::vector<uint8_t> card(kCardSize, 0xFF);
+    memcpy(&card[kSavePage], save.bytes, save.length);
+    NSData *legacyCard = [NSData dataWithBytes:card.data() length:card.size()];
+    [NSFileManager.defaultManager createDirectoryAtURL:self.saveDirectory withIntermediateDirectories:YES attributes:nil error:nil];
+    XCTAssertTrue([legacyCard writeToURL:self.legacyCard options:NSDataWritingAtomic error:&error], @"%@", error);
+    return legacyCard;
+}
+
+- (void)testLegacyMemoryCardMigratesBeforeTheFirstFrame {
+    NSError *error = nil;
+    NSData *save = SaveBytes(0x31);
+    NSData *legacyCard = [self writeLegacyCardWithSave:save];
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    NSURL *saveRAM = [self saveRAMForGameID:@"ps2-game"];
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:saveRAM], legacyCard);
+    XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:self.legacyCard.path]);
+    [host runFrames:30];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), save);
+    [host shutdown];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:saveRAM]), save);
+}
+
+- (void)testUnreadableLegacyMemoryCardPreventsLaunch {
+    if (geteuid() == 0) return;
+    NSError *error = nil;
+    NSData *legacyCard = [self writeLegacyCardWithSave:SaveBytes(0x31)];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSURL *legacy = self.legacyCard;
+    XCTAssertTrue([fm setAttributes:@{NSFilePosixPermissions: @0} ofItemAtPath:legacy.path error:&error], @"%@", error);
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNil(host);
+    XCTAssertNotNil(error);
+    XCTAssertFalse([fm fileExistsAtPath:[self saveRAMForGameID:@"ps2-game"].path]);
+    XCTAssertTrue([fm setAttributes:@{NSFilePosixPermissions: @0600} ofItemAtPath:legacy.path error:&error], @"%@", error);
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:legacy], legacyCard);
+}
 
 - (void)testMemoryCardRoundTripsThroughSaveRAMAcrossRestarts {
     NSError *error = nil;
@@ -362,6 +409,37 @@ static NSData *BlankBytes() {
     return data;
 }
 
+- (void)testExistingSaveRAMTakesPrecedenceOverLegacyMemoryCard {
+    NSError *error = nil;
+    NSData *save = SaveBytes(0x71);
+    [self storeCardWithSave:save gameID:@"ps2-game"];
+    NSData *legacyCard = [self writeLegacyCardWithSave:SaveBytes(0x32)];
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), save);
+    [host shutdown];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]]), save);
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:self.legacyCard], legacyCard);
+}
+
+- (void)testBlockedMigrationDestinationDoesNotRemoveLegacyMemoryCard {
+    NSError *error = nil;
+    NSData *legacyCard = [self writeLegacyCardWithSave:SaveBytes(0x32)];
+    NSURL *saveRAM = [self saveRAMForGameID:@"ps2-game"];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    XCTAssertTrue([fm createDirectoryAtURL:saveRAM withIntermediateDirectories:NO attributes:nil error:&error], @"%@", error);
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNil(host);
+    XCTAssertNotNil(error);
+    BOOL isDirectory = NO;
+    XCTAssertTrue([fm fileExistsAtPath:saveRAM.path isDirectory:&isDirectory] && isDirectory);
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:self.legacyCard], legacyCard);
+}
+
 - (void)testSaveRAMMatchesTheClosedCardFile {
     NSError *error = nil;
     SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
@@ -382,6 +460,7 @@ static NSData *BlankBytes() {
     NSError *error = nil;
     NSData *save = SaveBytes(0x11);
     NSData *stored = [self storeCardWithSave:save gameID:@"ps2-game"];
+    [NSFileManager.defaultManager createDirectoryAtURL:self.workingDirectory withIntermediateDirectories:YES attributes:nil error:nil];
     [[NSData dataWithBytes:stored.bytes length:kCardSize / 2] writeToURL:self.workingCard atomically:YES];
 
     SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
@@ -399,9 +478,10 @@ static NSData *BlankBytes() {
     NSError *error = nil;
     NSData *stored = [self storeCardWithSave:SaveBytes(0x29) gameID:@"ps2-game"];
     std::vector<uint8_t> other(kCardSize, 0x00);
+    [NSFileManager.defaultManager createDirectoryAtURL:self.workingDirectory withIntermediateDirectories:YES attributes:nil error:nil];
     [[NSData dataWithBytes:other.data() length:other.size()] writeToURL:self.workingCard atomically:YES];
     // The card is staged next to the working copy; a directory in the way makes that fail.
-    NSURL *staged = [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2.tmp" isDirectory:YES];
+    NSURL *staged = [self.workingDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2.tmp" isDirectory:YES];
     [NSFileManager.defaultManager createDirectoryAtURL:staged withIntermediateDirectories:YES attributes:nil error:nil];
 
     SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
