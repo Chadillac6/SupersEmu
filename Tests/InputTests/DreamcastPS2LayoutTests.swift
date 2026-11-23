@@ -83,7 +83,12 @@ final class DreamcastPS2LayoutTests: XCTestCase {
         for system in SystemID.allCases where ![.dreamcast, .ps2].contains(system) {
             XCTAssertEqual(system.availability(on: .iOS), .available, "\(system) on iOS")
         }
-        XCTAssertEqual(DevicePlatform.current, .mac, "the test bundle runs on macOS")
+        #if os(macOS)
+        XCTAssertEqual(DevicePlatform.current, .mac)
+        #else
+        XCTAssertEqual(DevicePlatform.current, .iOS)
+        XCTAssertFalse(DevicePlatform.hasPS2Core, "LRPS2 is Mac-only")
+        #endif
     }
 
     func testDreamcastTouchControlsFitA402PointPhone() {
