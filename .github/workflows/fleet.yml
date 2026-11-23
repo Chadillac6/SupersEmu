@@ -103,16 +103,12 @@ jobs:
           path: build/ci-ios/SourcePackages
           key: ios-spm-${{ hashFiles('Server/Package.resolved', 'project.yml') }}
           restore-keys: ios-spm-
-      - name: Build iOS app and tests (fetching test fixtures alongside)
+      - name: Build iOS app and tests
         env:
           IPHONE: ${{ steps.simulators.outputs.iphone }}
-        run: |
-          mkdir -p build
-          scripts/fetch-test-roms.sh > build/fetch-test-roms.log 2>&1 &
-          fetch=$!
-          xcodebuild build-for-testing -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination "id=$IPHONE" -derivedDataPath build/ci-ios
-          wait "$fetch"
-          cat build/fetch-test-roms.log
+        run: xcodebuild build-for-testing -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination "id=$IPHONE" -derivedDataPath build/ci-ios
+      - name: Fetch existing homebrew test fixtures
+        run: scripts/fetch-test-roms.sh
       - name: Test iOS app on iPhone and iPad
         env:
           IPHONE: ${{ steps.simulators.outputs.iphone }}
