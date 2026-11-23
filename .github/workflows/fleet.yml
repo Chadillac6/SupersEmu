@@ -12,6 +12,26 @@ concurrency:
   group: fleet-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  supersede:
+    name: Supersede stale main runs
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.run_attempt == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 175
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        id: checkout
+        continue-on-error: true
+        with:
+          persist-credentials: false
+      - name: Check for a queued replacement
+        if: steps.checkout.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci-supersede-fleet.sh
   mac_server:
     name: Test Mac app and server
     runs-on: macos-15
@@ -32,6 +52,7 @@ jobs:
           scripts/test-release-mac-staple-retry.sh
           scripts/test-ci-wait-for-job.sh
           bash scripts/test-ci-retry-testflight.sh
+          bash scripts/test-ci-supersede-fleet.sh
           scripts/test-release-gatekeeper-check.sh
           scripts/test-release-p12.sh
           scripts/test-release-revoke-dev-certs.sh
@@ -75,7 +96,7 @@ jobs:
   checks:
     name: Mac and server checks
     needs: [mac_server, ios_simulator]
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
