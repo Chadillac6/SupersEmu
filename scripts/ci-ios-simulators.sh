@@ -32,5 +32,5 @@ else:
 ' "$devices" "$sdk")"
 echo "$picked"
 if [ $# -eq 0 ]; then
-  while IFS='=' read -r _ udid; do xcrun simctl boot "$udid" >/dev/null 2>&1 || true; done <<<"$picked"
+  while IFS='=' read -r _ udid; do nohup xcrun simctl boot "$udid" >/dev/null 2>&1 & done <<<"$picked"
 fi

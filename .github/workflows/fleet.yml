@@ -97,12 +97,22 @@ jobs:
         run: |
           scripts/test-ci-ios-simulators.sh
           scripts/ci-ios-simulators.sh >> "$GITHUB_OUTPUT"
-      - name: Fetch existing homebrew test fixtures
-        run: scripts/fetch-test-roms.sh
-      - name: Build iOS app and tests
+      - name: Cache Swift packages
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: build/ci-ios/SourcePackages
+          key: ios-spm-${{ hashFiles('Server/Package.resolved') }}
+          restore-keys: ios-spm-
+      - name: Build iOS app and tests (fetching test fixtures alongside)
         env:
           IPHONE: ${{ steps.simulators.outputs.iphone }}
-        run: xcodebuild build-for-testing -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination "id=$IPHONE" -derivedDataPath build/ci-ios
+        run: |
+          mkdir -p build
+          scripts/fetch-test-roms.sh > build/fetch-test-roms.log 2>&1 &
+          fetch=$!
+          xcodebuild build-for-testing -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination "id=$IPHONE" -derivedDataPath build/ci-ios
+          wait "$fetch"
+          cat build/fetch-test-roms.log
       - name: Test iOS app on iPhone and iPad
         env:
           IPHONE: ${{ steps.simulators.outputs.iphone }}
