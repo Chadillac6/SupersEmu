@@ -6,6 +6,8 @@
 
 #include "libretro.h"
 #include "MemoryCardFile.h"
+#include "CDVD/IsoFS/iso9660.h"
+#include "../PS2CardFixture.h"
 
 bool se_lrps2_load_game(const struct retro_game_info *game);
 bool se_core_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath, bool *migrated);
@@ -20,6 +22,9 @@ size_t se_lrps2_get_memory_size(unsigned type);
 static char cardPath[4096];
 static FILE *card;
 static u8 image[CARD_SIZE];
+static const char *bootELF = "cdrom0:\\SLUS_203.12;1";
+static bool oversizedSystemCNF;
+static const char *extraBootLine = "";
 
 static void check(bool condition, const char *message) {
     if (condition) return;
@@ -28,6 +33,48 @@ static void check(bool condition, const char *message) {
 }
 
 const char *host_content_name(void) { return "Test"; }
+
+static void ignoreLog(enum retro_log_level level, const char *format, ...) {
+    (void)level;
+    (void)format;
+}
+
+retro_log_printf_t log_cb = ignoreLog;
+
+bool isofs_read_sector(u8 *buffer, int lba) {
+    char cnf[128];
+    int length = bootELF ? snprintf(cnf, sizeof(cnf), "BOOT2 = %s\r\n%sVMODE = NTSC\r\n", bootELF, extraBootLine) : 0;
+    memset(buffer, 0, ISOFS_SECTOR);
+    switch (lba) {
+    case 16:
+        buffer[0] = 1;
+        memcpy(buffer + 1, "CD001", 5);
+        buffer[156] = 34;
+        ps2CardFixtureWord(buffer + 158, 18);
+        ps2CardFixtureWord(buffer + 166, ISOFS_SECTOR);
+        buffer[181] = 2;
+        buffer[188] = 1;
+        return true;
+    case 17:
+        buffer[0] = 0xFF;
+        memcpy(buffer + 1, "CD001", 5);
+        return true;
+    case 18:
+        if (!bootELF) return true;
+        buffer[0] = 46;
+        ps2CardFixtureWord(buffer + 2, 19);
+        ps2CardFixtureWord(buffer + 10, oversizedSystemCNF ? 1024 * 1024 + 1 : (u32)length);
+        buffer[32] = 12;
+        memcpy(buffer + 33, "SYSTEM.CNF;1", 12);
+        return true;
+    case 19:
+        check(!oversizedSystemCNF, "do not read oversized SYSTEM.CNF sectors");
+        memcpy(buffer, cnf, length);
+        return true;
+    default:
+        return false;
+    }
+}
 
 bool emu_config_mcd(uint slot, char *path, size_t size) {
     return slot == 0 && snprintf(path, size, "%s", cardPath) < (int)size;
@@ -70,13 +117,18 @@ void retro_deinit(void) { FileMcd_EmuClose(); }
 void *retro_get_memory_data(unsigned type) { (void)type; return NULL; }
 size_t retro_get_memory_size(unsigned type) { (void)type; return 0; }
 
-static void writeCard(const char *path, u8 progress) {
-    memset(image, 0xff, sizeof(image));
-    image[SAVE_OFFSET] = progress;
+static void writeImage(const char *path) {
     FILE *file = fopen(path, "wb");
     check(file != NULL, "open card fixture");
     check(fwrite(image, 1, sizeof(image), file) == sizeof(image), "write card fixture");
     check(fclose(file) == 0, "close card fixture");
+}
+
+static void writeCard(const char *path, u8 progress) {
+    memset(image, 0xff, sizeof(image));
+    ps2CardFixtureFormat(image, "BASLUS-20312SAVE");
+    image[SAVE_OFFSET] = progress;
+    writeImage(path);
 }
 
 static void loadSaveRAM(const char *path) {
@@ -107,6 +159,66 @@ int main(int argc, char **argv) {
     writeCard(legacy, 0x31);
 
     bool migrated;
+    bootELF = "cdrom0:\\SLUS_203.13;1";
+    check(se_lrps2_load_game(NULL), "load a different serial with the same basename");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "different disc serial must not migrate a same-basename PS2 card");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep the legacy card unclaimed");
+    loadSaveRAM(secondSaveRAM);
+    se_lrps2_run();
+    checkProgress(0xff, "mismatched legacy progress does not reach the running game");
+    se_lrps2_deinit();
+    puts("PASS: a different disc serial cannot claim the legacy card");
+
+    check(link(legacy, secondSaveRAM) == 0, "stage an interrupted migration");
+    check(se_lrps2_load_game(NULL), "load a different serial after interrupted migration");
+    check(!se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "do not load an unverified card from an interrupted migration");
+    check(access(legacy, F_OK) == 0, "interrupted migration still preserves the original card");
+    se_lrps2_deinit();
+    check(unlink(secondSaveRAM) == 0, "remove the staged destination");
+    puts("PASS: an interrupted migration cannot bypass serial validation");
+
+    bootELF = NULL;
+    check(se_lrps2_load_game(NULL), "load a game without a disc serial");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "no disc serial must skip migration");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep the legacy card without a serial");
+    se_lrps2_deinit();
+    puts("PASS: a missing disc serial leaves the legacy card untouched");
+
+    bootELF = "cdrom0:\\SLUS_203.12;1";
+    oversizedSystemCNF = true;
+    check(se_lrps2_load_game(NULL), "load game with oversized SYSTEM.CNF");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "oversized SYSTEM.CNF must not authorize migration");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep the legacy card with oversized metadata");
+    se_lrps2_deinit();
+    oversizedSystemCNF = false;
+    puts("PASS: oversized SYSTEM.CNF is rejected before reading its contents");
+
+    ps2CardFixtureWord(image + 41 * 2 * 528 + 4, 4);
+    ps2CardFixtureDirectory(image + 89 * 528, "BESLES-20312SAVE");
+    writeImage(legacy);
+    check(se_lrps2_load_game(NULL), "load game with a mixed-serial card");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "a matching folder does not make a different game's progress safe to migrate");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep mixed-serial legacy card");
+    se_lrps2_deinit();
+    puts("PASS: a card with another game's directory is not migrated");
+
+    writeCard(legacy, 0x31);
+    image[88 * 528 + 1] &= 0x7F;
+    memcpy(image + SAVE_OFFSET + 0x40, "BASLUS-20312SAVE", 17);
+    writeImage(legacy);
+    check(se_lrps2_load_game(NULL), "load game with matching bytes outside live root entries");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "deleted folders and save data are not live directory entries");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep legacy card without live match");
+    se_lrps2_deinit();
+    puts("PASS: deleted entries and matching data bytes do not authorize migration");
+
+    writeCard(legacy, 0x31);
     check(se_lrps2_load_game(NULL), "load game on upgrade");
     check(se_core_lrps2_migrate_legacy_card(argv[1], saveRAM, &migrated) && migrated, "migrate legacy card");
     se_lrps2_run();
@@ -124,6 +236,42 @@ int main(int argc, char **argv) {
     checkProgress(0xff, "a second game starts blank, not with the first game's card");
     se_lrps2_deinit();
     puts("PASS: another game with the same filename starts with a blank card");
+
+    const char *emptyBootLines[] = {"BOOT = \r\n", "BOOT2 = \t\r\n"};
+    for (size_t i = 0; i < sizeof(emptyBootLines) / sizeof(emptyBootLines[0]); i++) {
+        writeCard(legacy, 0x43);
+        extraBootLine = emptyBootLines[i];
+        check(se_lrps2_load_game(NULL), "load game with an empty boot assignment before EOF");
+        check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && migrated,
+              "an empty BOOT or BOOT2 assignment must not override the disc serial");
+        se_lrps2_run();
+        checkProgress(0x43, "the valid serial still migrates the legacy progress");
+        se_lrps2_deinit();
+        check(unlink(secondSaveRAM) == 0, "clear migrated test save");
+    }
+    puts("PASS: empty BOOT and BOOT2 assignments before EOF preserve the disc serial");
+
+    writeCard(legacy, 0x43);
+    extraBootLine = "BOOT2 = cdrom0:\\SLUS_203.13;1\r\n";
+    check(se_lrps2_load_game(NULL), "load game with a nonempty BOOT2 override");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "a superseded serial must not authorize migration");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep the card for the superseded serial");
+    se_lrps2_deinit();
+    extraBootLine = "";
+    puts("PASS: a later nonempty BOOT2 assignment supersedes the earlier serial");
+
+    writeCard(legacy, 0x42);
+    ps2CardFixtureSetVersion11(image);
+    writeImage(legacy);
+    check(se_lrps2_load_game(NULL), "load matching game with a version 1.1 card");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && migrated,
+          "version 1.1 card with an absolute allocation end must migrate");
+    se_lrps2_run();
+    checkProgress(0x42, "version 1.1 card progress reaches the running game");
+    se_lrps2_deinit();
+    check(access(legacy, F_OK) != 0 && unlink(secondSaveRAM) == 0, "version 1.1 card is claimed once");
+    puts("PASS: a matching version 1.1 card with an absolute allocation end migrates");
 
     writeCard(legacy, 0x92);
     check(se_lrps2_load_game(NULL), "reload game with existing save RAM");
