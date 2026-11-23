@@ -3,6 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 git submodule update --init --depth 1
+# An interrupted recursive clone can leave HEAD at the pin without checking out its files.
+git submodule foreach --quiet '
+  test -e "$(git rev-parse --git-path index)" || git checkout --detach "$sha1"
+'
 git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
 git -C Vendor/cores/flycast submodule update --init --depth 1 core/deps/libchdr core/deps/tinygettext core/deps/xbyak core/deps/asio
 [ -f Tests/Fixtures/local/HelloWorld.sfc ] || scripts/fetch-test-roms.sh

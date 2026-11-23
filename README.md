@@ -14,11 +14,13 @@ SupersEmu does not include games or BIOS files.
 Requirements: Xcode 26+, `brew install xcodegen`.
 
 ```sh
-git clone --recursive https://github.com/Chadillac6/SupersEmu.git
+git clone https://github.com/Chadillac6/SupersEmu.git
 cd SupersEmu
 scripts/build.sh          # fetch test ROMs, generate project, run macOS tests, build iOS sim
 open SupersEmu.xcodeproj  # schemes: SupersEmu-macOS, SupersEmu-iOS
 ```
+
+`scripts/build.sh` initializes the pinned cores and their required nested dependencies.
 
 Set `SUPERSEMU_IMPORT_DIR=/path/to/roms` in the scheme (or `SIMCTL_CHILD_SUPERSEMU_IMPORT_DIR`
 with `xcrun simctl launch`) to auto-import a folder on launch.
