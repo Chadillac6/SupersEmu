@@ -66,6 +66,9 @@ final class GameSession {
     /// A player's controller went away mid-game; the game stays paused until they resume.
     private(set) var disconnectedController: String?
     private(set) var reconnectedControllerID: String?
+    var showsDisconnectPrompt: Bool {
+        disconnectedController != nil && !isMenuOpen && !isChoosingDisc && !isChoosingCheat && !isShowingSaveSlots
+    }
 
     @ObservationIgnored let input = GameInput()
     @ObservationIgnored weak var displayLayer: CALayer?
@@ -1172,7 +1175,7 @@ final class GameSession {
         pause()
         clearHostInput()
         disconnectedController = name
-        if !isMenuOpen, !isChoosingDisc, !isShowingSaveSlots { startOverlayPolling() }
+        if showsDisconnectPrompt { startOverlayPolling() }
     }
 
     /// Continues after a disconnect, with the reconnected pad, another pad, touch or the keyboard.
@@ -1257,7 +1260,7 @@ final class GameSession {
             } else if !pressed.isDisjoint(with: [.east, .select, .home]) {
                 closeMenu()
             }
-        } else if disconnectedController != nil, !pressed.isDisjoint(with: [.south, .start]) {
+        } else if showsDisconnectPrompt, !pressed.isDisjoint(with: [.south, .start]) {
             dismissDisconnect()
         }
     }

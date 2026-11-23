@@ -86,7 +86,7 @@ struct PlayerView: View {
             if session.isShowingSaveSlots {
                 SaveSlotsView(session: session)
             }
-            if let name = session.disconnectedController, !session.isMenuOpen && !session.isShowingSaveSlots {
+            if session.showsDisconnectPrompt, let name = session.disconnectedController {
                 DisconnectPrompt(session: session, name: name)
             }
             if let newer = session.newerElsewhere, session.pendingConflict == nil, !session.isSyncing,
