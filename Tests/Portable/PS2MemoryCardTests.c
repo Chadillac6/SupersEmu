@@ -188,6 +188,18 @@ int main(int argc, char **argv) {
     se_lrps2_deinit();
     puts("PASS: another game with the same filename starts with a blank card");
 
+    writeCard(legacy, 0x42);
+    ps2CardFixtureSetVersion11(image);
+    writeImage(legacy);
+    check(se_lrps2_load_game(NULL), "load matching game with a version 1.1 card");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && migrated,
+          "version 1.1 card with an absolute allocation end must migrate");
+    se_lrps2_run();
+    checkProgress(0x42, "version 1.1 card progress reaches the running game");
+    se_lrps2_deinit();
+    check(access(legacy, F_OK) != 0 && unlink(secondSaveRAM) == 0, "version 1.1 card is claimed once");
+    puts("PASS: a matching version 1.1 card with an absolute allocation end migrates");
+
     writeCard(legacy, 0x92);
     check(se_lrps2_load_game(NULL), "reload game with existing save RAM");
     check(se_core_lrps2_migrate_legacy_card(argv[1], saveRAM, &migrated) && !migrated, "keep existing save RAM");

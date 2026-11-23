@@ -188,6 +188,13 @@ static bool cardMatchesDiscSerial(const u8 serial[10]) {
     alloc = cardWord(cardBuffer + 0x34);
     allocatable = cardWord(cardBuffer + 0x38);
     indirect = cardWord(cardBuffer + 0x50);
+    /* Version 1.1 may store the second backup block's absolute start in alloc_end. */
+    if (memcmp(cardBuffer + 0x1C, "1.1.", 4) == 0) {
+        u32 clustersPerBlock = (cardWord(cardBuffer + 0x2C) & 0xFFFFu) / 2;
+        u32 backupBlock = cardWord(cardBuffer + 0x44);
+        if (clustersPerBlock && clustersPerBlock <= 8 && backupBlock < CARD_CLUSTERS / clustersPerBlock &&
+            allocatable == backupBlock * clustersPerBlock && allocatable > alloc) allocatable -= alloc;
+    }
     if (alloc >= CARD_CLUSTERS || allocatable == 0 || allocatable > CARD_CLUSTERS - alloc ||
         indirect == 0 || indirect >= alloc) return false;
     entry = cardBuffer + alloc * CARD_CLUSTER_SIZE;

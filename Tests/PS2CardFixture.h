@@ -29,3 +29,11 @@ static void ps2CardFixtureFormat(uint8_t *image, const char *saveFolder) {
     ps2CardFixtureDirectory(image + 41 * cluster + 528, "..");
     ps2CardFixtureDirectory(image + 44 * cluster, saveFolder);
 }
+
+static inline void ps2CardFixtureSetVersion11(uint8_t *image) {
+    memcpy(image + 0x1C, "1.1.0.0", 8);
+    ps2CardFixtureWord(image + 0x2C, 0xFF000010u);
+    ps2CardFixtureWord(image + 0x38, 8176);
+    ps2CardFixtureWord(image + 0x40, 1023);
+    ps2CardFixtureWord(image + 0x44, 1022);
+}
