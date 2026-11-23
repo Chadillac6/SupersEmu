@@ -62,9 +62,9 @@ run_case 'uses the newest attempt of the checks' 1 2 60 \
 run_case 'reads the newest attempt from a later page' 1 1 60 \
   '[{"jobs":[{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"}]},{"jobs":[{"name":"Mac and server checks","run_attempt":2,"status":"completed","conclusion":"failure"}]}]'
 
-check_jobs=('Test Mac app and server' 'Build iOS simulator app')
+check_jobs=('Test Mac app and server' 'Build and test iOS app')
 run_case 'waits for both children on a full rerun despite an older passing gate' 1 2 60 \
-  '{"jobs":[{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"},{"name":"Test Mac app and server","run_attempt":2,"status":"completed","conclusion":"success"},{"name":"Build iOS simulator app","run_attempt":1,"status":"completed","conclusion":"success"},{"name":"Build iOS simulator app","run_attempt":2,"status":"queued","conclusion":null}]}' \
-  '{"jobs":[{"name":"Test Mac app and server","run_attempt":2,"status":"completed","conclusion":"success"},{"name":"Build iOS simulator app","run_attempt":2,"status":"completed","conclusion":"failure"}]}'
+  '{"jobs":[{"name":"Mac and server checks","run_attempt":1,"status":"completed","conclusion":"success"},{"name":"Test Mac app and server","run_attempt":2,"status":"completed","conclusion":"success"},{"name":"Build and test iOS app","run_attempt":1,"status":"completed","conclusion":"success"},{"name":"Build and test iOS app","run_attempt":2,"status":"queued","conclusion":null}]}' \
+  '{"jobs":[{"name":"Test Mac app and server","run_attempt":2,"status":"completed","conclusion":"success"},{"name":"Build and test iOS app","run_attempt":2,"status":"completed","conclusion":"failure"}]}'
 run_case 'allows a release-only rerun when both newest child attempts passed' 0 1 60 \
-  '{"jobs":[{"name":"Test Mac app and server","run_attempt":1,"status":"completed","conclusion":"success"},{"name":"Build iOS simulator app","run_attempt":2,"status":"completed","conclusion":"success"},{"name":"Upload iOS build to TestFlight","run_attempt":3,"status":"in_progress","conclusion":null}]}'
+  '{"jobs":[{"name":"Test Mac app and server","run_attempt":1,"status":"completed","conclusion":"success"},{"name":"Build and test iOS app","run_attempt":2,"status":"completed","conclusion":"success"},{"name":"Upload iOS build to TestFlight","run_attempt":3,"status":"in_progress","conclusion":null}]}'

@@ -1752,9 +1752,51 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Host/SupersEmu-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: YES
 
+  # iOS simulator run of the host tests: the same cores built without JIT, minus the Mac-only
+  # server menu, updater and PS2 (LRPS2) tests.
+  SupersEmuHostTests_iOS:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/HostTests
+        excludes:
+          - PrivilegedCommandTests.swift
+          - ServerMenuStatusTests.swift
+          - UpdateStatusTests.swift
+          - SELRPS2Tests.mm
+      - App/Diagnostics/PerformanceStats.swift
+      - App/FramePacer.swift
+      - App/AudioRateControl.swift
+      - App/EmulationLoop.swift
+      - App/Diagnostics/DiagnosticsLog.swift
+      - App/Diagnostics/N64Preset.swift
+      - App/Diagnostics/N64Graphics.swift
+      - Host/SELibretroHost.h
+      - Host/SELibretroHost.mm
+    dependencies:
+      - package: SupersEmuServer
+        product: SupersEmuKit
+      - target: Snes9xCore_iOS
+      - target: GambatteCore_iOS
+      - target: MGBACore_iOS
+      - target: GenesisPlusGXCore_iOS
+      - target: PicoDriveCore_iOS
+      - target: BeetlePSXCore_iOS
+      - target: Mupen64PlusNextCore_iOS
+      - target: FlycastCore_iOS
+      - sdk: libz.tbd
+      - sdk: AVFoundation.framework
+      - sdk: CoreVideo.framework
+      - sdk: CoreGraphics.framework
+    settings:
+      base:
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/Vendor/cores/snes9x/libretro", "$(SRCROOT)/Host", "$(SRCROOT)/Host/CoreEntry"]
+        SWIFT_OBJC_BRIDGING_HEADER: Host/SupersEmu-Bridging-Header.h
+        GENERATE_INFOPLIST_FILE: YES
+
   SupersEmuInputTests:
     type: bundle.unit-test
-    platform: macOS
+    platform: [iOS, macOS]
     sources:
       - Tests/InputTests
       - App/Diagnostics/AppLog.swift
@@ -1786,14 +1828,18 @@ schemes:
       targets:
         SupersEmu_macOS: all
         SupersEmuHostTests: [test]
-        SupersEmuInputTests: [test]
+        SupersEmuInputTests_macOS: [test]
     run:
       config: Debug
     test:
-      targets: [SupersEmuHostTests, SupersEmuInputTests]
+      targets: [SupersEmuHostTests, SupersEmuInputTests_macOS]
   SupersEmu-iOS:
     build:
       targets:
         SupersEmu_iOS: all
+        SupersEmuHostTests_iOS: [test]
+        SupersEmuInputTests_iOS: [test]
     run:
       config: Debug
+    test:
+      targets: [SupersEmuHostTests_iOS, SupersEmuInputTests_iOS]

@@ -78,7 +78,7 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
   ios_simulator:
-    name: Build iOS simulator app
+    name: Build and test iOS app
     runs-on: macos-15
     timeout-minutes: 90
     steps:
@@ -92,8 +92,30 @@ jobs:
           git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
           git -C Vendor/cores/flycast submodule update --init --depth 1 core/deps/libchdr core/deps/tinygettext core/deps/xbyak core/deps/asio
           xcodegen generate
-      - name: Build iOS simulator app
-        run: xcodebuild build -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ci-ios CODE_SIGNING_ALLOWED=NO
+      - name: Pick and boot iPhone and iPad simulators
+        id: simulators
+        run: |
+          scripts/test-ci-ios-simulators.sh
+          scripts/ci-ios-simulators.sh >> "$GITHUB_OUTPUT"
+      - name: Fetch existing homebrew test fixtures
+        run: scripts/fetch-test-roms.sh
+      - name: Build iOS app and tests
+        env:
+          IPHONE: ${{ steps.simulators.outputs.iphone }}
+        run: xcodebuild build-for-testing -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination "id=$IPHONE" -derivedDataPath build/ci-ios
+      - name: Test iOS app on iPhone and iPad
+        env:
+          IPHONE: ${{ steps.simulators.outputs.iphone }}
+          IPAD: ${{ steps.simulators.outputs.ipad }}
+        run: xcodebuild test-without-building -project SupersEmu.xcodeproj -scheme SupersEmu-iOS -destination "id=$IPHONE" -destination "id=$IPAD" -derivedDataPath build/ci-ios -resultBundlePath build/ci-ios-tests.xcresult
+      - name: Keep test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-test-results
+          path: build/ci-ios-tests.xcresult
+          retention-days: 7
+          if-no-files-found: ignore
   checks:
     name: Mac and server checks
     needs: [mac_server, ios_simulator]
@@ -108,7 +130,7 @@ jobs:
           MAC_SERVER_RESULT: ${{ needs.mac_server.result }}
           IOS_SIMULATOR_RESULT: ${{ needs.ios_simulator.result }}
         run: |
-          printf 'Mac and server: %s\niOS simulator: %s\n' "$MAC_SERVER_RESULT" "$IOS_SIMULATOR_RESULT"
+          printf 'Mac and server: %s\niOS: %s\n' "$MAC_SERVER_RESULT" "$IOS_SIMULATOR_RESULT"
           [[ "$MAC_SERVER_RESULT" == success && "$IOS_SIMULATOR_RESULT" == success ]]
   # Release jobs build alongside the checks and publish only after they pass (ci-wait-for-job.sh).
   version:
@@ -182,7 +204,7 @@ jobs:
       - name: Wait for Mac, server, and iOS checks
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci-wait-for-job.sh 'Test Mac app and server' 'Build iOS simulator app'
+        run: scripts/ci-wait-for-job.sh 'Test Mac app and server' 'Build and test iOS app'
       - name: Check for newer main commit
         id: latest-commit
         env:
@@ -240,7 +262,7 @@ jobs:
       - name: Wait for Mac, server, and iOS checks
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci-wait-for-job.sh 'Test Mac app and server' 'Build iOS simulator app'
+        run: scripts/ci-wait-for-job.sh 'Test Mac app and server' 'Build and test iOS app'
       - name: Check for newer main commit
         id: latest-commit
         env:
