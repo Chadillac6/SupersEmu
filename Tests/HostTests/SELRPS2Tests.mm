@@ -179,6 +179,10 @@ NSData *TinyELF(const std::vector<uint8_t> &program) {
 
 - (NSURL *)saveDirectory { return [_tempDirectory URLByAppendingPathComponent:@"Saves" isDirectory:YES]; }
 
+- (NSURL *)workingDirectory { return [self.saveDirectory URLByAppendingPathComponent:@".lrps2" isDirectory:YES]; }
+
+- (NSURL *)workingCard { return [self.workingDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"]; }
+
 - (NSURL *)saveRAMForGameID:(NSString *)gameID {
     return [self.saveDirectory URLByAppendingPathComponent:[gameID stringByAppendingPathExtension:@"srm"]];
 }
@@ -287,10 +291,10 @@ NSData *TinyELF(const std::vector<uint8_t> &program) {
     XCTAssertNotNil(host, @"%@", error);
     [host runFrames:30];
     [host shutdown];
-    NSURL *card = [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"];
+    NSURL *card = self.workingCard;
     XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:card.path],
                   @"slot 1 card is named after the content; saves: %@",
-                  [NSFileManager.defaultManager contentsOfDirectoryAtPath:self.saveDirectory.path error:nil]);
+                  [NSFileManager.defaultManager contentsOfDirectoryAtPath:self.workingDirectory.path error:nil]);
 }
 
 // An 8 MB PS2 card with ECC: 16384 pages of 528 bytes.
@@ -313,7 +317,27 @@ static NSData *BlankBytes() {
     return [NSData dataWithBytes:blank.data() length:blank.size()];
 }
 
-- (NSURL *)workingCard { return [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"]; }
+- (void)testLegacyMemoryCardMigratesBeforeTheFirstFrame {
+    NSError *error = nil;
+    NSData *save = SaveBytes(0x31);
+    std::vector<uint8_t> card(kCardSize, 0xFF);
+    memcpy(&card[kSavePage], save.bytes, save.length);
+    NSData *legacyCard = [NSData dataWithBytes:card.data() length:card.size()];
+    [NSFileManager.defaultManager createDirectoryAtURL:self.saveDirectory withIntermediateDirectories:YES attributes:nil error:nil];
+    NSURL *legacy = [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2"];
+    XCTAssertTrue([legacyCard writeToURL:legacy options:NSDataWritingAtomic error:&error], @"%@", error);
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    NSURL *saveRAM = [self saveRAMForGameID:@"ps2-game"];
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:saveRAM], legacyCard);
+    XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:legacy.path]);
+    [host runFrames:30];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), save);
+    [host shutdown];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:saveRAM]), save);
+}
 
 - (void)testMemoryCardRoundTripsThroughSaveRAMAcrossRestarts {
     NSError *error = nil;
@@ -382,6 +406,7 @@ static NSData *BlankBytes() {
     NSError *error = nil;
     NSData *save = SaveBytes(0x11);
     NSData *stored = [self storeCardWithSave:save gameID:@"ps2-game"];
+    [NSFileManager.defaultManager createDirectoryAtURL:self.workingDirectory withIntermediateDirectories:YES attributes:nil error:nil];
     [[NSData dataWithBytes:stored.bytes length:kCardSize / 2] writeToURL:self.workingCard atomically:YES];
 
     SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
@@ -399,9 +424,10 @@ static NSData *BlankBytes() {
     NSError *error = nil;
     NSData *stored = [self storeCardWithSave:SaveBytes(0x29) gameID:@"ps2-game"];
     std::vector<uint8_t> other(kCardSize, 0x00);
+    [NSFileManager.defaultManager createDirectoryAtURL:self.workingDirectory withIntermediateDirectories:YES attributes:nil error:nil];
     [[NSData dataWithBytes:other.data() length:other.size()] writeToURL:self.workingCard atomically:YES];
     // The card is staged next to the working copy; a directory in the way makes that fail.
-    NSURL *staged = [self.saveDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2.tmp" isDirectory:YES];
+    NSURL *staged = [self.workingDirectory URLByAppendingPathComponent:@"Homebrew Test.ps2.tmp" isDirectory:YES];
     [NSFileManager.defaultManager createDirectoryAtURL:staged withIntermediateDirectories:YES attributes:nil error:nil];
 
     SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];

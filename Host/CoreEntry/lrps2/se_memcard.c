@@ -1,11 +1,13 @@
-/* PS2 saves live on memory card 1, which LRPS2 keeps as "<content name>.ps2" in the save directory.
+/* PS2 saves live on memory card 1, which LRPS2 keeps as "<content name>.ps2" in its save directory.
  * Exposing that card as save RAM lets the host keep and sync it per game ID, like other cores'
- * .srm files. The file in the save directory becomes a working copy: every load replaces it with
+ * .srm files. The file in the core's save directory is a working copy: every load replaces it with
  * the game's own card (or a blank one), so games that share a file name never share saves. */
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "libretro.h"
 #include "MemoryCardFile.h"
@@ -115,6 +117,29 @@ bool se_lrps2_load_game(const struct retro_game_info *game) {
     cardSize = CARD_SIZE;
     awaitingHostLoad = true;
     return true;
+}
+
+bool se_lrps2_migrate_legacy_card(const char *legacyDirectory, const char *saveRAMPath) {
+    struct stat legacy, stored;
+    char legacyPath[PCSX2_PATH_MAX];
+    const char *name;
+    int length;
+    if (!awaitingHostLoad) return true;
+    name = strrchr(cardPath, '/');
+    length = snprintf(legacyPath, sizeof(legacyPath), "%s/%s", legacyDirectory, name ? name + 1 : cardPath);
+    if (length < 0 || (size_t)length >= sizeof(legacyPath)) return false;
+    if (lstat(legacyPath, &legacy) != 0) return errno == ENOENT;
+    if (lstat(saveRAMPath, &stored) == 0) {
+        if (!S_ISREG(stored.st_mode) || stored.st_size != CARD_SIZE) return false;
+        /* Resume if interrupted between linking and removing the old name. */
+        if (stored.st_dev != legacy.st_dev || stored.st_ino != legacy.st_ino) return true;
+    } else {
+        if (errno != ENOENT || !S_ISREG(legacy.st_mode) || legacy.st_size != CARD_SIZE) return false;
+        /* Both paths are in Saves. A hard link publishes the exact bytes without overwriting
+         * a save RAM file; the legacy name is only removed once that second name exists. */
+        if (link(legacyPath, saveRAMPath) != 0) return false;
+    }
+    return unlink(legacyPath) == 0 || errno == ENOENT;
 }
 
 void se_lrps2_run(void) {
