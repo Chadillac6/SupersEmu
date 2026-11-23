@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// How the player screen is laid out. On iOS a connected gamepad replaces the touch controls
+/// How the player screen is laid out. On iOS a player 1 gamepad replaces the touch controls
 /// and the game also fills the area they used. The top bar always floats over the game (`TopBarAutoHide`).
 struct PlayerChrome: Equatable {
     var showsTouchControls: Bool
@@ -9,12 +9,6 @@ struct PlayerChrome: Equatable {
 
     /// UserDefaults/AppStorage key for the setting; default true.
     static let hideTouchControlsKey = "hideTouchControlsWithController"
-
-    /// ControllerHub lists only extended gamepads (Siri Remote and keyboards aren't in it),
-    /// and the first one is player 1.
-    static func isControllerActive(connectedGamepads: Int) -> Bool {
-        connectedGamepads > 0
-    }
 
     static func resolve(controllerActive: Bool, hideWhenControllerConnected: Bool, hasTouchControls: Bool) -> PlayerChrome {
         guard hasTouchControls else { return PlayerChrome(showsTouchControls: false, isFullScreen: false) }

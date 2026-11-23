@@ -1,12 +1,6 @@
 import XCTest
 
 final class PlayerChromeTests: XCTestCase {
-    func testIsControllerActive() {
-        XCTAssertFalse(PlayerChrome.isControllerActive(connectedGamepads: 0))
-        XCTAssertTrue(PlayerChrome.isControllerActive(connectedGamepads: 1))
-        XCTAssertTrue(PlayerChrome.isControllerActive(connectedGamepads: 3))
-    }
-
     func testResolveControllerAndSettingGoesFullScreen() {
         let chrome = PlayerChrome.resolve(controllerActive: true, hideWhenControllerConnected: true, hasTouchControls: true)
         XCTAssertEqual(chrome, PlayerChrome(showsTouchControls: false, isFullScreen: true))
@@ -33,18 +27,21 @@ final class PlayerChromeTests: XCTestCase {
         }
     }
 
-    func testConnectThenDisconnectRoundTrip() {
+    func testOnlyPlayerOnePadHidesTouchControls() {
+        var assignments = ControllerAssignments(portCount: 4)
+        assignments.update(connectedIDs: ["pad"])
         let connected = PlayerChrome.resolve(
-            controllerActive: PlayerChrome.isControllerActive(connectedGamepads: 1),
+            controllerActive: assignments.slots[0] != nil,
             hideWhenControllerConnected: true, hasTouchControls: true)
         XCTAssertTrue(connected.isFullScreen)
         XCTAssertFalse(connected.showsTouchControls)
 
-        let disconnected = PlayerChrome.resolve(
-            controllerActive: PlayerChrome.isControllerActive(connectedGamepads: 0),
+        assignments.assign("pad", to: 1)
+        let playerTwoOnly = PlayerChrome.resolve(
+            controllerActive: assignments.slots[0] != nil,
             hideWhenControllerConnected: true, hasTouchControls: true)
-        XCTAssertFalse(disconnected.isFullScreen)
-        XCTAssertTrue(disconnected.showsTouchControls)
+        XCTAssertFalse(playerTwoOnly.isFullScreen)
+        XCTAssertTrue(playerTwoOnly.showsTouchControls)
     }
 
     @MainActor

@@ -1764,6 +1764,7 @@ targets:
       - App/Saves/SaveSlotNavigator.swift
       - App/Input/TouchZones.swift
       - App/Input/ConsoleLayout.swift
+      - App/Input/ControllerAssignments.swift
       - App/Input/InputMapping.swift
       - App/Input/HIDReport.swift
       - App/Input/HIDPresets.swift
