@@ -77,14 +77,18 @@ void retro_deinit(void) { FileMcd_EmuClose(); }
 void *retro_get_memory_data(unsigned type) { (void)type; return NULL; }
 size_t retro_get_memory_size(unsigned type) { (void)type; return 0; }
 
-static void writeCard(const char *path, u8 progress) {
-    memset(image, 0xff, sizeof(image));
-    ps2CardFixtureFormat(image, "BASLUS-20312SAVE");
-    image[SAVE_OFFSET] = progress;
+static void writeImage(const char *path) {
     FILE *file = fopen(path, "wb");
     check(file != NULL, "open card fixture");
     check(fwrite(image, 1, sizeof(image), file) == sizeof(image), "write card fixture");
     check(fclose(file) == 0, "close card fixture");
+}
+
+static void writeCard(const char *path, u8 progress) {
+    memset(image, 0xff, sizeof(image));
+    ps2CardFixtureFormat(image, "BASLUS-20312SAVE");
+    image[SAVE_OFFSET] = progress;
+    writeImage(path);
 }
 
 static void loadSaveRAM(const char *path) {
@@ -126,6 +130,15 @@ int main(int argc, char **argv) {
     se_lrps2_deinit();
     puts("PASS: a different disc serial cannot claim the legacy card");
 
+    check(link(legacy, secondSaveRAM) == 0, "stage an interrupted migration");
+    check(se_lrps2_load_game(NULL), "load a different serial after interrupted migration");
+    check(!se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "do not load an unverified card from an interrupted migration");
+    check(access(legacy, F_OK) == 0, "interrupted migration still preserves the original card");
+    se_lrps2_deinit();
+    check(unlink(secondSaveRAM) == 0, "remove the staged destination");
+    puts("PASS: an interrupted migration cannot bypass serial validation");
+
     bootELF = NULL;
     check(se_lrps2_load_game(NULL), "load a game without a disc serial");
     check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
@@ -135,6 +148,28 @@ int main(int argc, char **argv) {
     puts("PASS: a missing disc serial leaves the legacy card untouched");
 
     bootELF = "cdrom0:\\SLUS_203.12;1";
+    ps2CardFixtureWord(image + 41 * 2 * 528 + 4, 4);
+    ps2CardFixtureDirectory(image + 89 * 528, "BESLES-20312SAVE");
+    writeImage(legacy);
+    check(se_lrps2_load_game(NULL), "load game with a mixed-serial card");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "a matching folder does not make a different game's progress safe to migrate");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep mixed-serial legacy card");
+    se_lrps2_deinit();
+    puts("PASS: a card with another game's directory is not migrated");
+
+    writeCard(legacy, 0x31);
+    image[88 * 528 + 1] &= 0x7F;
+    memcpy(image + SAVE_OFFSET + 0x40, "BASLUS-20312SAVE", 17);
+    writeImage(legacy);
+    check(se_lrps2_load_game(NULL), "load game with matching bytes outside live root entries");
+    check(se_core_lrps2_migrate_legacy_card(argv[1], secondSaveRAM, &migrated) && !migrated,
+          "deleted folders and save data are not live directory entries");
+    check(access(legacy, F_OK) == 0 && access(secondSaveRAM, F_OK) != 0, "keep legacy card without live match");
+    se_lrps2_deinit();
+    puts("PASS: deleted entries and matching data bytes do not authorize migration");
+
+    writeCard(legacy, 0x31);
     check(se_lrps2_load_game(NULL), "load game on upgrade");
     check(se_core_lrps2_migrate_legacy_card(argv[1], saveRAM, &migrated) && migrated, "migrate legacy card");
     se_lrps2_run();
