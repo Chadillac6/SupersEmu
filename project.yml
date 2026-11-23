@@ -1770,6 +1770,8 @@ targets:
       - App/Input/PlayerChrome.swift
       - App/Input/TouchControlSizing.swift
       - App/Client/SystemAvailability.swift
+      - App/Client/LibraryShelves.swift
+      - App/Game.swift
     dependencies:
       - package: SupersEmuServer
         product: SupersEmuKit

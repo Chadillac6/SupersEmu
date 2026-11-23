@@ -46,28 +46,9 @@ struct HomeSections: Equatable {
 enum LibraryShelves {
     static let recentlyAddedLimit = 12
 
-    @MainActor static func items(server: [GameSummary], firstSeen: [String: Date], downloads: DownloadCenter, local: [Game]) -> [LibraryItem] {
-        // A local copy of a server game shows once, with the server's metadata, and plays from the local file if not downloaded.
-        let localByID = Dictionary(local.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let serverIDs = Set(server.map(\.id))
-        let serverItems = server.map { summary in
-            let playable = downloads.playableGame(summary.id) ?? localByID[summary.id]
-            return LibraryItem(
-                id: summary.id, title: summary.title, console: summary.system.displayName, system: summary.system,
-                year: summary.year, genre: summary.genre, coverPath: summary.coverPath, size: summary.totalSize,
-                addedAt: summary.addedAt ?? firstSeen[summary.id], source: .server,
-                isDownloaded: downloads.isDownloaded(summary.id),
-                playable: playable, lastPlayed: lastPlayed(summary.id), heroPath: summary.heroPath ?? summary.backdropPath,
-                logoPath: summary.logoPath, genres: summary.genres, players: summary.players, criticScore: summary.criticScore?.score,
-                hasLocalCopy: localByID[summary.id] != nil)
-        }
-        let localItems = local.filter { !serverIDs.contains($0.id) }.map { game in
-            LibraryItem(
-                id: game.id, title: game.title, console: game.console, system: CoreRegistry.systemID(forConsole: game.console).flatMap(SystemID.init(rawValue:)), year: nil, genre: nil, coverPath: nil,
-                size: (try? FileManager.default.attributesOfItem(atPath: game.fileURL.path)[.size] as? NSNumber)?.int64Value ?? 0,
-                addedAt: nil, source: .local, isDownloaded: true, playable: game, lastPlayed: lastPlayed(game.id))
-        }
-        return (serverItems + localItems).filter { $0.system?.isShown() ?? true }
+    /// Drops consoles this device can't show, such as PS2 on iPhone and iPad.
+    static func visible(_ items: [LibraryItem], on platform: DevicePlatform = .current) -> [LibraryItem] {
+        items.filter { $0.system?.isShown(on: platform) ?? true }
     }
 
     /// Offline, only games that can launch without the server are shown.
@@ -90,6 +71,11 @@ enum LibraryShelves {
                             allGames: sorted, downloaded: downloaded, notDownloaded: notDownloaded)
     }
 
+    /// Games `home` leaves out offline because they can't launch without the server.
+    static func offlineUnavailableCount(_ items: [LibraryItem]) -> Int {
+        items.filter { $0.source == .server && !$0.isDownloaded }.count
+    }
+
     static func search(_ items: [LibraryItem], query: String, online: Bool) -> [LibraryItem] {
         let visible = online ? items : items.filter { $0.playable != nil }
         let query = query.trimmingCharacters(in: .whitespaces)
@@ -102,9 +88,5 @@ enum LibraryShelves {
 
     private static func titleOrder(_ a: LibraryItem, _ b: LibraryItem) -> Bool {
         a.title.localizedStandardCompare(b.title) == .orderedAscending
-    }
-
-    private static func lastPlayed(_ gameID: String) -> Date? {
-        (try? FileManager.default.attributesOfItem(atPath: AppPaths.autoState(for: gameID).path)[.modificationDate]) as? Date
     }
 }
