@@ -409,6 +409,37 @@ static NSData *BlankBytes() {
     return data;
 }
 
+- (void)testExistingSaveRAMTakesPrecedenceOverLegacyMemoryCard {
+    NSError *error = nil;
+    NSData *save = SaveBytes(0x71);
+    [self storeCardWithSave:save gameID:@"ps2-game"];
+    NSData *legacyCard = [self writeLegacyCardWithSave:SaveBytes(0x32)];
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    if (!host) return;
+    [host runFrames:30];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:self.workingCard]), save);
+    [host shutdown];
+    XCTAssertEqualObjects(CardBytes([NSData dataWithContentsOfURL:[self saveRAMForGameID:@"ps2-game"]]), save);
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:self.legacyCard], legacyCard);
+}
+
+- (void)testBlockedMigrationDestinationDoesNotRemoveLegacyMemoryCard {
+    NSError *error = nil;
+    NSData *legacyCard = [self writeLegacyCardWithSave:SaveBytes(0x32)];
+    NSURL *saveRAM = [self saveRAMForGameID:@"ps2-game"];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    XCTAssertTrue([fm createDirectoryAtURL:saveRAM withIntermediateDirectories:NO attributes:nil error:&error], @"%@", error);
+
+    SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
+    XCTAssertNil(host);
+    XCTAssertNotNil(error);
+    BOOL isDirectory = NO;
+    XCTAssertTrue([fm fileExistsAtPath:saveRAM.path isDirectory:&isDirectory] && isDirectory);
+    XCTAssertEqualObjects([NSData dataWithContentsOfURL:self.legacyCard], legacyCard);
+}
+
 - (void)testSaveRAMMatchesTheClosedCardFile {
     NSError *error = nil;
     SELibretroHost *host = [self hostWithSystem:[self systemDirectoryWithBIOS:YES] error:&error];
