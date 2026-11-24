@@ -60,6 +60,7 @@ jobs:
           scripts/test-release-revoke-dev-certs.sh
           scripts/test-marketing-version.sh
           scripts/test-mac-release-notes.sh
+          bash scripts/test-publish-mac-update.sh
       - name: Test remote access scripts
         run: |
           scripts/test-ddns-cloudflare.sh

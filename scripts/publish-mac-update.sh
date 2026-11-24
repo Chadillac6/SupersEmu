@@ -6,16 +6,118 @@ cd "$(dirname "$0")/.."
 out="${1:?Pass release output directory}"
 tag="${2:?Pass release tag}"
 ref="${3:?Pass the tested commit or branch}"
-# Refuse to modify an existing release or replace its signed assets.
-if gh release view "$tag" --repo Chadillac6/SupersEmu >/dev/null 2>&1; then
-  echo 'Release already exists. Build a new version rather than replacing it.' >&2; exit 2
+repo=Chadillac6/SupersEmu
+[[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid release tag' >&2; exit 2; }
+
+release_view() {
+  gh release view "$tag" --repo "$repo" --json databaseId,isDraft,targetCommitish,assets
+}
+
+release_id=""
+if release="$(release_view 2>&1)"; then
+  if jq -e '.isDraft == false' <<< "$release" >/dev/null; then
+    if jq -e '
+      [.assets[] | select(.state == "uploaded" and .size > 0) | .name] as $names
+      | ($names | index("appcast.xml")) != null
+        and any($names[] | select(test("^SupersEmu-.+\\.zip$"));
+          sub("\\.zip$"; ".dmg") as $dmg | ($names | index($dmg)) != null)
+    ' <<< "$release" >/dev/null; then
+      echo "Mac update $tag is already published."
+      exit 0
+    fi
+    echo "Published release $tag is incomplete; refusing to modify it." >&2
+    exit 2
+  fi
+  release_id="$(jq -er '.databaseId' <<< "$release")"
+elif [[ "$release" != 'release not found' ]]; then
+  printf '%s\n' "$release" >&2
+  exit 1
 fi
-scripts/prepare-mac-appcast.sh "$out" "$tag" "$ref"
+
+commit="$(git rev-parse --verify "$ref^{commit}")"
+same_draft() {
+  jq -e --arg id "$release_id" --arg commit "$commit" '
+    .isDraft == true and (.databaseId | tostring) == $id and .targetCommitish == $commit
+  ' <<< "$1" >/dev/null
+}
+
+if [[ -n "$release_id" ]] && ! same_draft "$release"; then
+  echo "Release $tag is not a draft for $commit; refusing to modify it." >&2
+  exit 2
+fi
+
+scripts/prepare-mac-appcast.sh "$out" "$tag" "$commit"
 shopt -s nullglob
 zips=("$out"/updates/SupersEmu-*.zip)
+dmgs=("$out"/SupersEmu-*.dmg)
 notes_files=("$out"/updates/SupersEmu-*.html)
 [ "${#notes_files[@]}" = 1 ] || { echo 'Expected exactly one generated release-notes HTML file.' >&2; exit 2; }
-gh release create "$tag" "${zips[@]}" "$out/updates/appcast.xml" "$out"/SupersEmu-*.dmg \
-  --repo Chadillac6/SupersEmu --target "$ref" --title "SupersEmu $tag" --notes-file "${notes_files[0]}" --draft
+if [[ "${#zips[@]}" != 1 || "${#dmgs[@]}" != 1 ]]; then
+  echo 'Expected exactly one release ZIP and DMG.' >&2
+  exit 2
+fi
+zip_name="${zips[0]##*/}"
+dmg_name="${dmgs[0]##*/}"
+if [[ "${zip_name%.zip}" != "${dmg_name%.dmg}" ]]; then
+  echo 'Expected exactly one matching release ZIP and DMG.' >&2
+  exit 2
+fi
+files=("${zips[0]}" "$out/updates/appcast.xml" "${dmgs[0]}")
+digests=()
+for file in "${files[@]}"; do
+  [[ -s "$file" ]] || { echo "Missing or empty release asset: $file" >&2; exit 2; }
+  digest="$(shasum -a 256 < "$file")"
+  digests+=("sha256:${digest%% *}")
+done
+
+if [[ -z "$release_id" ]]; then
+  gh release create "$tag" --repo "$repo" --target "$commit" --title "SupersEmu $tag" \
+    --notes-file "${notes_files[0]}" --draft
+  release="$(release_view)"
+  release_id="$(jq -er '.databaseId' <<< "$release")"
+fi
+
+asset_matches() {
+  jq -e --arg name "$2" --arg digest "$3" '
+    any(.assets[]; .name == $name and .state == "uploaded" and .size > 0 and .digest == $digest)
+  ' <<< "$1" >/dev/null
+}
+
+upload_asset() {
+  local file="$1" digest="$2" name="${1##*/}" attempt snapshot
+  for attempt in 1 2 3 4; do
+    if snapshot="$(release_view)"; then
+      if ! same_draft "$snapshot"; then
+        echo "Draft $tag changed during upload; refusing to modify it." >&2
+        return 1
+      fi
+      if asset_matches "$snapshot" "$name" "$digest"; then
+        return 0
+      fi
+      if gh release upload "$tag" "$file" --repo "$repo" --clobber &&
+        snapshot="$(release_view)" && asset_matches "$snapshot" "$name" "$digest"; then
+        return 0
+      fi
+    fi
+    if (( attempt < 4 )); then
+      echo "Could not verify $name after attempt $attempt; retrying." >&2
+      sleep "$((2 ** attempt))"
+    fi
+  done
+  echo "Could not verify $name; leaving $tag as a draft." >&2
+  return 1
+}
+
+for i in "${!files[@]}"; do
+  upload_asset "${files[i]}" "${digests[i]}"
+done
+
+release="$(release_view)"
+same_draft "$release" || { echo "Draft $tag changed before publication." >&2; exit 1; }
+for i in "${!files[@]}"; do
+  name="${files[i]##*/}"
+  asset_matches "$release" "$name" "${digests[i]}" ||
+    { echo "Could not verify $name; leaving $tag as a draft." >&2; exit 1; }
+done
 # Latest is explicit because Sparkle follows /releases/latest/download/appcast.xml.
-gh release edit "$tag" --repo Chadillac6/SupersEmu --draft=false --latest
+gh release edit "$tag" --repo "$repo" --draft=false --latest
