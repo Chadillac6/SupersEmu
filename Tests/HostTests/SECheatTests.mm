@@ -235,6 +235,44 @@ static NSArray<NSNumber *> *outcomes(std::initializer_list<SECheatOutcome> list)
     [host runFrames:5];
 }
 
+- (void)testGambatteCompoundGameGenieChangesGameOutput {
+    NSMutableData *rom = [NSMutableData dataWithLength:0x8000];
+    auto bytes = static_cast<uint8_t *>(rom.mutableBytes);
+    const uint8_t entry[] = {0xC3, 0x50, 0x01};
+    const uint8_t program[] = {
+        0x3E, 0x0A, 0xEA, 0x00, 0x00,  // Enable cartridge SRAM.
+        0x3E, 0x42, 0xEA, 0x00, 0xA0,  // Write the first immediate to SRAM.
+        0x3E, 0x24, 0xEA, 0x01, 0xA0,  // Write the second immediate to SRAM.
+        0x18, 0xF4,                    // Repeat so clearing the cheats is observable.
+    };
+    memcpy(bytes + 0x100, entry, sizeof(entry));
+    memcpy(bytes + 0x150, program, sizeof(program));
+    bytes[0x147] = 0x03;
+    bytes[0x149] = 0x02;
+    NSURL *romURL = [_directory URLByAppendingPathComponent:@"compound.gb"];
+    NSURL *saveURL = [_directory URLByAppendingPathComponent:@"compound.srm"];
+    XCTAssertTrue([rom writeToURL:romURL atomically:YES]);
+
+    NSError *error = nil;
+    SELibretroHost *host = [[SELibretroHost alloc] initWithCoreID:@"gambatte" romURL:romURL saveRAMURL:saveURL
+                                                  systemDirectory:_directory error:&error];
+    XCTAssertNotNil(host, @"%@", error);
+    const uint8_t original[] = {0x42, 0x24};
+    const uint8_t patched[] = {0x99, 0x77};
+    NSArray<NSArray<NSString *> *> *passes = @[@[], @[@"991-56F-E03", @"771-5BF-70A"], @[]];
+    for (NSUInteger i = 0; i < passes.count; i++) {
+        [host applyCheatCodes:passes[i]];
+        [host runFrames:5];
+        XCTAssertTrue([host flushSaveRAMWithError:&error], @"%@", error);
+        NSData *saved = [NSData dataWithContentsOfURL:saveURL];
+        XCTAssertGreaterThanOrEqual(saved.length, sizeof(original));
+        if (saved.length >= sizeof(original)) {
+            XCTAssertEqualObjects([saved subdataWithRange:NSMakeRange(0, sizeof(original))],
+                                  [NSData dataWithBytes:i == 1 ? patched : original length:sizeof(original)]);
+        }
+    }
+}
+
 - (void)testMGBAGBACheatsAreUnverifiedAndRun {
     SELibretroHost *host = [self realHost:@"mgba" rom:@"gba-tests-hello.gba"];
     if (!host) { XCTSkip(@"gba-tests-hello.gba fixture missing (scripts/fetch-test-roms.sh)"); }

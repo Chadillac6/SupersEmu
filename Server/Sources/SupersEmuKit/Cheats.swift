@@ -369,13 +369,8 @@ public enum CheatCodec {
                 reason: "Only GameShark codes starting with 01 work for Game Boy."
             )
         }
-        guard let chars = gameBoyGameGenieBody(code) else { return nil }
-        let value = UInt8((hexValue(chars[0])! << 4) | hexValue(chars[1])!)
-        let address = ((hexValue(chars[2])! << 8)
-            | (hexValue(chars[4])! << 4)
-            | hexValue(chars[5])!
-            | ((hexValue(chars[6])! ^ 0xF) << 12)) & 0x7FFF
-        return .valid(format: .gbGameGenie, normalized: code, address: address, value: UInt16(value))
+        guard let patch = GameBoyGeniePatch(code) else { return nil }
+        return .valid(format: .gbGameGenie, normalized: code, address: UInt32(patch.address), value: UInt16(patch.value))
     }
 
     static func gameBoyGameGenieBody(_ code: String) -> [Character]? {
@@ -384,7 +379,7 @@ public enum CheatCodec {
         if chars.count == 11, chars[7] != "-" { return nil }
         let body = chars.filter { $0 != "-" }
         guard body.count == (chars.count == 7 ? 6 : 9), body.allSatisfy({ hexDigits.contains($0) }) else { return nil }
-        return chars
+        return body
     }
 
     static func hexValue(_ character: Character) -> UInt32? {

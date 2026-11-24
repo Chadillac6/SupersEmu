@@ -14,6 +14,8 @@ enum CheatRunState: Equatable {
     case sent
     /// Sent and ignored by the core.
     case rejected
+    /// Not sent because the core's patch table is full.
+    case capacityExceeded
 
     var label: String {
         switch self {
@@ -22,8 +24,17 @@ enum CheatRunState: Equatable {
         case .applied: "Applied"
         case .sent: "Sent"
         case .rejected: "Rejected by core"
+        case .capacityExceeded: "Not working"
         }
     }
+}
+
+struct PlayerCheatRow: Identifiable {
+    let id: UUID
+    let label: String
+    let codes: [String]
+    let enabled: Bool
+    let quality: BundledCheatCatalog.Match.Quality?
 }
 
 /// App-wide cheats: one `CheatSyncEngine` (files under `AppPaths.cheats`) shared by the library and the player.
@@ -41,7 +52,9 @@ final class CheatLibrary {
         self.engine = engine ?? CheatSyncEngine(directory: AppPaths.cheats, provider: SaveSync.shared.provider)
     }
 
-    func cheats(for gameID: String) -> [CheatRecord] { byGame[gameID] ?? [] }
+    func cheats(for gameID: String) -> [CheatRecord] {
+        (byGame[gameID] ?? []).filter { !BundledCheat.isSelection($0) }
+    }
 
     /// Reads this device's copy only, so launching a game never waits on the network.
     @discardableResult

@@ -176,6 +176,10 @@ final class DownloadCenter {
         tasks[gameID] = nil
         states[gameID] = nil
         setDownloaded(verifiedID, cached)
+        let system = cached.detail.game.system
+        if BundledCheatCatalog.supports(system), let url = cache.launchFileURL(for: cached) {
+            Task { _ = await BundledCheatLibrary.shared.matches(gameID: verifiedID, system: system, romURL: url) }
+        }
     }
 
     /// A canceled or failed replacement may have left the previous copy untouched; show it again if it still verifies.

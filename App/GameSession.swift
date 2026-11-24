@@ -44,7 +44,9 @@ final class GameSession {
     /// The in-game menu (Select+Start held 1 s, long-press Home/Guide, or the Menu button) is open; the game is paused.
     private(set) var isMenuOpen = false
     /// Saved cheats for this game (enabled or not) and what the core did with each enabled one.
-    private(set) var cheats: [CheatRecord] = []
+    private var cheats: [CheatRecord] = []
+    private var bundledCheats: [BundledCheat] = []
+    private var bundledSelections: [UUID: CheatRecord] = [:]
     private(set) var cheatStates: [UUID: CheatRunState] = [:]
     /// The in-game Cheats list is open; the game stays paused until it closes.
     private(set) var isChoosingCheat = false
@@ -227,7 +229,13 @@ final class GameSession {
             coreOptions: hostInfo.coreOptions,
             n64Preset: n64Preset)
         coreSupportsCheats = hostInfo.supportsCheats && CheatCodec.supportsCheats(systemID)
-        if coreSupportsCheats { cheats = await CheatLibrary.shared.load(game.id) }
+        if coreSupportsCheats {
+            async let bundled = BundledCheatLibrary.shared.matches(gameID: gameID, system: systemID, romURL: romURL)
+            let saved = await CheatLibrary.shared.load(gameID)
+            cheats = saved.filter { !BundledCheat.isSelection($0) }
+            bundledSelections = Dictionary(uniqueKeysWithValues: saved.filter(BundledCheat.isSelection).map { ($0.id, $0) })
+            bundledCheats = await bundled
+        }
         diskCount = hostInfo.diskCount
         currentDisk = hostInfo.currentDisk
         #if DEBUG
@@ -337,41 +345,75 @@ final class GameSession {
     /// At least one cheat is changing the game right now (shown as a "Cheats on" badge).
     var cheatsActive: Bool { cheatStates.values.contains { $0 == .applied || $0 == .sent } }
 
+    var cheatRows: [PlayerCheatRow] {
+        bundledCheats.map { cheat in
+            PlayerCheatRow(id: cheat.id, label: cheat.match.label, codes: cheat.match.codes,
+                           enabled: bundledSelections[cheat.id]?.enabled ?? false, quality: cheat.match.quality)
+        } + cheats.map {
+            PlayerCheatRow(id: $0.id, label: $0.label, codes: [$0.code], enabled: $0.enabled, quality: nil)
+        }
+    }
+
     /// Sends every enabled, valid cheat to the core (clearing the old set first). Called after load, a state load,
     /// a restart and every toggle, so the core always holds exactly the enabled list.
     private func applyCheats() {
         guard host != nil, coreSupportsCheats else { return }
+        let system = systemID
         var states: [UUID: CheatRunState] = [:]
-        var sent: [CheatRecord] = []
-        for cheat in cheats {
+        var ids: [UUID] = []
+        var groups: [[String]] = []
+        for cheat in cheatRows {
             if !cheat.enabled { states[cheat.id] = .off; continue }
-            guard case .valid(_, let code, _, _) = CheatCodec.parse(cheat.code, system: systemID) else {
+            let codes = cheat.codes.compactMap { raw -> String? in
+                guard case .valid(_, let code, _, _) = CheatCodec.parse(raw, system: system) else { return nil }
+                return CheatCodec.coreCode(code)
+            }
+            guard codes.count == cheat.codes.count else {
                 states[cheat.id] = .invalid
                 continue
             }
-            var normalized = cheat
-            normalized.code = code
-            sent.append(normalized)
+            ids.append(cheat.id)
+            groups.append(codes)
         }
-        let coreCodes = sent.map { CheatCodec.coreCode($0.code) }
-        let outcomes = emulationLoop?.perform { $0?.applyCheats(coreCodes) ?? [] } ?? []
-        for (cheat, outcome) in zip(sent, outcomes) {
-            switch CheatOutcome(rawValue: outcome.intValue) {
-            case .applied: states[cheat.id] = .applied
-            case .unverified: states[cheat.id] = .sent
-            default: states[cheat.id] = .rejected
+        let outcomes = emulationLoop?.perform { host in
+            CheatApplicationOutcome.replace(groups, system: system) { codes in
+                (host?.applyCheats(codes) ?? []).map {
+                    switch CheatOutcome(rawValue: $0.intValue) {
+                    case .applied: .applied
+                    case .unverified: .sent
+                    default: .rejected
+                    }
+                }
+            }
+        } ?? []
+        for (id, outcome) in zip(ids, outcomes) {
+            switch outcome {
+            case .applied: states[id] = .applied
+            case .sent: states[id] = .sent
+            case .rejected: states[id] = .rejected
+            case .capacityExceeded: states[id] = .capacityExceeded
             }
         }
         cheatStates = states
     }
 
     func setCheat(_ id: UUID, enabled: Bool) {
-        guard let index = cheats.firstIndex(where: { $0.id == id }) else { return }
-        cheats[index].setEnabled(enabled)
-        let record = cheats[index]
+        let record: CheatRecord
+        if let bundled = bundledCheats.first(where: { $0.id == id }) {
+            var selection = bundledSelections[id] ?? bundled.selection(gameID: game.id, enabled: enabled)
+            selection.setEnabled(enabled)
+            bundledSelections[id] = selection
+            record = selection
+        } else if let index = cheats.firstIndex(where: { $0.id == id }) {
+            cheats[index].setEnabled(enabled)
+            record = cheats[index]
+        } else {
+            return
+        }
         applyCheats()
         status = enabled ? "\(record.label) on" : "\(record.label) off"
         if cheatStates[id] == .rejected { status = "\(record.label): the core didn't accept this code" }
+        if cheatStates[id] == .capacityExceeded { status = "\(record.label): too many enabled cheats" }
         Task {
             do {
                 try await CheatLibrary.shared.save([record])
@@ -1227,10 +1269,13 @@ final class GameSession {
         if isShowingControls { return }
         if isChoosingCheat {
             if pressed.contains(.dpadUp) { cheatSelection = max(cheatSelection - 1, 0) }
-            if pressed.contains(.dpadDown) { cheatSelection = min(cheatSelection + 1, max(cheats.count - 1, 0)) }
-            if !pressed.isDisjoint(with: [.south, .start]), cheats.indices.contains(cheatSelection) {
-                let cheat = cheats[cheatSelection]
-                setCheat(cheat.id, enabled: !cheat.enabled)
+            if pressed.contains(.dpadDown) { cheatSelection = min(cheatSelection + 1, max(bundledCheats.count + cheats.count - 1, 0)) }
+            if !pressed.isDisjoint(with: [.south, .start]) {
+                let rows = cheatRows
+                if rows.indices.contains(cheatSelection) {
+                    let cheat = rows[cheatSelection]
+                    setCheat(cheat.id, enabled: !cheat.enabled)
+                }
             } else if !pressed.isDisjoint(with: [.east, .select, .home]) {
                 closeCheatPicker()
             }
