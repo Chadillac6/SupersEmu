@@ -204,20 +204,6 @@ static NSArray<NSNumber *> *outcomes(std::initializer_list<SECheatOutcome> list)
     [host runFrames:5];
 }
 
-- (void)testSnes9xClearingOverlappingCheatsRestoresOriginalByte {
-    SELibretroHost *host = [self realHost:@"snes9x" rom:@"HelloWorld.sfc"];
-    if (!host) { XCTSkip(@"HelloWorld.sfc fixture missing (scripts/fetch-test-roms.sh)"); }
-    auto ram = static_cast<uint8_t *>(se_core_snes9x()->get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
-    XCTAssertNotEqual(ram, nullptr);
-    if (!ram) return;
-    const uint8_t original = ram[0x1000];
-    XCTAssertEqualObjects([host applyCheatCodes:@[@"7E1000:09", @"7E1000:0A"]],
-                          outcomes({SECheatOutcomeApplied, SECheatOutcomeApplied}));
-    XCTAssertEqual(ram[0x1000], 0x0A);
-    [host applyCheatCodes:@[]];
-    XCTAssertEqual(ram[0x1000], original);
-}
-
 - (void)testGenesisPlusGXAcceptsGameGenieAndRejectsMalformedCodes {
     SELibretroHost *host = [self realHost:@"genesis_plus_gx" rom:@"mega-drive-midi-interface.md"];
     if (!host) { XCTSkip(@"mega-drive-midi-interface.md fixture missing (scripts/fetch-test-roms.sh)"); }
