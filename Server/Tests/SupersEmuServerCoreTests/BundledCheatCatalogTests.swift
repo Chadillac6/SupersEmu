@@ -139,6 +139,17 @@ final class BundledCheatCatalogTests: XCTestCase {
         XCTAssertEqual(outcomes, [.applied, .applied, .applied])
     }
 
+    func testGameBoyKeepsDifferentCompareBytesAtTheSameAddress() {
+        let original = "991-56F-E03"
+        let otherBank = "771-56F-70A"
+        let replacement = "881-56F-E03"
+        let outcomes = CheatApplicationOutcome.replace([[original, otherBank], [replacement]], system: .gbc) { codes in
+            XCTAssertEqual(codes, [otherBank, replacement])
+            return codes.map { _ in .applied }
+        }
+        XCTAssertEqual(outcomes, [.applied, .applied])
+    }
+
     func testDisablingSNESCheatsRestoresByteWithNoDuplicateCoreWrites() {
         let first = "001000:09"
         let last = "7E1000:0A"

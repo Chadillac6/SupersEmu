@@ -121,12 +121,18 @@ public struct BundledCheatCatalog: Decodable, Sendable {
 public enum CheatApplicationOutcome: Equatable {
     case applied, sent, rejected
 
+    private enum Target: Hashable {
+        case address(UInt32)
+        case gameBoyGenie(UInt32, compare: UInt8?)
+        case gameBoyShark(UInt16)
+    }
+
     public static func replace(_ groups: [[String]], system: SystemID, send: ([String]) -> [Self]) -> [Self] {
         let addresses = groups.map { $0.map { targetAddress($0, system: system) } }
         var remaining = groups.indices.filter { !groups[$0].isEmpty }
         var outcomes = Array(repeating: Self.rejected, count: groups.count)
         while true {
-            var lastGroupByAddress = [UInt32: Int]()
+            var lastGroupByAddress = [Target: Int]()
             var shadowingGroups = Set<Int>()
             var dispatch = [(group: Int, code: String)]()
             for group in remaining.reversed() {
@@ -161,23 +167,23 @@ public enum CheatApplicationOutcome: Equatable {
         }
     }
 
-    private static func targetAddress(_ code: String, system: SystemID) -> UInt32? {
-        guard case .valid(let format, _, let address, let value) = CheatCodec.parse(code, system: system) else {
+    private static func targetAddress(_ code: String, system: SystemID) -> Target? {
+        guard case .valid(let format, let normalized, let address, let value) = CheatCodec.parse(code, system: system) else {
             return nil
         }
         if system == .snes {
             let bank = (address >> 16) & 0x7F
             let offset = address & 0xFFFF
-            return bank < 0x40 && offset < 0x2000 ? 0x7E0000 | offset : address
+            return .address(bank < 0x40 && offset < 0x2000 ? 0x7E0000 | offset : address)
         }
         switch format {
         case .snesGameGenie, .genesisGameGenie, .proActionReplay:
-            if system == .genesis && (address < 0xFF0000 || value > 0xFF) { return address & ~1 }
-            return address
+            if system == .genesis && (address < 0xFF0000 || value > 0xFF) { return .address(address & ~1) }
+            return .address(address)
         case .gbGameGenie:
-            return address
+            return .gameBoyGenie(address, compare: GameBoyGeniePatch(normalized)?.compare)
         case .gbGameShark:
-            return 0x10000 | UInt32(UInt16(address).byteSwapped)
+            return .gameBoyShark(UInt16(address).byteSwapped)
         case .gbaCode, .gbaCodeBreaker, .psxGameShark, .n64GameShark, .unknown:
             return nil
         }
