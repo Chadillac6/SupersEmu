@@ -7,8 +7,8 @@ out="${1:?Pass release output directory}"
 tag="${2:?Pass release tag}"
 ref="${3:?Pass the tested commit or branch}"
 repo=Chadillac6/SupersEmu
-[[ "$tag" =~ ^mac-[0-9]{8}\.([0-9]{4}|[0-9]{6})$ ]] ||
-  { echo 'Expected a timestamped Mac release tag.' >&2; exit 2; }
+[[ "$tag" =~ ^mac-[0-9]+(\.[0-9]+){0,2}$ ]] ||
+  { echo 'Expected mac-<build>, with up to three dot-separated integers.' >&2; exit 2; }
 
 release_list() {
   gh api --paginate --slurp "repos/$repo/releases?per_page=100"
@@ -35,6 +35,11 @@ zip_name="${zips[0]##*/}"
 dmg_name="${dmgs[0]##*/}"
 if [[ "${zip_name%.zip}" != "${dmg_name%.dmg}" ]]; then
   echo 'Expected exactly one matching release ZIP and DMG.' >&2
+  exit 2
+fi
+build="${tag#mac-}"
+if [[ "$zip_name" != SupersEmu-*-"$build".zip ]]; then
+  echo "Release assets do not match build $build." >&2
   exit 2
 fi
 
@@ -127,12 +132,17 @@ for i in "${!files[@]}"; do
     { echo "Could not verify $name; leaving $tag as a draft." >&2; exit 1; }
 done
 # Latest is explicit because Sparkle follows /releases/latest/download/appcast.xml.
-newer_tag="$(release_list | jq -r --arg tag "$tag" '
-  def build: capture("^mac-(?<date>[0-9]{8})\\.(?<time>[0-9]{6}|[0-9]{4})$")
-    | .date + ((.time + "00")[:6]);
-  ($tag | build) as $current
-  | [.[][] | select(.draft == false) | .tag_name | select(build > $current)]
-  | max // empty
+newer_tag="$(release_list | jq -r --arg build "$build" '
+  def build_key:
+    sub("^(?<date>[0-9]{8})\\.(?<time>[0-9]{4})$"; "\(.date).\(.time)00")
+    | split(".") + ["0", "0"] | .[:3]
+    | map(sub("^0+"; "") | [length, .]);
+  ($build | build_key) as $current
+  | [.[][] | select(.draft == false) | .tag_name
+     | select(test("^mac-[0-9]+(\\.[0-9]+){0,2}$"))
+     | {tag: ., key: (ltrimstr("mac-") | build_key)}
+     | select(.key > $current)]
+  | (max_by(.key) | .tag) // empty
 ')"
 if [[ -n "$newer_tag" ]]; then
   echo "Mac update $newer_tag is newer; leaving $tag as a draft." >&2

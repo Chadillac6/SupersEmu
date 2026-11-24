@@ -10,6 +10,7 @@ export PATH="$temp_dir/bin:$PATH"
 export STATE="$temp_dir/release" EVENTS="$temp_dir/events" COMMIT
 COMMIT="$(git -C "$script_dir" rev-parse HEAD)"
 export ZIP=SupersEmu-0.0.25-20261123.231830.zip DMG=SupersEmu-0.0.25-20261123.231830.dmg
+export TAG=mac-20261123.231830 OTHER_TAG=mac-20261124.0000
 export ZIP_DIGEST APPCAST_DIGEST DMG_DIGEST MODE
 
 printf zip > "$temp_dir/out/updates/$ZIP"
@@ -46,7 +47,7 @@ cat > "$temp_dir/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == api && "$2" == repos/Chadillac6/SupersEmu/releases/42 ]]; then
-  set -- release snapshot mac-20261123.231830
+  set -- release snapshot "$TAG"
 elif [[ "$*" == 'api --paginate --slurp repos/Chadillac6/SupersEmu/releases?per_page=100' ]]; then
   if [[ "$MODE" == lookup-error ]]; then
     echo '[[]]'
@@ -55,13 +56,13 @@ elif [[ "$*" == 'api --paginate --slurp repos/Chadillac6/SupersEmu/releases?per_
   fi
   if [[ ! -s "$STATE" ]]; then
     echo '[[]]'
-  elif [[ "$MODE" == newer-published ]]; then
-    jq '[[.], [{draft:false,tag_name:"mac-20261124.0000"}]]' "$STATE"
+  elif [[ "$MODE" == other-published ]]; then
+    jq --arg tag "$OTHER_TAG" '[[.], [{draft:false,tag_name:$tag}]]' "$STATE"
   else
     jq '[[.]]' "$STATE"
   fi
   exit 0
-elif [[ "$*" == 'api repos/Chadillac6/SupersEmu/commits/refs/tags/mac-20261123.231830 --jq .sha' ]]; then
+elif [[ "$*" == "api repos/Chadillac6/SupersEmu/commits/refs/tags/$TAG --jq .sha" ]]; then
   if [[ "$MODE" == wrong-tag-commit ]]; then
     echo bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   else
@@ -69,7 +70,7 @@ elif [[ "$*" == 'api repos/Chadillac6/SupersEmu/commits/refs/tags/mac-20261123.2
   fi
   exit 0
 fi
-[[ "$1" == release && "$3" == mac-20261123.231830 ]]
+[[ "$1" == release && "$3" == "$TAG" ]]
 case "$2" in
   snapshot)
     if [[ "$MODE" == vanishes ]] && jq -e --arg name "$DMG" 'any(.assets[]; .name == $name)' "$STATE" >/dev/null; then
@@ -131,8 +132,8 @@ STUB
 chmod +x "$temp_dir/scripts/prepare-mac-appcast.sh" "$temp_dir/bin/"*
 
 half_done() {
-  jq -n --arg commit "$COMMIT" --arg zip "$ZIP" --arg zip_digest "$ZIP_DIGEST" '
-    {id:42,draft:true,target_commitish:$commit,tag_name:"mac-20261123.231830",assets:[
+  jq -n --arg commit "$COMMIT" --arg tag "$TAG" --arg zip "$ZIP" --arg zip_digest "$ZIP_DIGEST" '
+    {id:42,draft:true,target_commitish:$commit,tag_name:$tag,assets:[
       {name:$zip,state:"uploaded",size:3,digest:$zip_digest},
       {name:"appcast.xml",state:"uploaded",size:7,digest:"sha256:stale"}
     ]}
@@ -142,7 +143,7 @@ half_done() {
 run_case() {
   local name="$1" expected_status="$2" expected_events="$3" status=0
   : > "$EVENTS"
-  bash "$temp_dir/scripts/publish-mac-update.sh" "$temp_dir/out" mac-20261123.231830 "$COMMIT" \
+  bash "$temp_dir/scripts/publish-mac-update.sh" "$temp_dir/out" "$TAG" "$COMMIT" \
     > "$temp_dir/output" 2>&1 || status=$?
   if [[ "$status" != "$expected_status" || "$(< "$EVENTS")" != "$expected_events" ]]; then
     echo "FAIL: $name (exit $status; expected $expected_status)"
@@ -188,6 +189,23 @@ MODE=lookup-error
 run_case 'does not try to create or upload when the release lookup is forbidden' 1 ''
 
 half_done
-MODE=newer-published
+MODE=other-published
 run_case 'does not mark an older draft latest when a newer Mac release is published' 1 \
   $'prepare\nupload appcast.xml\nupload '"$DMG"
+
+TAG=mac-20261123.231829
+MODE=normal
+run_case 'rejects a tag that does not match the exported build' 2 ''
+
+TAG=mac-1.10.2
+mv "$temp_dir/out/$ZIP" "$temp_dir/out/SupersEmu-0.0.25-1.10.2.zip"
+mv "$temp_dir/out/updates/$ZIP" "$temp_dir/out/updates/SupersEmu-0.0.25-1.10.2.zip"
+mv "$temp_dir/out/updates/${ZIP%.zip}.html" "$temp_dir/out/updates/SupersEmu-0.0.25-1.10.2.html"
+mv "$temp_dir/out/$DMG" "$temp_dir/out/SupersEmu-0.0.25-1.10.2.dmg"
+ZIP=SupersEmu-0.0.25-1.10.2.zip
+DMG=SupersEmu-0.0.25-1.10.2.dmg
+half_done
+MODE=other-published
+OTHER_TAG=mac-1.9.12
+run_case 'accepts an overridden build number and compares its components numerically' 0 \
+  $'prepare\nupload appcast.xml\nupload '"$DMG$publish"
