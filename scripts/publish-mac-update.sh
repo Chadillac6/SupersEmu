@@ -121,7 +121,7 @@ asset_matches() {
 }
 
 upload_to_draft() {
-  local file="$1" name="$2" snapshot="$3" old_asset_id encoded_name
+  local file="$1" name="$2" snapshot="$3" old_asset_id encoded_name response
   old_asset_id="$(jq -r --arg name "$name" '[.assets[] | select(.name == $name) | .id] | first // empty' <<< "$snapshot")" ||
     return 1
   if [[ -n "$old_asset_id" ]]; then
@@ -129,9 +129,14 @@ upload_to_draft() {
     gh api --method DELETE "repos/$repo/releases/assets/$old_asset_id" --silent || return 1
   fi
   encoded_name="$(jq -rn --arg name "$name" '$name | @uri')" || return 1
-  printf 'header = "Authorization: Bearer %s"\n' "$upload_token" |
+  if ! response="$(printf 'header = "Authorization: Bearer %s"\n' "$upload_token" |
     curl --config - --silent --show-error --fail-with-body --header 'Content-Type: application/octet-stream' \
-      --data-binary "@$file" "https://uploads.github.com/repos/$repo/releases/$release_id/assets?name=$encoded_name" >/dev/null
+      --data-binary "@$file" "https://uploads.github.com/repos/$repo/releases/$release_id/assets?name=$encoded_name")"; then
+    if [[ -n "$response" ]]; then
+      printf 'GitHub upload response for %s (first 1024 bytes): %.1024s\n' "$name" "$response" >&2
+    fi
+    return 1
+  fi
 }
 
 upload_asset() {

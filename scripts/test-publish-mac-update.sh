@@ -143,8 +143,9 @@ case "$2" in
       case "$MODE" in
         transient)
           if ! grep -qx 'sleep 2' "$EVENTS"; then
-            echo 'HTTP 404: Not Found' >&2
-            exit 1
+            echo 'curl: (22) The requested URL returned error: 404' >&2
+            printf '{"message":"Not Found","details":"%1100snot logged"}\n' ''
+            exit 22
           fi
           ;;
         missing) exit 0 ;;
@@ -210,6 +211,12 @@ publish=$'\npublish'
 
 MODE=transient
 run_case 'retries the DMG after an upload 404 and publishes' 0 "$create"$'\nsleep 2\nupload '"$DMG$publish"
+grep -Fq 'The requested URL returned error: 404' "$temp_dir/stderr"
+grep -Fq "GitHub upload response for $DMG (first 1024 bytes): {\"message\":\"Not Found\"" "$temp_dir/stderr"
+if grep -Fq 'not logged' "$temp_dir/output"; then
+  echo 'FAIL: GitHub upload response was not truncated' >&2
+  exit 1
+fi
 MODE=normal
 run_case 'leaves a complete published release untouched' 0 ''
 MODE=wrong-tag-commit
