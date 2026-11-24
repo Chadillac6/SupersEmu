@@ -54,6 +54,8 @@ elif [[ "$*" == 'api --paginate --slurp repos/Chadillac6/SupersEmu/releases?per_
   fi
   if [[ ! -s "$STATE" ]]; then
     echo '[[]]'
+  elif [[ "$MODE" == newer-published ]]; then
+    jq '[[.], [{draft:false,tag_name:"mac-20261124.0000"}]]' "$STATE"
   else
     jq '[[.]]' "$STATE"
   fi
@@ -169,3 +171,8 @@ run_case 'rechecks all assets together before publishing' 1 "$create"$'\nall ass
 
 MODE=lookup-error
 run_case 'does not try to create or upload when the release lookup is forbidden' 1 ''
+
+half_done
+MODE=newer-published
+run_case 'does not mark an older draft latest when a newer Mac release is published' 1 \
+  $'prepare\nupload appcast.xml\nupload '"$DMG"

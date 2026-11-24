@@ -7,7 +7,8 @@ out="${1:?Pass release output directory}"
 tag="${2:?Pass release tag}"
 ref="${3:?Pass the tested commit or branch}"
 repo=Chadillac6/SupersEmu
-[[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid release tag' >&2; exit 2; }
+[[ "$tag" =~ ^mac-[0-9]{8}\.([0-9]{4}|[0-9]{6})$ ]] ||
+  { echo 'Expected a timestamped Mac release tag.' >&2; exit 2; }
 
 release_list() {
   gh api --paginate --slurp "repos/$repo/releases?per_page=100"
@@ -126,4 +127,15 @@ for i in "${!files[@]}"; do
     { echo "Could not verify $name; leaving $tag as a draft." >&2; exit 1; }
 done
 # Latest is explicit because Sparkle follows /releases/latest/download/appcast.xml.
+newer_tag="$(release_list | jq -r --arg tag "$tag" '
+  def build: capture("^mac-(?<date>[0-9]{8})\\.(?<time>[0-9]{6}|[0-9]{4})$")
+    | .date + ((.time + "00")[:6]);
+  ($tag | build) as $current
+  | [.[][] | select(.draft == false) | .tag_name | select(build > $current)]
+  | max // empty
+')"
+if [[ -n "$newer_tag" ]]; then
+  echo "Mac update $newer_tag is newer; leaving $tag as a draft." >&2
+  exit 1
+fi
 gh release edit "$tag" --repo "$repo" --draft=false --latest

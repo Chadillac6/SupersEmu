@@ -167,11 +167,12 @@ To publish a tested release:
 1. Restore a valid Developer ID Application signing certificate and configure the Apple
    release credentials described above.
 2. Build with `scripts/release-mac.sh` (its output has a unique increasing build number).
-3. Run `scripts/publish-mac-update.sh build/release-mac/<build> <tag> <tested-commit>`.
+3. Run `scripts/publish-mac-update.sh build/release-mac/<build> mac-<build> <tested-commit>`.
    It verifies the exported app, generates a signed appcast, and publishes the draft as the
    latest GitHub release only after verifying the Mac ZIP, DMG, and appcast uploads.
    If an upload exhausts its retries, run the command again with the same build, tag, and
-   tested commit to finish the draft. An already-published release is never modified.
+   tested commit to finish the draft. If a newer Mac release is already published, the older
+   release stays a draft. An already-published release is never modified.
 
 `prepare-mac-appcast.sh` performs step 3 without uploading or publishing anything.
 Use `SPARKLE_GENERATE_APPCAST` to point at the tool in another derived-data directory.
