@@ -374,18 +374,31 @@ struct CheatPicker: View {
     @Bindable var session: GameSession
 
     var body: some View {
+        let rows = session.cheatRows
         VStack(alignment: .leading, spacing: 12) {
             Text("Cheats").font(.title3.bold())
-            if session.cheats.isEmpty {
+            if rows.isEmpty {
                 Text("No cheats saved for this game. Add them from the game's details in your library.")
                     .font(.callout).foregroundStyle(.secondary)
                     .accessibilityIdentifier("cheat-picker-empty")
             }
-            ScrollView {
-                VStack(spacing: 6) {
-                    ForEach(Array(session.cheats.enumerated()), id: \.element.id) { index, cheat in
-                        row(cheat, index: index)
+            ScrollViewReader { scroll in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, cheat in
+                            if index == 0 || (cheat.quality == nil && rows[index - 1].quality != nil) {
+                                Text(cheat.quality == nil ? "My cheats" : "Preinstalled")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityAddTraits(.isHeader)
+                            }
+                            row(cheat, index: index)
+                                .id(cheat.id)
+                        }
                     }
+                }
+                .onChange(of: session.cheatSelection) { _, index in
+                    if rows.indices.contains(index) { scroll.scrollTo(rows[index].id) }
                 }
             }
             .frame(maxHeight: 280)
@@ -405,18 +418,25 @@ struct CheatPicker: View {
         .accessibilityIdentifier("cheat-picker")
     }
 
-    private func row(_ cheat: CheatRecord, index: Int) -> some View {
+    private func row(_ cheat: PlayerCheatRow, index: Int) -> some View {
         let isSelected = index == session.cheatSelection
         let state = session.cheatStates[cheat.id] ?? .off
+        let failed = cheat.quality != nil && (state == .rejected || state == .invalid)
+        let icon = failed ? "xmark.circle" : (cheat.enabled ? "checkmark.circle.fill" : "circle")
         return Button { session.setCheat(cheat.id, enabled: !cheat.enabled) } label: {
             HStack {
-                Image(systemName: cheat.enabled ? "checkmark.circle.fill" : "circle")
+                Image(systemName: icon)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(cheat.label).lineLimit(1)
-                    Text(cheat.code).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    if let quality = cheat.quality {
+                        Text(quality == .exactROM ? "Exact ROM match" : "Verified on your ROM")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text(cheat.codes.joined(separator: " + ")).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
-                Text(state.label)
+                Text(failed ? "Not working" : state.label)
                     .font(.caption)
                     .foregroundStyle(state == .rejected || state == .invalid ? .orange : .secondary)
             }
@@ -429,7 +449,7 @@ struct CheatPicker: View {
         }
         .buttonStyle(.plain)
         .keyboardShortcut(index == session.cheatSelection ? .defaultAction : nil)
-        .accessibilityValue("\(cheat.enabled ? "On" : "Off"), \(state.label)")
+        .accessibilityValue(failed ? "Requested, not working" : "\(cheat.enabled ? "On" : "Off"), \(state.label)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier("cheat-picker-\(index + 1)")
     }

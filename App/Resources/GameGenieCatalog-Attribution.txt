@@ -1,0 +1,13 @@
+Game Genie catalog for SupersEmu
+
+Source: libretro-database contributors, https://github.com/libretro/libretro-database
+Pinned revision: f89f09cbe13f9f7863ecf20d0ebf2c5ce53be029
+Source data: cht/ and metadat/no-intro/
+
+The catalog is licensed under the Creative Commons Attribution-ShareAlike
+4.0 International license: https://creativecommons.org/licenses/by-sa/4.0/
+Source license: https://github.com/libretro/libretro-database/blob/f89f09cbe13f9f7863ecf20d0ebf2c5ce53be029/LICENSE
+
+SupersEmu's generator extracts Game Genie descriptions and codes, discards
+unsupported or ambiguous entries, groups compound codes, and indexes the
+catalog by ROM SHA-1 and revision family.

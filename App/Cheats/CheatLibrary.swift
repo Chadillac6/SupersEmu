@@ -26,6 +26,14 @@ enum CheatRunState: Equatable {
     }
 }
 
+struct PlayerCheatRow: Identifiable {
+    let id: UUID
+    let label: String
+    let codes: [String]
+    let enabled: Bool
+    let quality: BundledCheatCatalog.Match.Quality?
+}
+
 /// App-wide cheats: one `CheatSyncEngine` (files under `AppPaths.cheats`) shared by the library and the player.
 @MainActor
 @Observable
@@ -41,7 +49,9 @@ final class CheatLibrary {
         self.engine = engine ?? CheatSyncEngine(directory: AppPaths.cheats, provider: SaveSync.shared.provider)
     }
 
-    func cheats(for gameID: String) -> [CheatRecord] { byGame[gameID] ?? [] }
+    func cheats(for gameID: String) -> [CheatRecord] {
+        (byGame[gameID] ?? []).filter { !BundledCheat.isSelection($0) }
+    }
 
     /// Reads this device's copy only, so launching a game never waits on the network.
     @discardableResult
