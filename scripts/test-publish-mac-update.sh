@@ -46,22 +46,22 @@ cat > "$temp_dir/bin/gh" <<'STUB'
 set -euo pipefail
 if [[ "$1" == api && "$2" == repos/Chadillac6/SupersEmu/releases/42 ]]; then
   set -- release snapshot mac-20261123.231830
+elif [[ "$*" == 'api --paginate --slurp repos/Chadillac6/SupersEmu/releases?per_page=100' ]]; then
+  if [[ "$MODE" == lookup-error ]]; then
+    echo '[[]]'
+    echo 'HTTP 403: Resource not accessible by integration' >&2
+    exit 1
+  fi
+  if [[ ! -s "$STATE" ]]; then
+    echo '[[]]'
+  else
+    jq '[[.]]' "$STATE"
+  fi
+  exit 0
 fi
 [[ "$1" == release && "$3" == mac-20261123.231830 ]]
 case "$2" in
-  view|snapshot)
-    if [[ "$MODE" == lookup-error ]]; then
-      echo 'HTTP 403: Resource not accessible by integration' >&2
-      exit 1
-    fi
-    if [[ ! -s "$STATE" ]]; then
-      echo 'release not found' >&2
-      exit 1
-    fi
-    if [[ "$2" == view ]]; then
-      jq 'del(.assets[].digest)' "$STATE"
-      exit 0
-    fi
+  snapshot)
     if [[ "$MODE" == vanishes ]] && jq -e --arg name "$DMG" 'any(.assets[]; .name == $name)' "$STATE" >/dev/null; then
       if grep -qx 'all assets seen' "$EVENTS"; then
         jq --arg name "$ZIP" '.assets |= map(select(.name != $name))' "$STATE"
@@ -74,10 +74,11 @@ case "$2" in
   create)
     [[ ! -s "$STATE" && " $* " == *" --target $COMMIT "* && " $* " == *" --draft "* ]]
     echo create >> "$EVENTS"
-    jq -n --arg commit "$COMMIT" '{databaseId:42,isDraft:true,targetCommitish:$commit,assets:[]}' > "$STATE"
+    jq -n --arg commit "$COMMIT" --arg tag "$3" \
+      '{id:42,draft:true,target_commitish:$commit,tag_name:$tag,assets:[]}' > "$STATE"
     ;;
   upload)
-    jq -e '.isDraft' "$STATE" >/dev/null
+    jq -e '.draft' "$STATE" >/dev/null
     name="${4##*/}"
     echo "upload $name" >> "$EVENTS"
     case "$name" in
@@ -109,9 +110,9 @@ case "$2" in
     ;;
   edit)
     [[ " $* " == *" --draft=false --latest "* ]]
-    jq -e '.isDraft' "$STATE" >/dev/null
+    jq -e '.draft' "$STATE" >/dev/null
     echo publish >> "$EVENTS"
-    jq '.isDraft = false' "$STATE" > "$STATE.next"
+    jq '.draft = false' "$STATE" > "$STATE.next"
     mv "$STATE.next" "$STATE"
     ;;
   *) exit 64 ;;
@@ -121,7 +122,7 @@ chmod +x "$temp_dir/scripts/prepare-mac-appcast.sh" "$temp_dir/bin/"*
 
 half_done() {
   jq -n --arg commit "$COMMIT" --arg zip "$ZIP" --arg zip_digest "$ZIP_DIGEST" '
-    {databaseId:42,isDraft:true,targetCommitish:$commit,assets:[
+    {id:42,draft:true,target_commitish:$commit,tag_name:"mac-20261123.231830",assets:[
       {name:$zip,state:"uploaded",size:3,digest:$zip_digest},
       {name:"appcast.xml",state:"uploaded",size:7,digest:"sha256:stale"}
     ]}

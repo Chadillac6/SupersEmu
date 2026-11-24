@@ -9,17 +9,22 @@ ref="${3:?Pass the tested commit or branch}"
 repo=Chadillac6/SupersEmu
 [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid release tag' >&2; exit 2; }
 
+release_list() {
+  gh api --paginate --slurp "repos/$repo/releases?per_page=100"
+}
+
 release_discover() {
-  gh release view "$tag" --repo "$repo" --json databaseId,isDraft,targetCommitish,assets
+  release_list | jq -c --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | first'
 }
 
 release_view() {
-  gh api "repos/$repo/releases/$release_id" --jq '{databaseId:.id,isDraft:.draft,targetCommitish:.target_commitish,assets}'
+  gh api "repos/$repo/releases/$release_id"
 }
 
 release_id=""
-if release="$(release_discover 2>&1)"; then
-  if jq -e '.isDraft == false' <<< "$release" >/dev/null; then
+release="$(release_discover)"
+if [[ "$release" != null ]]; then
+  if jq -e '.draft == false' <<< "$release" >/dev/null; then
     if jq -e '
       [.assets[] | select(.state == "uploaded" and .size > 0) | .name] as $names
       | ($names | index("appcast.xml")) != null
@@ -32,16 +37,13 @@ if release="$(release_discover 2>&1)"; then
     echo "Published release $tag is incomplete; refusing to modify it." >&2
     exit 2
   fi
-  release_id="$(jq -er '.databaseId' <<< "$release")"
-elif [[ "$release" != 'release not found' ]]; then
-  printf '%s\n' "$release" >&2
-  exit 1
+  release_id="$(jq -er '.id' <<< "$release")"
 fi
 
 commit="$(git rev-parse --verify "$ref^{commit}")"
 same_draft() {
   jq -e --arg id "$release_id" --arg commit "$commit" '
-    .isDraft == true and (.databaseId | tostring) == $id and .targetCommitish == $commit
+    .draft == true and (.id | tostring) == $id and .target_commitish == $commit
   ' <<< "$1" >/dev/null
 }
 
@@ -78,7 +80,7 @@ if [[ -z "$release_id" ]]; then
   gh release create "$tag" --repo "$repo" --target "$commit" --title "SupersEmu $tag" \
     --notes-file "${notes_files[0]}" --draft
   release="$(release_discover)"
-  release_id="$(jq -er '.databaseId' <<< "$release")"
+  release_id="$(jq -er '.id' <<< "$release")"
 fi
 
 asset_matches() {
