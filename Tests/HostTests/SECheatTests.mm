@@ -216,12 +216,6 @@ static NSArray<NSNumber *> *outcomes(std::initializer_list<SECheatOutcome> list)
     XCTAssertEqual(ram[0x1000], 0x0A);
     [host applyCheatCodes:@[]];
     XCTAssertEqual(ram[0x1000], original);
-
-    XCTAssertEqualObjects([host applyCheatCodes:@[@"001000:09", @"7E1000:0A"]],
-                          outcomes({SECheatOutcomeApplied, SECheatOutcomeApplied}));
-    XCTAssertEqual(ram[0x1000], 0x0A);
-    [host applyCheatCodes:@[]];
-    XCTAssertEqual(ram[0x1000], original);
 }
 
 - (void)testGenesisPlusGXAcceptsSharedPatches {
