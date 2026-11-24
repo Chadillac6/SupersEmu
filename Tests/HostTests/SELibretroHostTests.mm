@@ -98,7 +98,7 @@ const SECoreAPI *audioTestCore() {
 }
 
 - (void)testLoadsSnes9xAndReportsTiming {
-    if ([self fixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    if ([self fixtureMissing]) { XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", _romURL.lastPathComponent); }
     SELibretroHost *host = [self makeHost];
     XCTAssertTrue([host.coreName containsString:@"Snes9x"], @"%@", host.coreName);
     XCTAssertGreaterThan(host.framesPerSecond, 50.0);
@@ -107,7 +107,7 @@ const SECoreAPI *audioTestCore() {
 }
 
 - (void)testRendersNonBlankFrame {
-    if ([self fixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    if ([self fixtureMissing]) { XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", _romURL.lastPathComponent); }
     SELibretroHost *host = [self makeHost];
     [host runFrames:120];
     XCTAssertEqual(host.frameWidth, 256);
@@ -123,7 +123,7 @@ const SECoreAPI *audioTestCore() {
 }
 
 - (void)testResetClearsInputAndFramesContinue {
-    if ([self fixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    if ([self fixtureMissing]) { XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", _romURL.lastPathComponent); }
     SELibretroHost *host = [self makeHost];
     [host runFrames:2];
     [host setButtons:SEJoypadButtonA forPort:0];
@@ -138,7 +138,7 @@ const SECoreAPI *audioTestCore() {
 }
 
 - (void)testStateRestoreIsDeterministic {
-    if ([self fixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    if ([self fixtureMissing]) { XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", _romURL.lastPathComponent); }
     SELibretroHost *host = [self makeHost];
     [host runFrames:60];
     NSData *checkpoint = [host serializeState];
@@ -156,7 +156,7 @@ const SECoreAPI *audioTestCore() {
 }
 
 - (void)testStateFileResumesInFreshSession {
-    if ([self fixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    if ([self fixtureMissing]) { XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", _romURL.lastPathComponent); }
     NSURL *stateURL = [_tempDirectory URLByAppendingPathComponent:@"States/auto.state"];
     NSData *expected = nil;
     @autoreleasepool {
@@ -174,7 +174,7 @@ const SECoreAPI *audioTestCore() {
 }
 
 - (void)testOnlyOneHostCanBeActive {
-    if ([self fixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    if ([self fixtureMissing]) { XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", _romURL.lastPathComponent); }
     SELibretroHost *host = [self makeHost];
     NSError *error = nil;
     SELibretroHost *second = [[SELibretroHost alloc] initWithROMURL:_romURL
@@ -187,7 +187,7 @@ const SECoreAPI *audioTestCore() {
 }
 
 - (void)testN64OverridesAreAppliedAndUnknownOptionsAreIgnored {
-    if ([self n64FixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    if ([self n64FixtureMissing]) { XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", _n64ROMURL.lastPathComponent); }
     SELibretroHost.pendingCoreOptionOverrides = @{
         @"mupen64plus-43screensize": @"320x240",
         @"bogus-key": @"x",
@@ -207,12 +207,12 @@ const SECoreAPI *audioTestCore() {
 }
 
 - (void)testRenderPathReportsSoftwareAndIOSurfaceForN64 {
-    if ([self fixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    if ([self fixtureMissing]) { XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", _romURL.lastPathComponent); }
     SELibretroHost *snes = [self makeHost];
     XCTAssertEqualObjects(snes.renderPath, @"software");
     [snes shutdown];
 
-    if ([self n64FixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    if ([self n64FixtureMissing]) { XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", _n64ROMURL.lastPathComponent); }
     SELibretroHost *n64 = [self makeHostWithCoreID:SECoreIDMupen64PlusNext romURL:_n64ROMURL];
     [n64 runFrames:3];
 #if TARGET_OS_SIMULATOR
@@ -248,7 +248,7 @@ const SECoreAPI *audioTestCore() {
 }
 
 - (void)testLogHandlerReceivesN64CoreMessagesDuringLoad {
-    if ([self n64FixtureMissing]) { XCTSkip(@"Run scripts/fetch-test-roms.sh first"); }
+    if ([self n64FixtureMissing]) { XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", _n64ROMURL.lastPathComponent); }
     NSMutableArray<NSString *> *messages = [NSMutableArray array];
     SELibretroHost.logHandler = ^(NSInteger level, NSString *message) {
         [messages addObject:message];

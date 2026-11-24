@@ -41,8 +41,9 @@ export PATH="$temp_dir/bin:$PATH" CURL_LOG="$temp_dir/requests" TEST_ARCHIVE="$t
 
 mkdir -p "$fixtures"
 printf 'corrupt cached disc\n' > "$fixtures/chroma-circuit.cdi"
-output="$(bash "$script" --require-all 2>&1)"
+output="$(GITHUB_OUTPUT="$temp_dir/complete" bash "$script" --require-all 2>&1)"
 [[ "$output" == *'Fixtures ready'*'(0 unavailable)' ]]
+[[ "$(cat "$temp_dir/complete")" == 'complete=true' ]]
 [[ "$output" == *'SHA-256 mismatch for chroma-circuit.cdi'* ]]
 grep -q '^https://web.archive.org/' "$CURL_LOG"
 cmp "$fixtures/chroma-circuit.cdi" "$temp_dir/noudar.0.0.2.32x"
@@ -61,6 +62,14 @@ output="$(FAIL_SNES=1 bash "$script" --require-all 2>&1)" || status=$?
 [[ "$output" == *'::error title=Test fixture unavailable::Could not download and verify HelloWorld.sfc'* ]]
 [[ "$output" == *'Test fixture setup incomplete: 1 unavailable'* ]]
 echo 'PASS: missing required fixture fails with a named annotation'
+
+printf 'corrupt cached ROM\n' > "$fixtures/HelloWorld.sfc"
+output="$(FAIL_SNES=1 GITHUB_STEP_SUMMARY="$temp_dir/summary" GITHUB_OUTPUT="$temp_dir/incomplete" \
+  bash "$script" --allow-missing 2>&1)"
+[[ "$output" == *'::error title=Test fixture unavailable::Could not download and verify HelloWorld.sfc'* ]]
+[[ "$(cat "$temp_dir/summary")" == *'Test fixture unavailable: `HelloWorld.sfc`'* ]]
+[[ ! -e "$fixtures/HelloWorld.sfc" && ! -s "$temp_dir/incomplete" ]]
+echo 'PASS: main mode annotates and summarizes missing fixtures without failing or marking the cache complete'
 
 output="$(FAIL_SNES=1 bash "$script" 2>&1)"
 [[ "$output" == *'warning: could not download and verify HelloWorld.sfc'* ]]

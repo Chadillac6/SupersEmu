@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetches homebrew test ROMs into Tests/Fixtures/local (gitignored).
-# Never commit these files or bundle them into the app. Fleet uses --require-all;
-# local downloads are best effort so host tests can skip unavailable fixtures.
+# Never commit these files or bundle them into the app. Fleet reports missing
+# fixtures in either CI mode; local downloads are best effort.
 #
 #   SNES      PeterLemon/SNES HelloWorld                    (no licence file: local testing only)
 #   GB        mattcurrie/dmg-acid2 v1.0                      (MIT)
@@ -11,13 +11,12 @@
 #   32X       haroldo-ok/noudar-32x v0.0.2                   (BSD 2-Clause)
 #   N64       PeterLemon/N64 RDP cube demo                   (Unlicense; boots with Nintendo's IPL3 bootcode)
 set -euo pipefail
-required=false
-if [[ ${1:-} == --require-all ]]; then
-  required=true
-  shift
-fi
+mode=local
+case "${1:-}" in
+  --require-all|--allow-missing) mode="$1"; shift ;;
+esac
 if (( $# )); then
-  echo "Usage: $0 [--require-all]" >&2
+  echo "Usage: $0 [--require-all|--allow-missing]" >&2
   exit 2
 fi
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -37,10 +36,14 @@ download() {
 
 unavailable() {
   local name="$1"
-  if "$required"; then
-    echo "::error title=Test fixture unavailable::Could not download and verify $name" >&2
-  else
+  if [[ "$mode" == local ]]; then
     echo "warning: could not download and verify $name (tests that need it may skip)" >&2
+  else
+    echo "::error title=Test fixture unavailable::Could not download and verify $name" >&2
+    rm -f "$dest/$name"
+    if [[ "$mode" == --allow-missing && -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+      printf -- '- Test fixture unavailable: `%s`. Tests that need it will skip.\n' "$name" >> "$GITHUB_STEP_SUMMARY"
+    fi
   fi
   failures=$((failures + 1))
 }
@@ -98,7 +101,10 @@ fi
 
 if (( failures )); then
   echo "Test fixture setup incomplete: $failures unavailable in $dest" >&2
-  if "$required"; then exit 1; fi
+  if [[ "$mode" == --require-all ]]; then exit 1; fi
 else
   echo "Fixtures ready in $dest (0 unavailable)"
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    echo 'complete=true' >> "$GITHUB_OUTPUT"
+  fi
 fi
