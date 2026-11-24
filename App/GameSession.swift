@@ -391,6 +391,7 @@ final class GameSession {
             case .applied: states[id] = .applied
             case .sent: states[id] = .sent
             case .rejected: states[id] = .rejected
+            case .capacityExceeded: states[id] = .capacityExceeded
             }
         }
         cheatStates = states
@@ -412,6 +413,7 @@ final class GameSession {
         applyCheats()
         status = enabled ? "\(record.label) on" : "\(record.label) off"
         if cheatStates[id] == .rejected { status = "\(record.label): the core didn't accept this code" }
+        if cheatStates[id] == .capacityExceeded { status = "\(record.label): too many enabled cheats" }
         Task {
             do {
                 try await CheatLibrary.shared.save([record])

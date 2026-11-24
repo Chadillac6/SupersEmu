@@ -14,6 +14,8 @@ enum CheatRunState: Equatable {
     case sent
     /// Sent and ignored by the core.
     case rejected
+    /// Not sent because the core's patch table is full.
+    case capacityExceeded
 
     var label: String {
         switch self {
@@ -22,6 +24,7 @@ enum CheatRunState: Equatable {
         case .applied: "Applied"
         case .sent: "Sent"
         case .rejected: "Rejected by core"
+        case .capacityExceeded: "Not working"
         }
     }
 }

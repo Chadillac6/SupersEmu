@@ -421,7 +421,7 @@ struct CheatPicker: View {
     private func row(_ cheat: PlayerCheatRow, index: Int) -> some View {
         let isSelected = index == session.cheatSelection
         let state = session.cheatStates[cheat.id] ?? .off
-        let failed = cheat.quality != nil && (state == .rejected || state == .invalid)
+        let failed = state == .capacityExceeded || (cheat.quality != nil && (state == .rejected || state == .invalid))
         let icon = failed ? "xmark.circle" : (cheat.enabled ? "checkmark.circle.fill" : "circle")
         return Button { session.setCheat(cheat.id, enabled: !cheat.enabled) } label: {
             HStack {
@@ -437,7 +437,7 @@ struct CheatPicker: View {
                 Spacer()
                 Text(failed ? "Not working" : state.label)
                     .font(.caption)
-                    .foregroundStyle(state == .rejected || state == .invalid ? .orange : .secondary)
+                    .foregroundStyle(failed || state == .rejected || state == .invalid ? .orange : .secondary)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)

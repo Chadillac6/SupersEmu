@@ -119,7 +119,7 @@ public struct BundledCheatCatalog: Decodable, Sendable {
 }
 
 public enum CheatApplicationOutcome: Equatable {
-    case applied, sent, rejected
+    case applied, sent, rejected, capacityExceeded
 
     private enum Target: Hashable {
         case address(UInt32)
@@ -157,16 +157,19 @@ public enum CheatApplicationOutcome: Equatable {
                 }
             }
             dispatch.reverse()
-            let result = send(dispatch.map(\.code))
+            // Genesis Plus GX decodes into its 150-entry table before checking the bound.
+            let submitted = system == .genesis || system == .segacd ? dispatch.prefix(150) : dispatch[...]
+            let result = send(submitted.map(\.code))
             var retryWithout = Set<Int>()
             for (index, component) in dispatch.enumerated() {
-                let outcome = index < result.count ? result[index] : .rejected
-                if outcome == .rejected {
-                    outcomes[component.group] = .rejected
+                let outcome: Self = if index >= submitted.count { .capacityExceeded }
+                    else { index < result.count ? result[index] : .rejected }
+                if outcome == .rejected || outcome == .capacityExceeded {
+                    if outcomes[component.group] != .rejected { outcomes[component.group] = outcome }
                     if groups[component.group].count > 1 || shadowingGroups.contains(component.group) {
                         retryWithout.insert(component.group)
                     }
-                } else if outcome == .sent && outcomes[component.group] != .rejected {
+                } else if outcome == .sent && outcomes[component.group] == .applied {
                     outcomes[component.group] = .sent
                 }
             }

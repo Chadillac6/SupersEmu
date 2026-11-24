@@ -75,6 +75,7 @@ that target in picker order is sent. A superseded component does not count as a 
 rejects a compound component, the player removes that group and reapplies the remaining cheats. The host
 rejects literal `+`, empty strings and codes over 240 bytes. It also resets cheats
 right after `load_game` and before `unload_game`, so codes can't carry over to another game.
+Genesis and Sega CD use a 150-patch table; any extra codes are not sent and their rows show **Not working**.
 
 ## Verified vs not
 - Verified by host tests (`Tests/HostTests/SECheatTests.mm`): reset-then-set order, per-code outcomes, clearing,

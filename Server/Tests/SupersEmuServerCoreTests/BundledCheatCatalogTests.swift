@@ -163,6 +163,18 @@ final class BundledCheatCatalogTests: XCTestCase {
         }
     }
 
+    func testGenesisPlusGXLimitsEachDispatchTo150Patches() {
+        let codes = (0...150).map { String(format: "%06X:00FF", 0xFF0000 + $0) }
+        for system in [SystemID.genesis, .segacd] {
+            let outcomes = CheatApplicationOutcome.replace(codes.map { [$0] }, system: system) { dispatched in
+                XCTAssertEqual(dispatched, Array(codes.prefix(150)))
+                return dispatched.map { _ in .applied }
+            }
+            XCTAssertEqual(outcomes.dropLast(), Array(repeating: .applied, count: 150)[...])
+            XCTAssertEqual(outcomes.last, .capacityExceeded)
+        }
+    }
+
     func testDisablingSNESCheatsRestoresByteWithNoDuplicateCoreWrites() {
         let first = "001000:09"
         let last = "7E1000:0A"
