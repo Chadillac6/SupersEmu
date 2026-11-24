@@ -127,8 +127,10 @@ public enum CheatApplicationOutcome: Equatable {
         case gameBoyShark(UInt16)
     }
 
+    private typealias Write = (target: Target, byteCode: String?)
+
     public static func replace(_ groups: [[String]], system: SystemID, send: ([String]) -> [Self]) -> [Self] {
-        let addresses = groups.map { $0.map { targetAddress($0, system: system) } }
+        let writes = groups.map { $0.map { targetWrites($0, system: system) } }
         var remaining = groups.indices.filter { !groups[$0].isEmpty }
         var outcomes = Array(repeating: Self.rejected, count: groups.count)
         while true {
@@ -138,14 +140,20 @@ public enum CheatApplicationOutcome: Equatable {
             for group in remaining.reversed() {
                 outcomes[group] = .applied
                 for index in groups[group].indices.reversed() {
-                    if let address = addresses[group][index] {
-                        if let last = lastGroupByAddress[address] {
+                    let original = writes[group][index]
+                    let surviving = original.filter { write in
+                        if let last = lastGroupByAddress[write.target] {
                             shadowingGroups.insert(last)
-                            continue
+                            return false
                         }
-                        lastGroupByAddress[address] = group
+                        lastGroupByAddress[write.target] = group
+                        return true
                     }
-                    dispatch.append((group, groups[group][index]))
+                    if surviving.count == original.count {
+                        dispatch.append((group, groups[group][index]))
+                    } else if let byteCode = surviving.first?.byteCode {
+                        dispatch.append((group, byteCode))
+                    }
                 }
             }
             dispatch.reverse()
@@ -167,25 +175,35 @@ public enum CheatApplicationOutcome: Equatable {
         }
     }
 
-    private static func targetAddress(_ code: String, system: SystemID) -> Target? {
+    private static func targetWrites(_ code: String, system: SystemID) -> [Write] {
         guard case .valid(let format, let normalized, let address, let value) = CheatCodec.parse(code, system: system) else {
-            return nil
+            return []
         }
         if system == .snes {
             let bank = (address >> 16) & 0x7F
             let offset = address & 0xFFFF
-            return .address(bank < 0x40 && offset < 0x2000 ? 0x7E0000 | offset : address)
+            return [(.address(bank < 0x40 && offset < 0x2000 ? 0x7E0000 | offset : address), nil)]
         }
         switch format {
         case .snesGameGenie, .genesisGameGenie, .proActionReplay:
-            if system == .genesis && (address < 0xFF0000 || value > 0xFF) { return .address(address & ~1) }
-            return .address(address)
+            if system == .genesis || system == .segacd {
+                let alignedAddress = address & ~1
+                if system == .genesis && address < 0xFF0000 { return [(.address(alignedAddress), nil)] }
+                if address >= 0xFF0000 && value > 0xFF {
+                    // Genesis Plus GX's byte patches address its little-endian work RAM buffer.
+                    return [(0, UInt32(value & 0xFF)), (1, UInt32(value >> 8))].map { offset, byte in
+                        let byteAddress = alignedAddress + UInt32(offset)
+                        return (.address(byteAddress), String(format: "%06X:%04X", byteAddress, byte))
+                    }
+                }
+            }
+            return [(.address(address), nil)]
         case .gbGameGenie:
-            return .gameBoyGenie(address, compare: GameBoyGeniePatch(normalized)?.compare)
+            return [(.gameBoyGenie(address, compare: GameBoyGeniePatch(normalized)?.compare), nil)]
         case .gbGameShark:
-            return .gameBoyShark(UInt16(address).byteSwapped)
+            return [(.gameBoyShark(UInt16(address).byteSwapped), nil)]
         case .gbaCode, .gbaCodeBreaker, .psxGameShark, .n64GameShark, .unknown:
-            return nil
+            return []
         }
     }
 }

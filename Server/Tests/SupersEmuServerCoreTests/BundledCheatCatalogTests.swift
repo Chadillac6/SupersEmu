@@ -150,6 +150,19 @@ final class BundledCheatCatalogTests: XCTestCase {
         XCTAssertEqual(outcomes, [.applied, .applied])
     }
 
+    func testGenesisByteWritesOnlySupersedeTheOverlappingPartOfAWord() {
+        let word = "FF1000:ABCD"
+        let lowByte = "FF1000:0012"
+        let highByte = "FF1001:0034"
+        for (byte, untouched) in [(lowByte, "FF1001:00AB"), (highByte, "FF1000:00CD")] {
+            let outcomes = CheatApplicationOutcome.replace([[word], [byte]], system: .genesis) { codes in
+                XCTAssertEqual(codes, [untouched, byte])
+                return codes.map { _ in .applied }
+            }
+            XCTAssertEqual(outcomes, [.applied, .applied])
+        }
+    }
+
     func testDisablingSNESCheatsRestoresByteWithNoDuplicateCoreWrites() {
         let first = "001000:09"
         let last = "7E1000:0A"
