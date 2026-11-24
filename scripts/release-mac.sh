@@ -95,6 +95,11 @@ dmg_size_mb() { # staging-dir
   echo $((used + used / 4 + 64))
 }
 
+make_dmg() { # staging-dir dmg-path
+  hdiutil create -volname SupersEmu -srcfolder "$1" -fs HFS+ -size "$(dmg_size_mb "$1")m" \
+    -format UDZO -ov "$2" >/dev/null
+}
+
 disk_report() { # label; diagnostics only, never fails the release
   { df -h . | awk -v label="$1" 'NR == 2 { printf "Disk %s: %s free of %s (%s used)\n", label, $4, $2, $5 }'; } || true
 }
@@ -160,8 +165,7 @@ mkdir -p "$staging"
 ditto "$app" "$staging/SupersEmu.app"
 ln -s /Applications "$staging/Applications"
 disk_report 'before creating the dmg'
-hdiutil create -volname SupersEmu -srcfolder "$staging" -fs HFS+ -size "$(dmg_size_mb "$staging")m" \
-  -format UDZO -ov "$out/$name.dmg" >/dev/null
+make_dmg "$staging" "$out/$name.dmg"
 codesign --sign "$identity" --timestamp "$out/$name.dmg"
 notarize "$out/$name.dmg"
 staple_with_retry "$out/$name.dmg" || stapled=no
