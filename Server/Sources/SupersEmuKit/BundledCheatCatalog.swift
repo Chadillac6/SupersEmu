@@ -216,15 +216,6 @@ struct GameBoyGeniePatch: Equatable {
     let value: UInt8
     let compare: UInt8?
 
-    private static let nintendoLogo: [UInt8] = [
-        0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B,
-        0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
-        0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E,
-        0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
-        0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC,
-        0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E
-    ]
-
     init?(_ code: String) {
         guard let digits = CheatCodec.gameBoyGameGenieBody(code) else { return nil }
         let nibbles = digits.map { $0.hexDigitValue! }
@@ -247,12 +238,9 @@ struct GameBoyGeniePatch: Equatable {
             case 0x01...0x03, 0x05...0x06, 0x08...0x09, 0x0F...0x13, 0x19...0x1E, 0xEA, 0xFE...0xFF: break
             default: return false
             }
-            let isLikelyMBC1Multicart = (0x01...0x03).contains(bytes[0x147]) && bankCount == 64
-                && bytes[0x40104..<0x40134].elementsEqual(nintendoLogo)
             var written = [Int: UInt8]()
             return codes.allSatisfy { code in
                 guard let patch = GameBoyGeniePatch(code), let compare = patch.compare else { return false }
-                guard !isLikelyMBC1Multicart || patch.address >= 0x4000 else { return false }
                 let banks = patch.address < 0x4000 ? 0..<1 : 1..<bankCount
                 var matched = false
                 for bank in banks {

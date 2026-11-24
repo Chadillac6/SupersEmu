@@ -64,29 +64,6 @@ final class BundledCheatCatalogTests: XCTestCase {
         XCTAssertTrue(catalog.resolve(system: .gb, rom: rom) { _ in "unknown" }.isEmpty)
     }
 
-    func testMBC1MulticartSkipsLowerWindowFallbackWithoutAffectingExactMatches() throws {
-        let logo: [UInt8] = [
-            0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B,
-            0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
-            0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E,
-            0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
-            0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC,
-            0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E
-        ]
-        var rom = Data(count: 0x100000)
-        rom.replaceSubrange(0x104..<0x134, with: logo)
-        rom[0x147] = 0x01
-        rom[0x156] = 0x42
-        rom[0x4000] = 0x42
-        let catalog = try catalog()
-        XCTAssertFalse(catalog.resolve(system: .gb, rom: rom) { _ in "TARGET" }.isEmpty)
-
-        rom.replaceSubrange(0x40104..<0x40134, with: logo)
-        XCTAssertTrue(catalog.resolve(system: .gb, rom: rom) { _ in "TARGET" }.isEmpty)
-        XCTAssertEqual(catalog.resolve(system: .gb, rom: rom) { _ in "FIRST" }.map(\.quality), [.exactROM])
-        XCTAssertTrue(GameBoyGeniePatch.verifies(["990-00B-E03"], in: rom))
-    }
-
     func testExactCatalogAssociationDoesNotSubstituteOtherCodes() throws {
         let matches = try catalog().resolve(system: .gb, rom: cartridge()) { _ in "FIRST" }
         XCTAssertEqual(matches.map(\.quality), [.exactROM])
