@@ -39,7 +39,7 @@ targets:
     platform: [iOS, macOS]
     sources:
       - path: Host/CoreEntry/SECoreEntry.c
-        compilerFlags: ["-DSE_CORE_ID=snes9x", "-DSE_CORE_REVISION=fae2fea", "-DSE_CORE_CHEAT_COUNT=se_snes9x_cheat_count"]
+        compilerFlags: ["-DSE_CORE_ID=snes9x", "-DSE_CORE_REVISION=fae2fea", "-DSE_CORE_CHEAT_SET=se_snes9x_cheat_set", "-DSE_CORE_CHEAT_COUNT=se_snes9x_cheat_count"]
       - path: Host/CoreEntry/snes9x/se_cheats.cpp
       - path: Vendor/cores/snes9x
         includes:
