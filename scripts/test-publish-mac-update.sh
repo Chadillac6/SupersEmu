@@ -46,15 +46,36 @@ STUB
 cat > "$temp_dir/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "$1" == api && "$2" == repos/Chadillac6/SupersEmu/releases/42 ]]; then
+if [[ "${0##*/}" == curl ]]; then
+  [[ "$1 $2" == '--config -' ]]
+  [[ "$(</dev/stdin)" == 'header = "Authorization: Bearer stub-token"' ]]
+  [[ "${!#}" == "https://uploads.github.com/repos/Chadillac6/SupersEmu/releases/42/assets?name=${9##*/}" ]]
+  [[ "$8" == --data-binary && "$9" == @* ]]
+  set -- release upload "$TAG" "${9#@}"
+elif [[ "$*" == 'auth token --hostname github.com' ]]; then
+  echo stub-token
+  exit 0
+elif [[ "$1" == api && "$2" == repos/Chadillac6/SupersEmu/releases/42 ]]; then
   set -- release snapshot "$TAG"
+elif [[ "$1 $2 ${3:-} ${4:-}" == 'api --method POST repos/Chadillac6/SupersEmu/releases' ]]; then
+  [[ " $* " == *" -f tag_name=$TAG "* && " $* " == *" -f target_commitish=$COMMIT "* &&
+     " $* " == *" -F draft=true "* ]]
+  set -- release create "$TAG"
+elif [[ "$1 $2 ${3:-} ${4:-}" == 'api --method PATCH repos/Chadillac6/SupersEmu/releases/42' ]]; then
+  [[ " $* " == *" -F draft=false -f make_latest=true --silent "* ]]
+  set -- release edit "$TAG"
+elif [[ "$1 $2 ${3:-}" == 'api --method DELETE' && "$4" == repos/Chadillac6/SupersEmu/releases/assets/* ]]; then
+  jq -e '.draft' "$STATE" >/dev/null
+  jq --argjson id "${4##*/}" '.assets |= map(select(.id != $id))' "$STATE" > "$STATE.next"
+  mv "$STATE.next" "$STATE"
+  exit 0
 elif [[ "$*" == 'api --paginate --slurp repos/Chadillac6/SupersEmu/releases?per_page=100' ]]; then
   if [[ "$MODE" == lookup-error ]]; then
     echo '[[]]'
     echo 'HTTP 403: Resource not accessible by integration' >&2
     exit 1
   fi
-  if [[ ! -s "$STATE" ]]; then
+  if [[ ! -s "$STATE" || "$MODE" == undiscoverable ]]; then
     echo '[[]]'
   elif [[ "$MODE" == other-published ]]; then
     jq --arg tag "$OTHER_TAG" '[[.], [{draft:false,tag_name:$tag}]]' "$STATE"
@@ -79,6 +100,9 @@ elif [[ "$*" == "api repos/Chadillac6/SupersEmu/git/matching-refs/tags/$TAG" ]];
     echo '[]'
   fi
   exit 0
+else
+  echo "Unexpected stub call: $*" >&2
+  exit 64
 fi
 [[ "$1" == release && "$3" == "$TAG" ]]
 case "$2" in
@@ -93,22 +117,28 @@ case "$2" in
     cat "$STATE"
     ;;
   create)
-    [[ ! -s "$STATE" && " $* " == *" --target $COMMIT "* && " $* " == *" --draft "* ]]
+    [[ ! -s "$STATE" ]]
     echo create >> "$EVENTS"
     jq -n --arg commit "$COMMIT" --arg tag "$3" \
-      '{id:42,draft:true,target_commitish:$commit,tag_name:$tag,assets:[]}' > "$STATE"
+      '{id:42,draft:true,target_commitish:$commit,tag_name:$tag,assets:[],
+        html_url:"https://github.com/Chadillac6/SupersEmu/releases/tag/untagged-stub"}' > "$STATE"
+    if [[ "$MODE" == missing-create-id ]]; then
+      jq 'del(.id)' "$STATE"
+    else
+      cat "$STATE"
+    fi
     ;;
   upload)
     jq -e '.draft' "$STATE" >/dev/null
     name="${4##*/}"
     echo "upload $name" >> "$EVENTS"
     case "$name" in
-      "$ZIP") digest="$ZIP_DIGEST"; size=3 ;;
-      appcast.xml) digest="$APPCAST_DIGEST"; size=7 ;;
-      "$DMG") digest="$DMG_DIGEST"; size=3 ;;
+      "$ZIP") id=1; digest="$ZIP_DIGEST"; size=3 ;;
+      appcast.xml) id=2; digest="$APPCAST_DIGEST"; size=7 ;;
+      "$DMG") id=3; digest="$DMG_DIGEST"; size=3 ;;
       *) exit 64 ;;
     esac
-    [[ " $* " == *" --clobber "* ]]
+    jq -e --arg name "$name" 'all(.assets[]; .name != $name)' "$STATE" >/dev/null
     if [[ "$name" == "$DMG" ]]; then
       case "$MODE" in
         transient)
@@ -120,8 +150,8 @@ case "$2" in
         missing) exit 0 ;;
       esac
     fi
-    jq --arg name "$name" --arg digest "$digest" --argjson size "$size" '
-      .assets |= (map(select(.name != $name)) + [{name:$name,state:"uploaded",size:$size,digest:$digest}])
+    jq --argjson id "$id" --arg name "$name" --arg digest "$digest" --argjson size "$size" '
+      .assets += [{id:$id,name:$name,state:"uploaded",size:$size,digest:$digest}]
     ' "$STATE" > "$STATE.next"
     mv "$STATE.next" "$STATE"
     if [[ "$MODE" == lost-response && "$name" == "$DMG" ]]; then
@@ -130,7 +160,6 @@ case "$2" in
     fi
     ;;
   edit)
-    [[ " $* " == *" --draft=false --latest "* ]]
     jq -e '.draft' "$STATE" >/dev/null
     echo publish >> "$EVENTS"
     jq '.draft = false' "$STATE" > "$STATE.next"
@@ -140,12 +169,13 @@ case "$2" in
 esac
 STUB
 chmod +x "$temp_dir/scripts/prepare-mac-appcast.sh" "$temp_dir/bin/"*
+ln -s gh "$temp_dir/bin/curl"
 
 half_done() {
   jq -n --arg commit "$COMMIT" --arg tag "$TAG" --arg zip "$ZIP" --arg zip_digest "$ZIP_DIGEST" '
     {id:42,draft:true,target_commitish:$commit,tag_name:$tag,assets:[
-      {name:$zip,state:"uploaded",size:3,digest:$zip_digest},
-      {name:"appcast.xml",state:"uploaded",size:7,digest:"sha256:stale"}
+      {id:1,name:$zip,state:"uploaded",size:3,digest:$zip_digest},
+      {id:2,name:"appcast.xml",state:"uploaded",size:7,digest:"sha256:stale"}
     ]}
   ' > "$STATE"
 }
@@ -154,7 +184,8 @@ run_case() {
   local name="$1" expected_status="$2" expected_events="$3" status=0
   : > "$EVENTS"
   bash "$temp_dir/scripts/publish-mac-update.sh" "$temp_dir/out" "$TAG" "$COMMIT" \
-    > "$temp_dir/output" 2>&1 || status=$?
+    > "$temp_dir/stdout" 2> "$temp_dir/stderr" || status=$?
+  cat "$temp_dir/stdout" "$temp_dir/stderr" > "$temp_dir/output"
   if [[ "$status" != "$expected_status" || "$(< "$EVENTS")" != "$expected_events" ]]; then
     echo "FAIL: $name (exit $status; expected $expected_status)"
     cat "$temp_dir/output" "$EVENTS" >&2
@@ -208,6 +239,20 @@ run_case 'rechecks all assets together before publishing' 1 "$create"$'\nall ass
 
 MODE=lookup-error
 run_case 'does not try to create or upload when the release lookup is forbidden' 1 ''
+
+rm "$STATE"
+MODE=undiscoverable
+run_case 'publishes by numeric ID even while the new untagged draft is missing from release lists' 0 "$create$publish"
+
+rm "$STATE"
+MODE=missing-create-id
+run_case 'refuses to upload when the draft creation response has no release ID' 1 $'prepare\ncreate'
+grep -Fq "GitHub did not return an ID when creating draft $TAG." "$temp_dir/stderr"
+
+MODE=normal
+run_case 'resumes the existing zero-asset untagged draft without creating another release' 0 \
+  $'prepare\nupload '"$ZIP"$'\nupload appcast.xml\nupload '"$DMG$publish"
+grep -Fq "Resuming draft $TAG (release 42)." "$temp_dir/stdout"
 
 half_done
 MODE=other-published
