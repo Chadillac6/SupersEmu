@@ -47,7 +47,8 @@ not proof of a gameplay effect.
 To rebuild the compact catalog, check out the libretro-database revision in
 `App/Resources/GameGenieCatalog-Attribution.txt`, then run
 `python3 scripts/generate-game-genie-catalog.py /path/to/libretro-database`. That notice also links the source
-and the CC BY-SA 4.0 license for the derived data.
+and the CC BY-SA 4.0 license for the derived data. The generator reads the pinned Git objects, not edits in
+the supplied checkout.
 
 ## API
 - `GET /v1/cheats?since=<revision>`: every change (tombstones included) for the caller's user newer than
