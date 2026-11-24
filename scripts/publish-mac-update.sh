@@ -60,10 +60,26 @@ if [[ "$release" != null ]]; then
   release_id="$(jq -er '.id' <<< "$release")"
 fi
 
+tag_allows_publish() {
+  local object tagged_commit
+  object="$(gh api "repos/$repo/git/matching-refs/tags/$tag" |
+    jq -c --arg ref "refs/tags/$tag" '[.[] | select(.ref == $ref) | .object] | first')" || return 1
+  [[ "$object" == null ]] && return 0
+  if jq -e '.type == "tag"' <<< "$object" >/dev/null; then
+    tagged_commit="$(gh api "repos/$repo/commits/refs/tags/$tag" --jq .sha)" || return 1
+  else
+    tagged_commit="$(jq -er 'select(.type == "commit") | .sha' <<< "$object")" || return 1
+  fi
+  if [[ "$tagged_commit" != "$commit" ]]; then
+    echo "Git tag $tag points to $tagged_commit instead of $commit; refusing to publish." >&2
+    return 1
+  fi
+}
+
 same_draft() {
   jq -e --arg id "$release_id" --arg commit "$commit" '
     .draft == true and (.id | tostring) == $id and .target_commitish == $commit
-  ' <<< "$1" >/dev/null
+  ' <<< "$1" >/dev/null && tag_allows_publish
 }
 
 if [[ -n "$release_id" ]] && ! same_draft "$release"; then
@@ -124,13 +140,6 @@ for i in "${!files[@]}"; do
   upload_asset "${files[i]}" "${digests[i]}"
 done
 
-release="$(release_view)"
-same_draft "$release" || { echo "Draft $tag changed before publication." >&2; exit 1; }
-for i in "${!files[@]}"; do
-  name="${files[i]##*/}"
-  asset_matches "$release" "$name" "${digests[i]}" ||
-    { echo "Could not verify $name; leaving $tag as a draft." >&2; exit 1; }
-done
 # Latest is explicit because Sparkle follows /releases/latest/download/appcast.xml.
 blocking_tag="$(release_list | jq -r --arg build "$build" '
   def build_key:
@@ -147,4 +156,12 @@ if [[ -n "$blocking_tag" ]]; then
   echo "Build $build must be newer than published Mac update $blocking_tag; leaving $tag as a draft." >&2
   exit 1
 fi
+
+release="$(release_view)"
+for i in "${!files[@]}"; do
+  name="${files[i]##*/}"
+  asset_matches "$release" "$name" "${digests[i]}" ||
+    { echo "Could not verify $name; leaving $tag as a draft." >&2; exit 1; }
+done
+same_draft "$release" || { echo "Draft or tag $tag could not be verified before publication." >&2; exit 1; }
 gh release edit "$tag" --repo "$repo" --draft=false --latest

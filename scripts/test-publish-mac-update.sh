@@ -69,6 +69,16 @@ elif [[ "$*" == "api repos/Chadillac6/SupersEmu/commits/refs/tags/$TAG --jq .sha
     echo "$COMMIT"
   fi
   exit 0
+elif [[ "$*" == "api repos/Chadillac6/SupersEmu/git/matching-refs/tags/$TAG" ]]; then
+  if [[ "$MODE" == wrong-draft-tag ]] ||
+    { [[ "$MODE" == wrong-draft-tag-appears ]] && grep -Fxq "upload $DMG" "$EVENTS"; }; then
+    jq -n --arg ref "refs/tags/$TAG" '[{ref:$ref,object:{type:"commit",sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]'
+  elif [[ "$MODE" == matching-draft-tag ]]; then
+    jq -n --arg ref "refs/tags/$TAG" '[{ref:$ref,object:{type:"tag",sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]'
+  else
+    echo '[]'
+  fi
+  exit 0
 fi
 [[ "$1" == release && "$3" == "$TAG" ]]
 case "$2" in
@@ -169,8 +179,19 @@ mv "$STATE.next" "$STATE"
 run_case 'rejects a published release with a different build ZIP' 2 ''
 
 half_done
+MODE=matching-draft-tag
 run_case 'resumes a draft, preserving the matching ZIP and replacing the stale appcast' 0 \
   $'prepare\nupload appcast.xml\nupload '"$DMG$publish"
+
+half_done
+MODE=wrong-draft-tag
+run_case 'refuses to change a draft whose Git tag points to a different commit' 2 ''
+
+half_done
+MODE=wrong-draft-tag-appears
+run_case 'refuses to publish if a conflicting Git tag appears during upload' 1 \
+  $'prepare\nupload appcast.xml\nupload '"$DMG"
+grep -Fq "Git tag $TAG points to" "$temp_dir/output"
 
 rm "$STATE"
 MODE=lost-response
