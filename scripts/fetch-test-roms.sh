@@ -3,7 +3,7 @@
 # Never commit these files or bundle them into the app. Fleet uses --require-all;
 # local downloads are best effort so host tests can skip unavailable fixtures.
 #
-#   SNES      PeterLemon/SNES HelloWorld, ControllerLatency  (no licence file: local testing only)
+#   SNES      PeterLemon/SNES HelloWorld                    (no licence file: local testing only)
 #   GB        mattcurrie/dmg-acid2 v1.0                      (MIT)
 #   GBC       mattcurrie/cgb-acid2 v1.1                      (MIT)
 #   GBA       jsmolka/gba-tests ppu/hello.gba                (MIT)
@@ -64,8 +64,6 @@ fetch() { # name url sha256 [fallback url...]
 snes=https://raw.githubusercontent.com/PeterLemon/SNES/350b394e86ec5d62f600b5cbf64cdce3721bb6ef
 fetch HelloWorld.sfc "$snes/HelloWorld/HelloWorld.sfc" \
   63ed338621788ad4ab856bb782e16044193882b7840370b500c8359a41fb87ef
-fetch ControllerLatency.sfc "$snes/INPUT/ControllerLatency/ControllerLatency.sfc" \
-  9e01faa75d9d09dc3c1bee3cbde76c468982dee3f27f55fae6de52be72b73767
 
 fetch dmg-acid2.gb https://github.com/mattcurrie/dmg-acid2/releases/download/v1.0/dmg-acid2.gb \
   464e14b7d42e7feea0b7ede42be7071dc88913f75b9ffa444299424b63d1dff1
