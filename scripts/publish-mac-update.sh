@@ -132,20 +132,19 @@ for i in "${!files[@]}"; do
     { echo "Could not verify $name; leaving $tag as a draft." >&2; exit 1; }
 done
 # Latest is explicit because Sparkle follows /releases/latest/download/appcast.xml.
-newer_tag="$(release_list | jq -r --arg build "$build" '
+blocking_tag="$(release_list | jq -r --arg build "$build" '
   def build_key:
-    sub("^(?<date>[0-9]{8})\\.(?<time>[0-9]{4})$"; "\(.date).\(.time)00")
-    | split(".") + ["0", "0"] | .[:3]
+    split(".") + ["0", "0"] | .[:3]
     | map(sub("^0+"; "") | [length, .]);
   ($build | build_key) as $current
   | [.[][] | select(.draft == false) | .tag_name
      | select(test("^mac-[0-9]+(\\.[0-9]+){0,2}$"))
      | {tag: ., key: (ltrimstr("mac-") | build_key)}
-     | select(.key > $current)]
+     | select(.key >= $current)]
   | (max_by(.key) | .tag) // empty
 ')"
-if [[ -n "$newer_tag" ]]; then
-  echo "Mac update $newer_tag is newer; leaving $tag as a draft." >&2
+if [[ -n "$blocking_tag" ]]; then
+  echo "Build $build must be newer than published Mac update $blocking_tag; leaving $tag as a draft." >&2
   exit 1
 fi
 gh release edit "$tag" --repo "$repo" --draft=false --latest

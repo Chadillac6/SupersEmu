@@ -197,15 +197,32 @@ TAG=mac-20261123.231829
 MODE=normal
 run_case 'rejects a tag that does not match the exported build' 2 ''
 
-TAG=mac-1.10.2
-mv "$temp_dir/out/$ZIP" "$temp_dir/out/SupersEmu-0.0.25-1.10.2.zip"
-mv "$temp_dir/out/updates/$ZIP" "$temp_dir/out/updates/SupersEmu-0.0.25-1.10.2.zip"
-mv "$temp_dir/out/updates/${ZIP%.zip}.html" "$temp_dir/out/updates/SupersEmu-0.0.25-1.10.2.html"
-mv "$temp_dir/out/$DMG" "$temp_dir/out/SupersEmu-0.0.25-1.10.2.dmg"
-ZIP=SupersEmu-0.0.25-1.10.2.zip
-DMG=SupersEmu-0.0.25-1.10.2.dmg
-half_done
+set_build() {
+  local build="$1" stem="SupersEmu-0.0.25-$1"
+  TAG="mac-$build"
+  mv "$temp_dir/out/$ZIP" "$temp_dir/out/$stem.zip"
+  mv "$temp_dir/out/updates/$ZIP" "$temp_dir/out/updates/$stem.zip"
+  mv "$temp_dir/out/updates/${ZIP%.zip}.html" "$temp_dir/out/updates/$stem.html"
+  mv "$temp_dir/out/$DMG" "$temp_dir/out/$stem.dmg"
+  ZIP="$stem.zip"
+  DMG="$stem.dmg"
+  half_done
+}
+
+set_build 1.10.2
 MODE=other-published
 OTHER_TAG=mac-1.9.12
 run_case 'accepts an overridden build number and compares its components numerically' 0 \
   $'prepare\nupload appcast.xml\nupload '"$DMG$publish"
+
+set_build 20261124.0001
+OTHER_TAG=mac-20261124.0001.1
+run_case 'compares an omitted third component as zero rather than interpreting the build as a time' 1 \
+  $'prepare\nupload appcast.xml\nupload '"$DMG"
+grep -Fq "must be newer than published Mac update $OTHER_TAG" "$temp_dir/output"
+
+set_build 20261124.123456
+OTHER_TAG=mac-20261124.123456.0
+run_case 'refuses to publish a build equal to a release with an explicit trailing zero' 1 \
+  $'prepare\nupload appcast.xml\nupload '"$DMG"
+grep -Fq "must be newer than published Mac update $OTHER_TAG" "$temp_dir/output"
