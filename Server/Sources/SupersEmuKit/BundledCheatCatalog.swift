@@ -48,13 +48,21 @@ public struct BundledCheatCatalog: Decodable, Sendable {
     }
 
     public static func supports(_ system: SystemID) -> Bool {
+        maximumROMSize(for: system) != nil
+    }
+
+    /// Largest cataloged cartridges, rounded to MiB, plus any supported copier header.
+    public static func maximumROMSize(for system: SystemID) -> Int? {
         switch system {
-        case .snes, .genesis, .sega32x, .gb, .gbc: true
-        default: false
+        case .snes, .genesis: 16 * 1024 * 1024 + 512
+        case .sega32x: 4 * 1024 * 1024 + 512
+        case .gb, .gbc: 16 * 1024 * 1024
+        default: nil
         }
     }
 
     public func resolve(system: SystemID, rom: Data, sha1: (Data) -> String) -> [Match] {
+        guard let limit = Self.maximumROMSize(for: system), rom.count <= limit else { return [] }
         let catalogSystems: [SystemID]
         switch system {
         case .gb: catalogSystems = [.gb, .gbc]

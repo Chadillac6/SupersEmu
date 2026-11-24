@@ -34,6 +34,7 @@ Only the selection is saved; the app resolves the actual codes from its catalog 
 
 The app resolves the catalog against the local ROM after download or when an existing download is first played.
 It uses a No-Intro SHA-1 match, stripping a SNES copier header or deinterleaving Sega SMD data if needed.
+Files larger than the catalog's cartridge size limit for the system are skipped before hashing.
 Catalog entries are joined to unambiguous DAT names at generation time, never to a player's editable title.
 No ROM data is shipped with the catalog or sent to a service to match cheats.
 

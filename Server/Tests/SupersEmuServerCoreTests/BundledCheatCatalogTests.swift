@@ -91,6 +91,22 @@ final class BundledCheatCatalogTests: XCTestCase {
                        [.verifiedOnROM, .verifiedOnROM])
     }
 
+    func testOversizedSegaROMIsNotHashedOrNormalized() throws {
+        let catalog = try catalog()
+        for (system, megabytes) in [(SystemID.genesis, 16), (.sega32x, 4)] {
+            let limit = megabytes * 1024 * 1024 + 512
+            XCTAssertEqual(BundledCheatCatalog.maximumROMSize(for: system), limit)
+            let rom = Data(count: limit + 0x4000)
+            var hashedSizes = [Int]()
+            let matches = catalog.resolve(system: system, rom: rom) {
+                hashedSizes.append($0.count)
+                return ""
+            }
+            XCTAssertTrue(matches.isEmpty)
+            XCTAssertTrue(hashedSizes.isEmpty, "Hashed \(hashedSizes)")
+        }
+    }
+
     func testCatalogRejectsAnEmptyCodeGroup() {
         let invalid = catalogJSON.replacingOccurrences(of: "[\"Example\",\"C2C3-CF0D\"]", with: "[\"Example\"]")
         XCTAssertThrowsError(try JSONDecoder().decode(BundledCheatCatalog.self, from: Data(invalid.utf8)))

@@ -13,9 +13,12 @@ actor BundledCheatLibrary {
     private var bySystem: [SystemID: [String: [BundledCheat]]] = [:]
 
     func matches(gameID: String, system: SystemID, romURL: URL) -> [BundledCheat] {
-        guard BundledCheatCatalog.supports(system) else { return [] }
+        guard let limit = BundledCheatCatalog.maximumROMSize(for: system) else { return [] }
         if let cached = bySystem[system]?[gameID] { return cached }
-        guard let catalog, let rom = try? Data(contentsOf: romURL, options: .mappedIfSafe) else { return [] }
+        guard let size = try? romURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size <= limit, let catalog, let file = try? FileHandle(forReadingFrom: romURL) else { return [] }
+        defer { try? file.close() }
+        guard let rom = try? file.read(upToCount: limit + 1), rom.count <= limit else { return [] }
         let matches = catalog.resolve(system: system, rom: rom) { Insecure.SHA1.hash(data: $0).hexString }
             .map { BundledCheat(gameID: gameID, match: $0) }
         bySystem[system, default: [:]][gameID] = matches
