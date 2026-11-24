@@ -9,12 +9,16 @@ ref="${3:?Pass the tested commit or branch}"
 repo=Chadillac6/SupersEmu
 [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid release tag' >&2; exit 2; }
 
-release_view() {
+release_discover() {
   gh release view "$tag" --repo "$repo" --json databaseId,isDraft,targetCommitish,assets
 }
 
+release_view() {
+  gh api "repos/$repo/releases/$release_id" --jq '{databaseId:.id,isDraft:.draft,targetCommitish:.target_commitish,assets}'
+}
+
 release_id=""
-if release="$(release_view 2>&1)"; then
+if release="$(release_discover 2>&1)"; then
   if jq -e '.isDraft == false' <<< "$release" >/dev/null; then
     if jq -e '
       [.assets[] | select(.state == "uploaded" and .size > 0) | .name] as $names
@@ -73,7 +77,7 @@ done
 if [[ -z "$release_id" ]]; then
   gh release create "$tag" --repo "$repo" --target "$commit" --title "SupersEmu $tag" \
     --notes-file "${notes_files[0]}" --draft
-  release="$(release_view)"
+  release="$(release_discover)"
   release_id="$(jq -er '.databaseId' <<< "$release")"
 fi
 

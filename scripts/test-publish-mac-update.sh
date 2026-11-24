@@ -44,9 +44,12 @@ STUB
 cat > "$temp_dir/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$1" == api && "$2" == repos/Chadillac6/SupersEmu/releases/42 ]]; then
+  set -- release snapshot mac-20261123.231830
+fi
 [[ "$1" == release && "$3" == mac-20261123.231830 ]]
 case "$2" in
-  view)
+  view|snapshot)
     if [[ "$MODE" == lookup-error ]]; then
       echo 'HTTP 403: Resource not accessible by integration' >&2
       exit 1
@@ -54,6 +57,10 @@ case "$2" in
     if [[ ! -s "$STATE" ]]; then
       echo 'release not found' >&2
       exit 1
+    fi
+    if [[ "$2" == view ]]; then
+      jq 'del(.assets[].digest)' "$STATE"
+      exit 0
     fi
     if [[ "$MODE" == vanishes ]] && jq -e --arg name "$DMG" 'any(.assets[]; .name == $name)' "$STATE" >/dev/null; then
       if grep -qx 'all assets seen' "$EVENTS"; then
