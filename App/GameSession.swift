@@ -358,13 +358,14 @@ final class GameSession {
     /// a restart and every toggle, so the core always holds exactly the enabled list.
     private func applyCheats() {
         guard host != nil, coreSupportsCheats else { return }
+        let system = systemID
         var states: [UUID: CheatRunState] = [:]
         var ids: [UUID] = []
         var groups: [[String]] = []
         for cheat in cheatRows {
             if !cheat.enabled { states[cheat.id] = .off; continue }
             let codes = cheat.codes.compactMap { raw -> String? in
-                guard case .valid(_, let code, _, _) = CheatCodec.parse(raw, system: systemID) else { return nil }
+                guard case .valid(_, let code, _, _) = CheatCodec.parse(raw, system: system) else { return nil }
                 return CheatCodec.coreCode(code)
             }
             guard codes.count == cheat.codes.count else {
@@ -375,7 +376,7 @@ final class GameSession {
             groups.append(codes)
         }
         let outcomes = emulationLoop?.perform { host in
-            CheatApplicationOutcome.replace(groups) { codes in
+            CheatApplicationOutcome.replace(groups, system: system) { codes in
                 (host?.applyCheats(codes) ?? []).map {
                     switch CheatOutcome(rawValue: $0.intValue) {
                     case .applied: .applied

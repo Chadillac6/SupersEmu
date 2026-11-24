@@ -114,7 +114,7 @@ final class BundledCheatCatalogTests: XCTestCase {
 
     func testRejectedCompoundIsRemovedBeforeOtherCheatsAreReapplied() {
         var calls = [[String]]()
-        let outcomes = CheatApplicationOutcome.replace([["first", "bad"], ["manual"], ["other"]]) { codes in
+        let outcomes = CheatApplicationOutcome.replace([["first", "bad"], ["manual"], ["other"]], system: .n64) { codes in
             calls.append(codes)
             return codes.map {
                 switch $0 {
@@ -126,5 +126,54 @@ final class BundledCheatCatalogTests: XCTestCase {
         }
         XCTAssertEqual(calls, [["first", "bad", "manual", "other"], ["manual", "other"]])
         XCTAssertEqual(outcomes, [.rejected, .sent, .applied])
+    }
+
+    func testLastGenesisWriteWinsAndSupersededComponentsRemainApplied() {
+        let a = "001000:AB09"
+        let b = "001001:AB0A"
+        let c = "001002:AB0B"
+        let outcomes = CheatApplicationOutcome.replace([[a], [b, c], [a]], system: .genesis) { codes in
+            XCTAssertEqual(codes, [c, a])
+            return [.applied, .applied]
+        }
+        XCTAssertEqual(outcomes, [.applied, .applied, .applied])
+    }
+
+    func testDisablingSNESCheatsRestoresByteWithNoDuplicateCoreWrites() {
+        let first = "001000:09"
+        let last = "7E1000:0A"
+        let original: UInt8 = 0x42
+        var memory = original
+        var saved = [UInt8]()
+        func apply(_ codes: [String]) -> [CheatApplicationOutcome] {
+            XCTAssertLessThanOrEqual(codes.count, 1)
+            for byte in saved { memory = byte }
+            saved.removeAll()
+            return codes.map { code in
+                saved.append(memory)
+                memory = UInt8(code.suffix(2), radix: 16)!
+                return .applied
+            }
+        }
+        XCTAssertEqual(CheatApplicationOutcome.replace([[first], [last]], system: .snes, send: apply),
+                       [.applied, .applied])
+        XCTAssertEqual(memory, 0x0A)
+        XCTAssertEqual(CheatApplicationOutcome.replace([[first]], system: .snes, send: apply), [.applied])
+        XCTAssertEqual(memory, 0x09)
+        XCTAssertEqual(CheatApplicationOutcome.replace([], system: .snes, send: apply), [])
+        XCTAssertEqual(memory, original)
+    }
+
+    func testRejectedCompoundLetsAnEarlierWriteTakeEffect() {
+        let first = "7E1000:09"
+        let last = "7E1000:0A"
+        let rejected = "7E1001:0B"
+        var calls = [[String]]()
+        let outcomes = CheatApplicationOutcome.replace([[first], [last, rejected]], system: .snes) { codes in
+            calls.append(codes)
+            return codes.map { $0 == rejected ? .rejected : .applied }
+        }
+        XCTAssertEqual(calls, [[last, rejected], [first]])
+        XCTAssertEqual(outcomes, [.applied, .rejected])
     }
 }

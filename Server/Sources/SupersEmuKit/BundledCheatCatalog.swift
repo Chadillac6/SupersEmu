@@ -121,26 +121,65 @@ public struct BundledCheatCatalog: Decodable, Sendable {
 public enum CheatApplicationOutcome: Equatable {
     case applied, sent, rejected
 
-    public static func replace(_ groups: [[String]], send: ([String]) -> [Self]) -> [Self] {
+    public static func replace(_ groups: [[String]], system: SystemID, send: ([String]) -> [Self]) -> [Self] {
+        let addresses = groups.map { $0.map { targetAddress($0, system: system) } }
         var remaining = groups.indices.filter { !groups[$0].isEmpty }
         var outcomes = Array(repeating: Self.rejected, count: groups.count)
         while true {
-            let result = send(remaining.flatMap { groups[$0] })
-            var offset = 0
-            var rejectedGroups = Set<Int>()
-            for index in remaining {
-                let end = offset + groups[index].count
-                let group = result[offset..<min(end, result.count)]
-                if group.count != groups[index].count || group.contains(.rejected) {
-                    outcomes[index] = .rejected
-                    if groups[index].count > 1 { rejectedGroups.insert(index) }
-                } else {
-                    outcomes[index] = group.contains(.sent) ? .sent : .applied
+            var lastGroupByAddress = [UInt32: Int]()
+            var shadowingGroups = Set<Int>()
+            var dispatch = [(group: Int, code: String)]()
+            for group in remaining.reversed() {
+                outcomes[group] = .applied
+                for index in groups[group].indices.reversed() {
+                    if let address = addresses[group][index] {
+                        if let last = lastGroupByAddress[address] {
+                            shadowingGroups.insert(last)
+                            continue
+                        }
+                        lastGroupByAddress[address] = group
+                    }
+                    dispatch.append((group, groups[group][index]))
                 }
-                offset = min(end, result.count)
             }
-            if rejectedGroups.isEmpty { return outcomes }
-            remaining.removeAll(where: rejectedGroups.contains)
+            dispatch.reverse()
+            let result = send(dispatch.map(\.code))
+            var retryWithout = Set<Int>()
+            for (index, component) in dispatch.enumerated() {
+                let outcome = index < result.count ? result[index] : .rejected
+                if outcome == .rejected {
+                    outcomes[component.group] = .rejected
+                    if groups[component.group].count > 1 || shadowingGroups.contains(component.group) {
+                        retryWithout.insert(component.group)
+                    }
+                } else if outcome == .sent && outcomes[component.group] != .rejected {
+                    outcomes[component.group] = .sent
+                }
+            }
+            if retryWithout.isEmpty { return outcomes }
+            remaining.removeAll(where: retryWithout.contains)
+        }
+    }
+
+    private static func targetAddress(_ code: String, system: SystemID) -> UInt32? {
+        guard case .valid(let format, _, let address, let value) = CheatCodec.parse(code, system: system) else {
+            return nil
+        }
+        if system == .snes {
+            let bank = (address >> 16) & 0x7F
+            let offset = address & 0xFFFF
+            return bank < 0x40 && offset < 0x2000 ? 0x7E0000 | offset : address
+        }
+        switch format {
+        case .snesGameGenie, .genesisGameGenie, .proActionReplay:
+            if system == .genesis && (address < 0xFF0000 || value > 0xFF) { return address & ~1 }
+            return address
+        case .gbGameGenie:
+            return address
+        case .gbGameShark:
+            return 0x10000 | UInt32(UInt16(address).byteSwapped)
+        case .gbaCode, .gbaCodeBreaker, .psxGameShark, .n64GameShark, .unknown:
+            return nil
         }
     }
 }

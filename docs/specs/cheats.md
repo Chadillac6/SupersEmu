@@ -68,10 +68,11 @@ drops tombstones after 90 days. Sign-out drops the queue so the next account nev
 
 ## Applying codes
 Launch only reads the device's copy. After the game loads, after loading any state, after a restart and after
-every toggle, the host calls `cheat_reset` and then `cheat_set` once per enabled valid code, comparing the core's
-cheat count before and after each call when the core exposes one. A compound catalog cheat sends each
-component separately. If the core rejects any component, the player removes that group and reapplies the
-remaining cheats. The host rejects literal `+`, empty strings and codes over 240 bytes. It also resets cheats
+every toggle, the host calls `cheat_reset` and then `cheat_set`, comparing the core's cheat count before and
+after each call when the core exposes one. For codes with a decoded target address, only the last write to
+that target in picker order is sent. A superseded component does not count as a rejection. If the core
+rejects a compound component, the player removes that group and reapplies the remaining cheats. The host
+rejects literal `+`, empty strings and codes over 240 bytes. It also resets cheats
 right after `load_game` and before `unload_game`, so codes can't carry over to another game.
 
 ## Verified vs not
