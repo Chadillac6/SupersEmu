@@ -87,6 +87,14 @@ trim_derived_data() { # derived-data-dir
   echo "Trimmed $1 from $before to $(du -sh "$1" 2>/dev/null | cut -f1 || echo '?') (kept SourcePackages)"
 }
 
+# hdiutil's own -srcfolder size estimate can fall short and fail with "No space left on device" even when the
+# runner has tens of GB free, so size the image from the staged files with headroom.
+dmg_size_mb() { # staging-dir
+  local used
+  used="$(du -sm "$1" | cut -f1)"
+  echo $((used + used / 4 + 64))
+}
+
 disk_report() { # label; diagnostics only, never fails the release
   { df -h . | awk -v label="$1" 'NR == 2 { printf "Disk %s: %s free of %s (%s used)\n", label, $4, $2, $5 }'; } || true
 }
@@ -152,7 +160,8 @@ mkdir -p "$staging"
 ditto "$app" "$staging/SupersEmu.app"
 ln -s /Applications "$staging/Applications"
 disk_report 'before creating the dmg'
-hdiutil create -volname SupersEmu -srcfolder "$staging" -format UDZO -ov "$out/$name.dmg" >/dev/null
+hdiutil create -volname SupersEmu -srcfolder "$staging" -fs HFS+ -size "$(dmg_size_mb "$staging")m" \
+  -format UDZO -ov "$out/$name.dmg" >/dev/null
 codesign --sign "$identity" --timestamp "$out/$name.dmg"
 notarize "$out/$name.dmg"
 staple_with_retry "$out/$name.dmg" || stapled=no
