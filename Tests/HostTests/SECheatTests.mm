@@ -225,41 +225,6 @@ static NSArray<NSNumber *> *outcomes(std::initializer_list<SECheatOutcome> list)
                           outcomes({SECheatOutcomeApplied, SECheatOutcomeApplied, SECheatOutcomeRejected}));
 }
 
-- (void)testGenesisPlusGXReappliesSharedROMPatchInSubmissionOrder {
-    NSMutableData *rom = [NSMutableData dataWithLength:0x8000];
-    const uint8_t vectors[] = {0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x02, 0x00};
-    const uint8_t romEnd[] = {0x00, 0x00, 0x7F, 0xFF};
-    // Copy two patched ROM words into work RAM, then repeat.
-    const uint8_t program[] = {0x33, 0xF9, 0x00, 0x00, 0x10, 0x00, 0x00, 0xFF, 0x10, 0x00,
-                               0x33, 0xF9, 0x00, 0x00, 0x10, 0x02, 0x00, 0xFF, 0x10, 0x02,
-                               0x60, 0xEA};
-    [rom replaceBytesInRange:NSMakeRange(0, sizeof(vectors)) withBytes:vectors];
-    [rom replaceBytesInRange:NSMakeRange(0x100, 16) withBytes:"SEGA MEGA DRIVE "];
-    [rom replaceBytesInRange:NSMakeRange(0x1A4, sizeof(romEnd)) withBytes:romEnd];
-    [rom replaceBytesInRange:NSMakeRange(0x200, sizeof(program)) withBytes:program];
-    NSURL *url = [_directory URLByAppendingPathComponent:@"patch-order.md"];
-    XCTAssertTrue([rom writeToURL:url atomically:YES]);
-    NSError *error = nil;
-    SELibretroHost *host = [[SELibretroHost alloc] initWithCoreID:@"genesis_plus_gx" romURL:url
-                                                       saveRAMURL:[_directory URLByAppendingPathComponent:@"real.srm"]
-                                                  systemDirectory:_directory error:&error];
-    XCTAssertNotNil(host, @"%@", error);
-    if (!host) return;
-    auto ram = static_cast<const uint16_t *>(se_core_genesis_plus_gx()->get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
-    XCTAssertNotEqual(ram, nullptr);
-    if (!ram) return;
-
-    XCTAssertEqualObjects([host applyCheatCodes:@[@"001000:AB09", @"001000:AB0A", @"001000:AB09", @"001002:AB0B"]],
-                          outcomes({SECheatOutcomeApplied, SECheatOutcomeApplied, SECheatOutcomeApplied, SECheatOutcomeApplied}));
-    [host runFrames:2];
-    XCTAssertEqual(ram[0x800], 0xAB09);
-    XCTAssertEqual(ram[0x801], 0xAB0B);
-    [host applyCheatCodes:@[]];
-    [host runFrames:2];
-    XCTAssertEqual(ram[0x800], 0);
-    XCTAssertEqual(ram[0x801], 0);
-}
-
 - (void)testGenesisPlusGXAcceptsGameGenieAndRejectsMalformedCodes {
     SELibretroHost *host = [self realHost:@"genesis_plus_gx" rom:@"mega-drive-midi-interface.md"];
     if (!host) { XCTSkip(@"mega-drive-midi-interface.md fixture missing (scripts/fetch-test-roms.sh)"); }

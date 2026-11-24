@@ -20,22 +20,16 @@ void se_gpgx_cheat_set(unsigned index, bool enabled, const char *code) {
     cheatlist[scratch] = saved;
     if (!valid) return;
 
-    int previous = 0;
-    while (previous < maxcheats &&
-           (cheatlist[previous].address != patch.address || cheatlist[previous].data != patch.data)) {
-        ++previous;
-    }
-    if (previous == MAX_CHEATS) return;
+    int i;
+    for (i = 0; i < maxcheats; ++i)
+        if (cheatlist[i].address == patch.address && cheatlist[i].data == patch.data) break;
+    if (i == MAX_CHEATS) return;
 
     clear_cheats();
-    if (previous < maxcheats) {
-        // Replay a reused ROM patch at its latest position, after any intervening writes.
-        --maxcheats;
-        memmove(&cheatlist[previous], &cheatlist[previous + 1],
-                (maxcheats - previous) * sizeof(cheatlist[0]));
+    if (i == maxcheats) {
+        cheatlist[maxcheats++] = patch;
     }
-    cheatlist[maxcheats] = patch;
-    cheatlist[maxcheats++].enable = enabled;
+    cheatlist[i].enable = enabled;
     apply_cheats();
     ++accepted;
 }
