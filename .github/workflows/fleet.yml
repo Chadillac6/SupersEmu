@@ -94,17 +94,27 @@ jobs:
           git -C Vendor/cores/picodrive submodule update --init --depth 1 platform/libpicofe platform/common/dr_libs pico/sound/emu2413
           git -C Vendor/cores/flycast submodule update --init --depth 1 core/deps/libchdr core/deps/tinygettext core/deps/xbyak core/deps/asio
           xcodegen generate
-      - name: Cache Swift packages
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+      - name: Restore Swift packages
+        id: swift_packages
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4
         with:
           path: build/ci-ios/SourcePackages
-          key: ios-spm-${{ hashFiles('Server/Package.resolved', 'project.yml') }}
-          restore-keys: ios-spm-
+          key: ios-spm-${{ runner.os }}-${{ runner.arch }}-${{ env.DEVELOPER_DIR }}-${{ hashFiles('Server/Package.resolved', 'project.yml') }}
+          # Keep the existing exact-input cache warm on its original toolchain during rollout.
+          restore-keys: |
+            ios-spm-${{ runner.os }}-${{ runner.arch }}-${{ env.DEVELOPER_DIR }}-
+            ${{ runner.os == 'macOS' && runner.arch == 'ARM64' && env.DEVELOPER_DIR == '/Applications/Xcode_26.2.app/Contents/Developer' && format('ios-spm-{0}', hashFiles('Server/Package.resolved', 'project.yml')) || '' }}
       - name: Build iOS app and tests
         run: |
           xcodebuild build-for-testing -project SupersEmu.xcodeproj -scheme SupersEmu-iOS \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ci-ios \
             -showBuildTimingSummary ARCHS="$(uname -m)" COMPILER_INDEX_STORE_ENABLE=NO
+      - name: Save Swift packages for future runs
+        if: github.ref == 'refs/heads/main' && steps.swift_packages.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: build/ci-ios/SourcePackages
+          key: ${{ steps.swift_packages.outputs.cache-primary-key }}
       - name: Pick and boot iPhone and iPad simulators
         id: simulators
         run: |
