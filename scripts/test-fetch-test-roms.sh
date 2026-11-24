@@ -25,6 +25,10 @@ case "$url" in
     [[ "${FAIL_SNES:-}" != 1 ]] || exit 22
     printf 'fixture bytes\n' > "$2"
     ;;
+  */dmg-acid2.gb)
+    [[ "${FAIL_GB:-}" != 1 ]] || exit 22
+    printf 'fixture bytes\n' > "$2"
+    ;;
   https://github.com/*/chroma-circuit.cdi)
     printf 'different rolling release\n' > "$2"
     ;;
@@ -38,12 +42,13 @@ esac
 SH
 chmod +x "$temp_dir/bin/curl"
 export PATH="$temp_dir/bin:$PATH" CURL_LOG="$temp_dir/requests" TEST_ARCHIVE="$temp_dir/noudar.zip"
+export TEST_ROM_CACHE_PATHS=$'Tests/Fixtures/local/chroma-circuit.cdi\nTests/Fixtures/local/dmg-acid2.gb\n'
 
 mkdir -p "$fixtures"
 printf 'corrupt cached disc\n' > "$fixtures/chroma-circuit.cdi"
 output="$(GITHUB_OUTPUT="$temp_dir/complete" bash "$script" --require-all 2>&1)"
 [[ "$output" == *'Fixtures ready'*'(0 unavailable)' ]]
-[[ "$(cat "$temp_dir/complete")" == 'complete=true' ]]
+[[ "$(cat "$temp_dir/complete")" == 'cache_ready=true' ]]
 [[ "$output" == *'SHA-256 mismatch for chroma-circuit.cdi'* ]]
 grep -q '^https://web.archive.org/' "$CURL_LOG"
 cmp "$fixtures/chroma-circuit.cdi" "$temp_dir/noudar.0.0.2.32x"
@@ -68,8 +73,16 @@ output="$(FAIL_SNES=1 GITHUB_STEP_SUMMARY="$temp_dir/summary" GITHUB_OUTPUT="$te
   bash "$script" --allow-missing 2>&1)"
 [[ "$output" == *'::error title=Test fixture unavailable::Could not download and verify HelloWorld.sfc'* ]]
 [[ "$(cat "$temp_dir/summary")" == *'Test fixture unavailable: `HelloWorld.sfc`'* ]]
-[[ ! -e "$fixtures/HelloWorld.sfc" && ! -s "$temp_dir/incomplete" ]]
-echo 'PASS: main mode annotates and summarizes missing fixtures without failing or marking the cache complete'
+[[ ! -e "$fixtures/HelloWorld.sfc" ]]
+[[ "$(cat "$temp_dir/incomplete")" == 'cache_ready=true' ]]
+echo 'PASS: main mode annotates and summarizes missing SNES without blocking release or cache save'
+
+printf 'corrupt cached ROM\n' > "$fixtures/dmg-acid2.gb"
+output="$(FAIL_SNES=1 FAIL_GB=1 GITHUB_OUTPUT="$temp_dir/partial-cache" bash "$script" --allow-missing 2>&1)"
+[[ "$output" == *'::error title=Test fixture unavailable::Could not download and verify dmg-acid2.gb'* ]]
+[[ ! -e "$fixtures/dmg-acid2.gb" ]]
+[[ "$(cat "$temp_dir/partial-cache")" == 'cache_ready=false' ]]
+echo 'PASS: main mode does not save a cache with an unverified cacheable fixture'
 
 output="$(FAIL_SNES=1 bash "$script" 2>&1)"
 [[ "$output" == *'warning: could not download and verify HelloWorld.sfc'* ]]

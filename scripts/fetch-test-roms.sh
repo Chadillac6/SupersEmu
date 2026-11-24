@@ -104,7 +104,16 @@ if (( failures )); then
   if [[ "$mode" == --require-all ]]; then exit 1; fi
 else
   echo "Fixtures ready in $dest (0 unavailable)"
-  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-    echo 'complete=true' >> "$GITHUB_OUTPUT"
-  fi
+fi
+
+if [[ "$mode" != local && -n "${GITHUB_OUTPUT:-}" && -n "${TEST_ROM_CACHE_PATHS:-}" ]]; then
+  cache_ready=true
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    if [[ ! -f "$root/$path" ]]; then
+      cache_ready=false
+      break
+    fi
+  done <<< "$TEST_ROM_CACHE_PATHS"
+  echo "cache_ready=$cache_ready" >> "$GITHUB_OUTPUT"
 fi

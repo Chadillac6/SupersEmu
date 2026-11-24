@@ -62,7 +62,7 @@ jobs:
         id: fixture_fetch
         run: scripts/fetch-test-roms.sh ${{ github.event_name == 'pull_request' && '--require-all' || '--allow-missing' }}
       - name: Save verified homebrew test fixtures
-        if: github.ref == 'refs/heads/main' && steps.fixture_fetch.outputs.complete == 'true' && steps.test_roms.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.fixture_fetch.outputs.cache_ready == 'true' && steps.test_roms.outputs.cache-hit != 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4
         with:
           path: ${{ env.TEST_ROM_CACHE_PATHS }}
