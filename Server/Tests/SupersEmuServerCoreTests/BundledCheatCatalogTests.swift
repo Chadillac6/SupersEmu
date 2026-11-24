@@ -11,6 +11,10 @@ final class BundledCheatCatalogTests: XCTestCase {
       "THIRD":{"cheats":[["More lives","881-56F-E03"],["Next effect","661-5BF-70A"]]},
       "FOREIGN":{"cheats":[["Unrelated","661-56F-E03"]]}
     },"families":{"Game (USA)":["FIRST","SECOND","THIRD"]}},
+    "gbc":{"revisions":{
+      "FIRST":{"family":"Color Game"},
+      "COLOR":{"cheats":[["More color","991-56F-E03"]]}
+    },"families":{"Color Game":["COLOR"]}},
     "snes":{"revisions":{"SNES":{"cheats":[["Example","C2C3-CF0D"]]}}, "families":{}},
     "genesis":{"revisions":{"GENESIS":{"cheats":[["Example","RFAA-A6VR"]]}}, "families":{}}}}
     """
@@ -75,6 +79,16 @@ final class BundledCheatCatalogTests: XCTestCase {
         let sega = Data([UInt8](repeating: 0x01, count: 0x2000) + [UInt8](repeating: 0x02, count: 0x2000))
         let normalized = Data(Array(repeating: [UInt8(0x02), 0x01], count: 0x2000).joined())
         XCTAssertEqual(catalog.resolve(system: .genesis, rom: header + sega) { $0 == normalized ? "GENESIS" : "" }.count, 1)
+    }
+
+    func testDualModeCartridgesTryBothGameBoyCatalogs() throws {
+        var rom = cartridge()
+        rom[0x143] = 0x80
+        let catalog = try catalog()
+        XCTAssertEqual(catalog.resolve(system: .gbc, rom: rom) { _ in "FIRST" }.map(\.quality), [.exactROM])
+        XCTAssertEqual(catalog.resolve(system: .gb, rom: rom) { _ in "COLOR" }.map(\.quality), [.exactROM])
+        XCTAssertEqual(catalog.resolve(system: .gbc, rom: rom) { _ in "TARGET" }.map(\.quality),
+                       [.verifiedOnROM, .verifiedOnROM])
     }
 
     func testCatalogRejectsAnEmptyCodeGroup() {

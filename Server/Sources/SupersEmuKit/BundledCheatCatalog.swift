@@ -55,28 +55,38 @@ public struct BundledCheatCatalog: Decodable, Sendable {
     }
 
     public func resolve(system: SystemID, rom: Data, sha1: (Data) -> String) -> [Match] {
-        guard let catalog = systems[system.rawValue] else { return [] }
+        let catalogSystems: [SystemID]
+        switch system {
+        case .gb: catalogSystems = [.gb, .gbc]
+        case .gbc: catalogSystems = [.gbc, .gb]
+        default: catalogSystems = [system]
+        }
+        let catalogs = catalogSystems.compactMap { systems[$0.rawValue] }
+        guard !catalogs.isEmpty else { return [] }
         var hash = sha1(rom).uppercased()
-        if catalog.revisions[hash] == nil, let normalized = normalizedCopy(rom, system: system) {
+        if !catalogs.contains(where: { $0.revisions[hash] != nil }),
+           let normalized = normalizedCopy(rom, system: system) {
             hash = sha1(normalized).uppercased()
         }
-        guard let revision = catalog.revisions[hash] else { return [] }
-        if let entries = revision.cheats {
+        if let entries = catalogs.lazy.compactMap({ $0.revisions[hash]?.cheats }).first {
             return entries.map { Match(label: $0.label, codes: $0.codes, quality: .exactROM) }
         }
-        guard system == .gb || system == .gbc, let family = revision.family,
-              let candidates = catalog.families[family] else { return [] }
+        guard system == .gb || system == .gbc else { return [] }
         var matches = [Match]()
         var effects = Set<String>()
         var groups = Set<[String]>()
-        for candidate in candidates where candidate != hash {
-            for entry in catalog.revisions[candidate]?.cheats ?? [] {
-                let effect = entry.label.lowercased()
-                guard !effects.contains(effect), !groups.contains(entry.codes),
-                      GameBoyGeniePatch.verifies(entry.codes, in: rom) else { continue }
-                effects.insert(effect)
-                groups.insert(entry.codes)
-                matches.append(Match(label: entry.label, codes: entry.codes, quality: .verifiedOnROM))
+        for catalog in catalogs {
+            guard let family = catalog.revisions[hash]?.family,
+                  let candidates = catalog.families[family] else { continue }
+            for candidate in candidates where candidate != hash {
+                for entry in catalog.revisions[candidate]?.cheats ?? [] {
+                    let effect = entry.label.lowercased()
+                    guard !effects.contains(effect), !groups.contains(entry.codes),
+                          GameBoyGeniePatch.verifies(entry.codes, in: rom) else { continue }
+                    effects.insert(effect)
+                    groups.insert(entry.codes)
+                    matches.append(Match(label: entry.label, codes: entry.codes, quality: .verifiedOnROM))
+                }
             }
         }
         return matches
