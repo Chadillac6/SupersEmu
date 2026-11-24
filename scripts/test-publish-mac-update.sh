@@ -62,7 +62,7 @@ elif [[ "$1 $2 ${3:-} ${4:-}" == 'api --method POST repos/Chadillac6/SupersEmu/r
      " $* " == *" -F draft=true "* ]]
   set -- release create "$TAG"
 elif [[ "$1 $2 ${3:-} ${4:-}" == 'api --method PATCH repos/Chadillac6/SupersEmu/releases/42' ]]; then
-  [[ " $* " == *" -F draft=false -f make_latest=true --silent "* ]]
+  [[ " $* " == *" -f tag_name=$TAG -F draft=false -f make_latest=true "* ]]
   set -- release edit "$TAG"
 elif [[ "$1 $2 ${3:-}" == 'api --method DELETE' && "$4" == repos/Chadillac6/SupersEmu/releases/assets/* ]]; then
   jq -e '.draft' "$STATE" >/dev/null
@@ -164,6 +164,13 @@ case "$2" in
     echo publish >> "$EVENTS"
     jq '.draft = false' "$STATE" > "$STATE.next"
     mv "$STATE.next" "$STATE"
+    if [[ "$MODE" == wrong-published-tag ]]; then
+      jq '.tag_name = "untagged-stub"' "$STATE"
+    elif [[ "$MODE" == still-draft ]]; then
+      jq '.draft = true' "$STATE"
+    else
+      cat "$STATE"
+    fi
     ;;
   *) exit 64 ;;
 esac
@@ -192,6 +199,10 @@ run_case() {
     exit 1
   fi
   echo "PASS: $name"
+}
+
+assert_publication_unconfirmed() {
+  grep -Fx "GitHub did not confirm publication of $TAG (release 42)." "$temp_dir/stderr" >/dev/null
 }
 
 create=$'prepare\ncreate\nupload '"$ZIP"$'\nupload appcast.xml\nupload '"$DMG"
@@ -253,6 +264,18 @@ MODE=normal
 run_case 'resumes the existing zero-asset untagged draft without creating another release' 0 \
   $'prepare\nupload '"$ZIP"$'\nupload appcast.xml\nupload '"$DMG$publish"
 grep -Fq "Resuming draft $TAG (release 42)." "$temp_dir/stdout"
+
+half_done
+MODE=wrong-published-tag
+run_case 'fails when the publish response returns a different tag' 1 \
+  $'prepare\nupload appcast.xml\nupload '"$DMG$publish"
+assert_publication_unconfirmed
+
+half_done
+MODE=still-draft
+run_case 'fails when the publish response still identifies the release as a draft' 1 \
+  $'prepare\nupload appcast.xml\nupload '"$DMG$publish"
+assert_publication_unconfirmed
 
 half_done
 MODE=other-published

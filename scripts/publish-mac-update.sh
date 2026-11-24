@@ -187,5 +187,8 @@ for i in "${!files[@]}"; do
     { echo "Could not verify $name; leaving $tag as a draft." >&2; exit 1; }
 done
 same_draft "$release" || { echo "Draft or tag $tag could not be verified before publication." >&2; exit 1; }
-gh api --method PATCH "repos/$repo/releases/$release_id" -F draft=false -f make_latest=true --silent ||
+release="$(gh api --method PATCH "repos/$repo/releases/$release_id" \
+  -f "tag_name=$tag" -F draft=false -f make_latest=true)" ||
   { echo "Could not publish draft $tag (release $release_id)." >&2; exit 1; }
+jq -e --arg tag "$tag" '.tag_name == $tag and .draft == false' <<< "$release" >/dev/null ||
+  { echo "GitHub did not confirm publication of $tag (release $release_id)." >&2; exit 1; }
