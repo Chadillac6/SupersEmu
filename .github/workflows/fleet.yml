@@ -6,6 +6,15 @@ on:
   workflow_dispatch:
 env:
   DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+  # Only cache explicitly licensed fixtures; leave SNES and the N64 bootcode out.
+  TEST_ROM_CACHE_PATHS: |
+    Tests/Fixtures/local/dmg-acid2.gb
+    Tests/Fixtures/local/cgb-acid2.gbc
+    Tests/Fixtures/local/gba-tests-hello.gba
+    Tests/Fixtures/local/mega-drive-midi-interface.md
+    Tests/Fixtures/local/chroma-circuit.elf
+    Tests/Fixtures/local/chroma-circuit.cdi
+    Tests/Fixtures/local/noudar.32x
 permissions:
   contents: read
 concurrency:
@@ -41,6 +50,23 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Test fixture fetcher
+        run: bash scripts/test-fetch-test-roms.sh
+      - name: Restore cached homebrew test fixtures
+        id: test_roms
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: ${{ env.TEST_ROM_CACHE_PATHS }}
+          key: test-roms-${{ hashFiles('scripts/fetch-test-roms.sh') }}
+      - name: Fetch and verify homebrew test fixtures
+        id: fixture_fetch
+        run: scripts/fetch-test-roms.sh ${{ github.event_name == 'pull_request' && '--require-all' || '--allow-missing' }}
+      - name: Save verified homebrew test fixtures
+        if: github.ref == 'refs/heads/main' && steps.fixture_fetch.outputs.cache_ready == 'true' && steps.test_roms.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: ${{ env.TEST_ROM_CACHE_PATHS }}
+          key: ${{ steps.test_roms.outputs.cache-primary-key }}
       - name: Prepare build tools and pinned cores
         run: |
           brew install xcodegen
@@ -64,8 +90,6 @@ jobs:
         run: |
           scripts/test-ddns-cloudflare.sh
           scripts/test-public-access.sh
-      - name: Fetch existing homebrew test fixtures
-        run: scripts/fetch-test-roms.sh
       - name: Test server
         run: swift test --package-path Server
       - name: Test Mac app
@@ -86,6 +110,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Restore cached homebrew test fixtures
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: ${{ env.TEST_ROM_CACHE_PATHS }}
+          key: test-roms-${{ hashFiles('scripts/fetch-test-roms.sh') }}
+      - name: Fetch and verify homebrew test fixtures
+        run: scripts/fetch-test-roms.sh ${{ github.event_name == 'pull_request' && '--require-all' || '--allow-missing' }}
       - name: Prepare build tools and pinned cores
         run: |
           brew install xcodegen
@@ -119,8 +150,6 @@ jobs:
         run: |
           scripts/test-ci-ios-simulators.sh
           scripts/ci-ios-simulators.sh >> "$GITHUB_OUTPUT"
-      - name: Fetch existing homebrew test fixtures
-        run: scripts/fetch-test-roms.sh
       - name: Test iOS app on iPhone and iPad
         env:
           IPHONE: ${{ steps.simulators.outputs.iphone }}

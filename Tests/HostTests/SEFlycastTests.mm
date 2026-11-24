@@ -60,7 +60,7 @@ static NSUInteger distinctColors(NSData *frame) {
 
 - (void)assertRendersPicture:(NSString *)name {
     NSURL *rom = [self fixture:name];
-    if (!rom) XCTSkip(@"Run scripts/fetch-test-roms.sh first (%@)", name);
+    if (!rom) XCTSkip(@"%@ fixture missing (scripts/fetch-test-roms.sh)", name);
     SELibretroHost *host = [self hostForURL:rom];
     XCTAssertTrue([host.coreName containsString:@"Flycast"], @"%@", host.coreName);
     XCTAssertTrue([host.renderPath hasPrefix:@"gl"], @"%@", host.renderPath);
@@ -82,7 +82,7 @@ static NSUInteger distinctColors(NSData *frame) {
 /// is what the next session sees.
 - (void)testVMUIsSaveRAMAndPersistsAcrossSessions {
     NSURL *rom = [self fixture:@"chroma-circuit.elf"];
-    if (!rom) XCTSkip(@"Run scripts/fetch-test-roms.sh first");
+    if (!rom) XCTSkip(@"chroma-circuit.elf fixture missing (scripts/fetch-test-roms.sh)");
     NSMutableData *card = nil;
     @autoreleasepool {
         SELibretroHost *host = [self hostForURL:rom];
@@ -114,7 +114,7 @@ static NSUInteger distinctColors(NSData *frame) {
 
 - (void)testPlaylistExposesEveryDisc {
     NSURL *disc = [self fixture:@"chroma-circuit.cdi"];
-    if (!disc) XCTSkip(@"Run scripts/fetch-test-roms.sh first");
+    if (!disc) XCTSkip(@"chroma-circuit.cdi fixture missing (scripts/fetch-test-roms.sh)");
     NSFileManager *fm = NSFileManager.defaultManager;
     for (NSString *name in @[@"Disc 1.cdi", @"Disc 2.cdi"]) {
         XCTAssertTrue([fm copyItemAtURL:disc toURL:[_tempDirectory URLByAppendingPathComponent:name] error:nil]);

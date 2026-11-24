@@ -79,7 +79,10 @@ static NSString *describeDifference(NSData *a, NSData *b) {
 
 - (SELibretroHost *)hostFor:(const CoreFixture &)fixture {
     NSURL *rom = [self romURL:fixture];
-    if (![NSFileManager.defaultManager fileExistsAtPath:rom.path]) return nil;
+    if (![NSFileManager.defaultManager fileExistsAtPath:rom.path]) {
+        NSLog(@"Skipping %@: fixture missing (scripts/fetch-test-roms.sh)", fixture.rom);
+        return nil;
+    }
     NSError *error = nil;
     SELibretroHost *host = [[SELibretroHost alloc]
         initWithCoreID:fixture.coreID romURL:rom
@@ -101,7 +104,7 @@ static NSString *describeDifference(NSData *a, NSData *b) {
             ran++;
         }
     }
-    if (ran == 0) XCTSkip(@"Run scripts/fetch-test-roms.sh first");
+    if (ran == 0) XCTSkip(@"No fixture cases ran; see the missing fixture names above");
 }
 
 - (void)testAllCoresAreLinked {
@@ -214,6 +217,7 @@ static NSString *describeDifference(NSData *a, NSData *b) {
 /// A state file written by one session resumes identically in a new one: after loading it
 /// and running on, state and frame match the original session's continuation.
 - (void)testEachCoreStateFileResumesInFreshSession {
+    BOOL ran = NO;
     for (const CoreFixture &fixture : kFixtures) {
         NSURL *stateURL = [_tempDirectory URLByAppendingPathComponent:
                            [NSString stringWithFormat:@"States/%@.state", fixture.rom]];
@@ -221,6 +225,7 @@ static NSString *describeDifference(NSData *a, NSData *b) {
         @autoreleasepool {
             SELibretroHost *first = [self hostFor:fixture];
             if (!first) continue;
+            ran = YES;
             [first runFrames:90];
             NSError *error = nil;
             XCTAssertTrue([first saveStateToURL:stateURL error:&error], @"%@: %@", fixture.rom, error);
@@ -255,6 +260,7 @@ static NSString *describeDifference(NSData *a, NSData *b) {
             [second shutdown];
         }
     }
+    if (!ran) XCTSkip(@"No fixture cases ran; see the missing fixture names above");
 }
 
 @end
