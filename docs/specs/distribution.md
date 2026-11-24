@@ -173,6 +173,7 @@ To publish a tested release:
    If an upload exhausts its retries, run the command again with the same build, tag, and
    tested commit to finish the draft. If a newer Mac release is already published, the older
    release stays a draft. An already-published release is never modified.
+   Run manual recovery only when no main Fleet run is in progress.
 
 `prepare-mac-appcast.sh` performs step 3 without uploading or publishing anything.
 Use `SPARKLE_GENERATE_APPCAST` to point at the tool in another derived-data directory.
