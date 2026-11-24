@@ -22,7 +22,8 @@ release_view() {
   gh api "repos/$repo/releases/$release_id"
 }
 
-release="$(release_discover)"
+release="$(release_discover)" ||
+  { echo "Could not look up release $tag." >&2; exit 1; }
 commit="$(git rev-parse --verify "$ref^{commit}")"
 shopt -s nullglob
 zips=("$out"/SupersEmu-*.zip)
@@ -57,7 +58,8 @@ if [[ "$release" != null ]]; then
     echo "Published release $tag does not match the requested build and commit; refusing to modify it." >&2
     exit 2
   fi
-  release_id="$(jq -er '.id' <<< "$release")"
+  release_id="$(jq -er '.id | numbers' <<< "$release")" ||
+    { echo "GitHub did not return a release ID for $tag." >&2; exit 1; }
 fi
 
 tag_allows_publish() {
@@ -77,8 +79,8 @@ tag_allows_publish() {
 }
 
 same_draft() {
-  jq -e --arg id "$release_id" --arg commit "$commit" '
-    .draft == true and (.id | tostring) == $id and .target_commitish == $commit
+  jq -e --arg id "$release_id" --arg commit "$commit" --arg tag "$tag" '
+    .draft == true and (.id | tostring) == $id and .tag_name == $tag and .target_commitish == $commit
   ' <<< "$1" >/dev/null && tag_allows_publish
 }
 
@@ -98,17 +100,43 @@ for file in "${files[@]}"; do
   digests+=("sha256:${digest%% *}")
 done
 
+upload_token="$(gh auth token --hostname github.com)" ||
+  { echo "Could not get the GitHub credential for release uploads." >&2; exit 1; }
+
 if [[ -z "$release_id" ]]; then
-  gh release create "$tag" --repo "$repo" --target "$commit" --title "SupersEmu $tag" \
-    --notes-file "${notes_files[0]}" --draft
-  release="$(release_discover)"
-  release_id="$(jq -er '.id' <<< "$release")"
+  release="$(gh api --method POST "repos/$repo/releases" \
+    -f "tag_name=$tag" -f "target_commitish=$commit" -f "name=SupersEmu $tag" \
+    -F "body=@${notes_files[0]}" -F draft=true)" ||
+    { echo "Could not create draft release $tag." >&2; exit 1; }
+  release_id="$(jq -er '.id | numbers' <<< "$release")" ||
+    { echo "GitHub did not return an ID when creating draft $tag." >&2; exit 1; }
+else
+  echo "Resuming draft $tag (release $release_id)."
 fi
 
 asset_matches() {
   jq -e --arg name "$2" --arg digest "$3" '
     any(.assets[]; .name == $name and .state == "uploaded" and .size > 0 and .digest == $digest)
   ' <<< "$1" >/dev/null
+}
+
+upload_to_draft() {
+  local file="$1" name="$2" snapshot="$3" old_asset_id encoded_name response
+  old_asset_id="$(jq -r --arg name "$name" '[.assets[] | select(.name == $name) | .id] | first // empty' <<< "$snapshot")" ||
+    return 1
+  if [[ -n "$old_asset_id" ]]; then
+    [[ "$old_asset_id" =~ ^[0-9]+$ ]] || return 1
+    gh api --method DELETE "repos/$repo/releases/assets/$old_asset_id" --silent || return 1
+  fi
+  encoded_name="$(jq -rn --arg name "$name" '$name | @uri')" || return 1
+  if ! response="$(printf 'header = "Authorization: Bearer %s"\n' "$upload_token" |
+    curl --config - --silent --show-error --fail-with-body --header 'Content-Type: application/octet-stream' \
+      --data-binary "@$file" "https://uploads.github.com/repos/$repo/releases/$release_id/assets?name=$encoded_name")"; then
+    if [[ -n "$response" ]]; then
+      printf 'GitHub upload response for %s (first 1024 bytes): %.1024s\n' "$name" "$response" >&2
+    fi
+    return 1
+  fi
 }
 
 upload_asset() {
@@ -122,7 +150,7 @@ upload_asset() {
       if asset_matches "$snapshot" "$name" "$digest"; then
         return 0
       fi
-      if gh release upload "$tag" "$file" --repo "$repo" --clobber &&
+      if upload_to_draft "$file" "$name" "$snapshot" &&
         snapshot="$(release_view)" && asset_matches "$snapshot" "$name" "$digest"; then
         return 0
       fi
@@ -164,4 +192,8 @@ for i in "${!files[@]}"; do
     { echo "Could not verify $name; leaving $tag as a draft." >&2; exit 1; }
 done
 same_draft "$release" || { echo "Draft or tag $tag could not be verified before publication." >&2; exit 1; }
-gh release edit "$tag" --repo "$repo" --draft=false --latest
+release="$(gh api --method PATCH "repos/$repo/releases/$release_id" \
+  -f "tag_name=$tag" -F draft=false -f make_latest=true)" ||
+  { echo "Could not publish draft $tag (release $release_id)." >&2; exit 1; }
+jq -e --arg tag "$tag" '.tag_name == $tag and .draft == false' <<< "$release" >/dev/null ||
+  { echo "GitHub did not confirm publication of $tag (release $release_id)." >&2; exit 1; }
