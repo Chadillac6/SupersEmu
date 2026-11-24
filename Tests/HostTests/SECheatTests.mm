@@ -218,6 +218,13 @@ static NSArray<NSNumber *> *outcomes(std::initializer_list<SECheatOutcome> list)
     XCTAssertEqual(ram[0x1000], original);
 }
 
+- (void)testGenesisPlusGXAcceptsSharedPatches {
+    SELibretroHost *host = [self realHost:@"genesis_plus_gx" rom:@"mega-drive-midi-interface.md"];
+    if (!host) { XCTSkip(@"mega-drive-midi-interface.md fixture missing (scripts/fetch-test-roms.sh)"); }
+    XCTAssertEqualObjects([host applyCheatCodes:@[@"AJBA-AA2A", @"AJBA-AA2A", @"RFAA-A6V"]],
+                          outcomes({SECheatOutcomeApplied, SECheatOutcomeApplied, SECheatOutcomeRejected}));
+}
+
 - (void)testGenesisPlusGXAcceptsGameGenieAndRejectsMalformedCodes {
     SELibretroHost *host = [self realHost:@"genesis_plus_gx" rom:@"mega-drive-midi-interface.md"];
     if (!host) { XCTSkip(@"mega-drive-midi-interface.md fixture missing (scripts/fetch-test-roms.sh)"); }
