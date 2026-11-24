@@ -428,11 +428,10 @@ struct CheatPicker: View {
                 Image(systemName: icon)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(cheat.label).lineLimit(1)
+                    Text(cheat.codes.joined(separator: " + ")).font(.caption.monospaced()).foregroundStyle(.secondary)
                     if let quality = cheat.quality {
                         Text(quality == .exactROM ? "Exact ROM match" : "Verified on your ROM")
                             .font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text(cheat.codes.joined(separator: " + ")).font(.caption.monospaced()).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
