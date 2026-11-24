@@ -22,26 +22,39 @@ release_view() {
   gh api "repos/$repo/releases/$release_id"
 }
 
-release_id=""
 release="$(release_discover)"
+commit="$(git rev-parse --verify "$ref^{commit}")"
+shopt -s nullglob
+zips=("$out"/SupersEmu-*.zip)
+dmgs=("$out"/SupersEmu-*.dmg)
+if [[ "${#zips[@]}" != 1 || "${#dmgs[@]}" != 1 ]]; then
+  echo 'Expected exactly one release ZIP and DMG.' >&2
+  exit 2
+fi
+zip_name="${zips[0]##*/}"
+dmg_name="${dmgs[0]##*/}"
+if [[ "${zip_name%.zip}" != "${dmg_name%.dmg}" ]]; then
+  echo 'Expected exactly one matching release ZIP and DMG.' >&2
+  exit 2
+fi
+
+release_id=""
 if [[ "$release" != null ]]; then
   if jq -e '.draft == false' <<< "$release" >/dev/null; then
-    if jq -e '
+    tag_commit="$(gh api "repos/$repo/commits/refs/tags/$tag" --jq .sha)"
+    if [[ "$tag_commit" == "$commit" ]] && jq -e --arg zip "$zip_name" --arg dmg "$dmg_name" '
       [.assets[] | select(.state == "uploaded" and .size > 0) | .name] as $names
-      | ($names | index("appcast.xml")) != null
-        and any($names[] | select(test("^SupersEmu-.+\\.zip$"));
-          sub("\\.zip$"; ".dmg") as $dmg | ($names | index($dmg)) != null)
+      | ([$zip, $dmg, "appcast.xml"] - $names) == []
     ' <<< "$release" >/dev/null; then
       echo "Mac update $tag is already published."
       exit 0
     fi
-    echo "Published release $tag is incomplete; refusing to modify it." >&2
+    echo "Published release $tag does not match the requested build and commit; refusing to modify it." >&2
     exit 2
   fi
   release_id="$(jq -er '.id' <<< "$release")"
 fi
 
-commit="$(git rev-parse --verify "$ref^{commit}")"
 same_draft() {
   jq -e --arg id "$release_id" --arg commit "$commit" '
     .draft == true and (.id | tostring) == $id and .target_commitish == $commit
@@ -54,22 +67,9 @@ if [[ -n "$release_id" ]] && ! same_draft "$release"; then
 fi
 
 scripts/prepare-mac-appcast.sh "$out" "$tag" "$commit"
-shopt -s nullglob
-zips=("$out"/updates/SupersEmu-*.zip)
-dmgs=("$out"/SupersEmu-*.dmg)
 notes_files=("$out"/updates/SupersEmu-*.html)
 [ "${#notes_files[@]}" = 1 ] || { echo 'Expected exactly one generated release-notes HTML file.' >&2; exit 2; }
-if [[ "${#zips[@]}" != 1 || "${#dmgs[@]}" != 1 ]]; then
-  echo 'Expected exactly one release ZIP and DMG.' >&2
-  exit 2
-fi
-zip_name="${zips[0]##*/}"
-dmg_name="${dmgs[0]##*/}"
-if [[ "${zip_name%.zip}" != "${dmg_name%.dmg}" ]]; then
-  echo 'Expected exactly one matching release ZIP and DMG.' >&2
-  exit 2
-fi
-files=("${zips[0]}" "$out/updates/appcast.xml" "${dmgs[0]}")
+files=("$out/updates/$zip_name" "$out/updates/appcast.xml" "${dmgs[0]}")
 digests=()
 for file in "${files[@]}"; do
   [[ -s "$file" ]] || { echo "Missing or empty release asset: $file" >&2; exit 2; }

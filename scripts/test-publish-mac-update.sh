@@ -13,6 +13,7 @@ export ZIP=SupersEmu-0.0.25-20261123.231830.zip DMG=SupersEmu-0.0.25-20261123.23
 export ZIP_DIGEST APPCAST_DIGEST DMG_DIGEST MODE
 
 printf zip > "$temp_dir/out/updates/$ZIP"
+cp "$temp_dir/out/updates/$ZIP" "$temp_dir/out/$ZIP"
 printf appcast > "$temp_dir/out/updates/appcast.xml"
 printf notes > "$temp_dir/out/updates/${ZIP%.zip}.html"
 printf dmg > "$temp_dir/out/$DMG"
@@ -58,6 +59,13 @@ elif [[ "$*" == 'api --paginate --slurp repos/Chadillac6/SupersEmu/releases?per_
     jq '[[.], [{draft:false,tag_name:"mac-20261124.0000"}]]' "$STATE"
   else
     jq '[[.]]' "$STATE"
+  fi
+  exit 0
+elif [[ "$*" == 'api repos/Chadillac6/SupersEmu/commits/refs/tags/mac-20261123.231830 --jq .sha' ]]; then
+  if [[ "$MODE" == wrong-tag-commit ]]; then
+    echo bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  else
+    echo "$COMMIT"
   fi
   exit 0
 fi
@@ -151,6 +159,13 @@ MODE=transient
 run_case 'retries the DMG after an upload 404 and publishes' 0 "$create"$'\nsleep 2\nupload '"$DMG$publish"
 MODE=normal
 run_case 'leaves a complete published release untouched' 0 ''
+MODE=wrong-tag-commit
+run_case 'rejects a published release whose tag points at a different commit' 2 ''
+MODE=normal
+jq --arg zip "$ZIP" '.assets[] |= if .name == $zip then .name = "SupersEmu-different.zip" else . end' \
+  "$STATE" > "$STATE.next"
+mv "$STATE.next" "$STATE"
+run_case 'rejects a published release with a different build ZIP' 2 ''
 
 half_done
 run_case 'resumes a draft, preserving the matching ZIP and replacing the stale appcast' 0 \
