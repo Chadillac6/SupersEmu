@@ -2,6 +2,37 @@
 #import "SELibretroHost.h"
 #import "SELibretroHost+Testing.h"
 
+namespace {
+
+const SECoreAPI *audioTestCore() {
+    static const SECoreAPI core = {
+        "stub_audio", "test",
+        [](retro_environment_t) {},
+        [](retro_video_refresh_t) {},
+        [](retro_audio_sample_t) {},
+        [](retro_audio_sample_batch_t) {},
+        [](retro_input_poll_t) {},
+        [](retro_input_state_t) {},
+        [] {},
+        [] {},
+        [](retro_system_info *info) { info->library_name = "Stub Audio"; },
+        [](retro_system_av_info *info) { info->timing.sample_rate = 44100; },
+        [](unsigned, unsigned) {},
+        [] {},
+        [] {},
+        []() -> size_t { return 0; },
+        [](void *, size_t) { return false; },
+        [](const void *, size_t) { return false; },
+        [](const retro_game_info *) { return true; },
+        [] {},
+        [](unsigned) -> void * { return nullptr; },
+        [](unsigned) -> size_t { return 0; },
+    };
+    return &core;
+}
+
+}
+
 @interface SELibretroHostTests : XCTestCase
 @end
 
@@ -9,6 +40,10 @@
     NSURL *_romURL;
     NSURL *_n64ROMURL;
     NSURL *_tempDirectory;
+}
+
++ (void)setUp {
+    SELibretroHostRegisterCore("stub_audio", audioTestCore);
 }
 
 - (void)setUp {
@@ -189,7 +224,17 @@
 }
 
 - (void)testAudioRingTestingHooksTrackOverflowUnderrunAndBuffering {
-    SELibretroHost *host = [self makeHost];
+    NSError *error = nil;
+    NSURL *romURL = [_tempDirectory URLByAppendingPathComponent:@"game.bin"];
+    BOOL created = [NSFileManager.defaultManager createDirectoryAtURL:_tempDirectory
+                                          withIntermediateDirectories:YES attributes:nil error:&error];
+    XCTAssertTrue(created, @"%@", error);
+    if (!created) return;
+    BOOL written = [[NSData dataWithBytes:"x" length:1] writeToURL:romURL options:NSDataWritingAtomic error:&error];
+    XCTAssertTrue(written, @"%@", error);
+    if (!written) return;
+    SELibretroHost *host = [self makeHostWithCoreID:@"stub_audio" romURL:romURL];
+    if (!host) return;
     [host _testResetAudioRing:100];
     [host _testPushSilentAudioFrames:150];
     XCTAssertEqual(host.audioOverflowFrames, 50u);
